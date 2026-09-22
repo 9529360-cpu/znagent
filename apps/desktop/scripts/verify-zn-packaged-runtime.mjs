@@ -10,6 +10,7 @@ const MAX_SCAN_DEPTH = 8
 const PACKAGED_RUNTIME_SMOKE_TIMEOUT_MS = 60_000
 const execFileAsync = promisify(execFile)
 const RETIRED_PACKAGE_NAME = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
+const CHROME_DEVTOOLS_MCP_VERSION = '1.9.0'
 
 const PACKAGED_RUNTIME_SMOKE = `
 import os
@@ -36,6 +37,17 @@ finally:
 veteran_root = vendored_veteran_root()
 assert (veteran_root / "mcp" / "server.mjs").is_file()
 assert (veteran_root / "VENDOR.json").is_file()
+
+chrome_mcp_root = Path(os.environ["ZN_CHROME_DEVTOOLS_MCP_ROOT"])
+assert (
+    chrome_mcp_root
+    / "node_modules"
+    / "chrome-devtools-mcp"
+    / "build"
+    / "src"
+    / "bin"
+    / "chrome-devtools-mcp.js"
+).is_file()
 
 browser = PlaywrightManagedBrowser()
 session = browser.open_session(permission=BrowserPermissionContext(), headless=True)
@@ -126,6 +138,11 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
   const backendRoot = resolveInside(runtimeRoot, manifest.backend_root, 'backend_root')
   const browserRoot = resolveInside(runtimeRoot, manifest.browser_root, 'browser_root')
   const veteranRuntimeRoot = resolveInside(runtimeRoot, manifest.veteran_runtime, 'veteran_runtime')
+  const chromeDevtoolsMcpRuntimeRoot = resolveInside(
+    runtimeRoot,
+    manifest.chrome_devtools_mcp_runtime,
+    'chrome_devtools_mcp_runtime'
+  )
   const pythonStat = await requireFile(python, 'python executable')
   if (process.platform !== 'win32' && (pythonStat.mode & 0o111) === 0) throw new Error(`packaged runtime python is not executable: ${python}`)
   await requireDirectory(backendRoot, 'backend root')
@@ -133,6 +150,37 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
   await requireDirectory(veteranRuntimeRoot, 'Veteran runtime root')
   await requireFile(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), 'Veteran MCP server')
   await requireFile(path.join(veteranRuntimeRoot, 'VENDOR.json'), 'Veteran vendor manifest')
+  await requireDirectory(chromeDevtoolsMcpRuntimeRoot, 'Chrome DevTools MCP runtime root')
+  await requireFile(
+    path.join(
+      chromeDevtoolsMcpRuntimeRoot,
+      'node_modules',
+      'chrome-devtools-mcp',
+      'build',
+      'src',
+      'bin',
+      'chrome-devtools-mcp.js'
+    ),
+    'Chrome DevTools MCP server'
+  )
+  const chromePackagePath = path.join(
+    chromeDevtoolsMcpRuntimeRoot,
+    'node_modules',
+    'chrome-devtools-mcp',
+    'package.json'
+  )
+  await requireFile(chromePackagePath, 'Chrome DevTools MCP package manifest')
+  const chromePackage = JSON.parse(await fs.readFile(chromePackagePath, 'utf8'))
+  if (manifest.chrome_devtools_mcp_version !== CHROME_DEVTOOLS_MCP_VERSION) {
+    throw new Error(
+      `packaged runtime Chrome DevTools MCP manifest version mismatch: expected ${CHROME_DEVTOOLS_MCP_VERSION}, got ${manifest.chrome_devtools_mcp_version}`
+    )
+  }
+  if (chromePackage.version !== CHROME_DEVTOOLS_MCP_VERSION) {
+    throw new Error(
+      `packaged runtime Chrome DevTools MCP package version mismatch: expected ${CHROME_DEVTOOLS_MCP_VERSION}, got ${chromePackage.version}`
+    )
+  }
   const browserEntries = await fs.readdir(browserRoot)
   if (browserEntries.length === 0) throw new Error(`packaged runtime managed browser root is empty: ${browserRoot}`)
   await requireFile(path.join(backendRoot, 'zn_agent', 'resident.py'), 'resident package entrypoint')
@@ -143,7 +191,15 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('packaged ZN runtime contains')) throw error
   }
-  return { runtimeRoot: path.resolve(runtimeRoot), runtimeId, python, backendRoot, browserRoot, veteranRuntimeRoot }
+  return {
+    runtimeRoot: path.resolve(runtimeRoot),
+    runtimeId,
+    python,
+    backendRoot,
+    browserRoot,
+    veteranRuntimeRoot,
+    chromeDevtoolsMcpRuntimeRoot
+  }
 }
 
 export async function smokePackagedZnRuntime(runtime, { run = execFileAsync } = {}) {
@@ -159,6 +215,7 @@ export async function smokePackagedZnRuntime(runtime, { run = execFileAsync } = 
         ZN_AGENT_HOME: home,
         ZN_RUNTIME_ID: runtime.runtimeId,
         ZN_VETERAN_RUNTIME_ROOT: runtime.veteranRuntimeRoot,
+        ZN_CHROME_DEVTOOLS_MCP_ROOT: runtime.chromeDevtoolsMcpRuntimeRoot,
         PLAYWRIGHT_BROWSERS_PATH: runtime.browserRoot
       },
       timeout: PACKAGED_RUNTIME_SMOKE_TIMEOUT_MS,
