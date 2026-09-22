@@ -10,6 +10,9 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_provider_registry.py
+      - runtime/python/zn_agent/core/chrome_devtools_mcp_browser.py
+      - runtime/python/zn_agent/core/stdio_mcp.py
       - runtime/python/zn_agent/core/browser_causal_popup.py
       - runtime/python/zn_agent/core/browser_scene_actions.py
       - runtime/python/zn_agent/core/browser_scene_command.py
@@ -72,6 +75,7 @@ on:
       - tests/zn_agent/core/test_structured_action_text_alias.py
       - tests/zn_agent/e2e/test_e2e11_browser_data_to_spreadsheet.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
+      - tests/zn_agent/e2e/test_windows_chrome_devtools_mcp_provider.py
       - tests/zn_agent/e2e/test_windows_managed_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_managed_browser_command.py
       - tests/zn_agent/e2e/test_windows_managed_browser_controls.py
@@ -92,6 +96,9 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_provider_registry.py
+      - runtime/python/zn_agent/core/chrome_devtools_mcp_browser.py
+      - runtime/python/zn_agent/core/stdio_mcp.py
       - runtime/python/zn_agent/core/browser_causal_popup.py
       - runtime/python/zn_agent/core/browser_scene_actions.py
       - runtime/python/zn_agent/core/browser_scene_command.py
@@ -154,6 +161,7 @@ on:
       - tests/zn_agent/core/test_structured_action_text_alias.py
       - tests/zn_agent/e2e/test_e2e11_browser_data_to_spreadsheet.py
       - tests/zn_agent/e2e/test_windows_managed_browser.py
+      - tests/zn_agent/e2e/test_windows_chrome_devtools_mcp_provider.py
       - tests/zn_agent/e2e/test_windows_managed_browser_causal_popup.py
       - tests/zn_agent/e2e/test_windows_managed_browser_command.py
       - tests/zn_agent/e2e/test_windows_managed_browser_controls.py
@@ -230,6 +238,29 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
           & $python -m unittest discover -s tests/zn_agent/e2e -p 'test_windows_managed_browser*.py' -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run real Chrome DevTools MCP provider contract
+        run: |
+          $chromeMcpRoot = Join-Path $env:GITHUB_WORKSPACE '.ci\chrome-devtools-mcp'
+          Remove-Item -Recurse -Force $chromeMcpRoot -ErrorAction SilentlyContinue
+          $env:PUPPETEER_SKIP_DOWNLOAD = 'true'
+          npm install --prefix $chromeMcpRoot --no-save --omit=dev --ignore-scripts --no-audit --no-fund chrome-devtools-mcp@1.9.0
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+          $chromeCandidates = @(
+            (Join-Path $env:PROGRAMFILES 'Google\Chrome\Application\chrome.exe'),
+            (Join-Path ${env:ProgramFiles(x86)} 'Google\Chrome\Application\chrome.exe'),
+            (Join-Path $env:LOCALAPPDATA 'Google\Chrome\Application\chrome.exe')
+          ) | Where-Object { $_ -and (Test-Path $_) }
+          if (-not $chromeCandidates) {
+            throw 'Google Chrome is required for the Chrome DevTools MCP provider contract'
+          }
+
+          $env:ZN_CHROME_DEVTOOLS_MCP_ROOT = $chromeMcpRoot
+          $env:ZN_BROWSER_EXECUTABLE = $chromeCandidates[0]
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
+          & $python tests/zn_agent/e2e/test_windows_chrome_devtools_mcp_provider.py -v
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run E2E-11 real Browser data to spreadsheet
         run: |
