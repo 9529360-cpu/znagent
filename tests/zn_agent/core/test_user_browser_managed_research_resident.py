@@ -93,7 +93,13 @@ class UserBrowserManagedResearchResidentTests(unittest.TestCase):
         )
         self.assertEqual(len(permission.allowed_origins), 2)
 
-    def test_final_resident_composition_uses_readable_managed_adapter(self) -> None:
+    def test_research_browser_accepts_capability_not_playwright_type(self) -> None:
+        resident = object.__new__(UserBrowserManagedResearchResidentRuntime)
+        fake = SimpleNamespace(read_page=lambda *_args, **_kwargs: {})
+        resident.research_browser = fake
+        self.assertIs(resident._managed_research_browser(), fake)
+
+    def test_final_resident_composition_separates_interactive_and_readable_managed_resources(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime(
                 config={"model": {}},
@@ -108,6 +114,8 @@ class UserBrowserManagedResearchResidentTests(unittest.TestCase):
                     resident.managed_browser,
                     ResearchSemanticPlaywrightManagedBrowser,
                 )
+                self.assertTrue(callable(getattr(resident.research_browser, "read_page", None)))
+                self.assertIsNot(resident.research_browser, resident.managed_browser)
             finally:
                 resident.store.close()
 
