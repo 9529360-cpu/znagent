@@ -14,6 +14,9 @@ from contextlib import closing
 from pathlib import Path
 
 
+_RESIDENT_STARTUP_TIMEOUT_SECONDS = 15.0
+
+
 class ResidentHardCrashRecoveryTests(unittest.TestCase):
     @staticmethod
     def _spawn_resident(home: Path, runtime_id: str) -> subprocess.Popen:
@@ -31,7 +34,10 @@ class ResidentHardCrashRecoveryTests(unittest.TestCase):
             cwd=repo_root,
             env=env,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
+            # Keep stderr attached to the test runner. A long-lived child with an
+            # unread PIPE can block when the OS pipe buffer fills, while inherited
+            # stderr keeps startup diagnostics visible without creating backpressure.
+            stderr=None,
             text=True,
         )
 
@@ -52,9 +58,10 @@ class ResidentHardCrashRecoveryTests(unittest.TestCase):
         child: subprocess.Popen,
         *,
         previous_instance_id: str | None = None,
-        timeout: float = 12.0,
+        timeout: float = _RESIDENT_STARTUP_TIMEOUT_SECONDS,
     ) -> dict:
         deadline = time.monotonic() + timeout
+        phase = "replacement" if previous_instance_id is not None else "initial"
         while time.monotonic() < deadline:
             if endpoint_path.is_file():
                 try:
@@ -72,12 +79,15 @@ class ResidentHardCrashRecoveryTests(unittest.TestCase):
                 except (OSError, ValueError, TypeError, json.JSONDecodeError):
                     pass
             if child.poll() is not None:
-                error_text = child.stderr.read() if child.stderr else ""
                 raise AssertionError(
-                    f"resident exited before publishing replacement endpoint: {error_text}"
+                    f"{phase} resident exited before publishing endpoint "
+                    f"(returncode={child.returncode})"
                 )
             time.sleep(0.05)
-        raise AssertionError("resident replacement endpoint was not published")
+        raise AssertionError(
+            f"{phase} resident endpoint was not published within {timeout:.1f}s "
+            f"(child_pid={child.pid}, child_returncode={child.poll()})"
+        )
 
     @staticmethod
     def _hard_kill_resident(pid: int) -> None:
