@@ -88,6 +88,15 @@ class CompositeWorkRoutingTests(unittest.TestCase):
         self.assertFalse(decision.preempt_narrow_browser)
         self.assertEqual(decision.surfaces, ())
 
+    def test_api_docs_without_current_browser_context_do_not_claim_current_page(self) -> None:
+        decision = classify_composite_work_route(
+            _event("Use the API documentation to update this repository, then run tests.")
+        )
+
+        self.assertFalse(decision.preempt_narrow_browser)
+        self.assertNotIn("browser_reference", decision.surfaces)
+        self.assertIn("workspace_mutation", decision.surfaces)
+
     def test_repository_documentation_update_is_not_a_browser_reference(self) -> None:
         decision = classify_composite_work_route(
             _event("Update the documentation in this repository and run tests.")
