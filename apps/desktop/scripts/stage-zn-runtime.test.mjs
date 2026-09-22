@@ -33,6 +33,19 @@ test('runtime staging packages Playwright and Chromium inside the versioned ZN r
 })
 
 
+test('runtime staging packages pinned Chrome DevTools MCP without runtime downloads', () => {
+  assert.match(source, /const chromeDevtoolsMcpVersion = ['"]1\.9\.0['"]/)
+  assert.match(source, /browser-runtimes['"], ['"]chrome-devtools-mcp/)
+  assert.match(source, /chrome-devtools-mcp@\$\{chromeDevtoolsMcpVersion\}/)
+  assert.match(source, /--ignore-scripts/)
+  assert.match(source, /PUPPETEER_SKIP_DOWNLOAD:\s*['"]true['"]/)
+  assert.match(source, /Chrome DevTools MCP entry is missing/)
+  assert.match(source, /Chrome DevTools MCP version mismatch/)
+  assert.match(source, /chrome_devtools_mcp_runtime:\s*portableRelative\(runtimeRoot, chromeDevtoolsMcpRuntimeDir\)/)
+  assert.match(source, /chrome_devtools_mcp_version:\s*chromeDevtoolsMcpVersion/)
+  assert.doesNotMatch(source, /chrome-devtools-mcp@latest/)
+})
+
 test('runtime staging packages the pinned Veteran engineering sidecar', () => {
   assert.match(source, /const veteranSourceRoot = path\.join\(repoRoot, ['"]vendor['"], ['"]veteran-engineer['"]\)/)
   assert.match(source, /const veteranRuntimeDir = path\.join\(runtimeRoot, ['"]veteran-engineer['"]\)/)
