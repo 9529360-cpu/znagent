@@ -23,10 +23,17 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
   const backendRelative = 'python/site-packages'
   const browserRelative = 'playwright-browsers'
   const veteranRelative = 'veteran-engineer'
+  const chromeMcpRelative = 'browser-runtimes/chrome-devtools-mcp'
   const python = path.join(runtimeRoot, ...pythonRelative.split('/'))
   const backendRoot = path.join(runtimeRoot, ...backendRelative.split('/'))
   const browserRoot = path.join(runtimeRoot, browserRelative)
   const veteranRuntimeRoot = path.join(runtimeRoot, veteranRelative)
+  const chromeDevtoolsMcpRuntimeRoot = path.join(runtimeRoot, ...chromeMcpRelative.split('/'))
+  const chromeDevtoolsMcpPackageRoot = path.join(
+    chromeDevtoolsMcpRuntimeRoot,
+    'node_modules',
+    'chrome-devtools-mcp'
+  )
   fs.mkdirSync(path.dirname(python), { recursive: true })
   fs.writeFileSync(python, 'portable-python')
   fs.mkdirSync(path.join(backendRoot, 'zn_agent', 'core'), { recursive: true })
@@ -37,6 +44,15 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
   fs.mkdirSync(path.join(veteranRuntimeRoot, 'mcp'), { recursive: true })
   fs.writeFileSync(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), '// veteran fixture\n')
   fs.writeFileSync(path.join(veteranRuntimeRoot, 'VENDOR.json'), '{}\n')
+  fs.mkdirSync(path.join(chromeDevtoolsMcpPackageRoot, 'build', 'src', 'bin'), { recursive: true })
+  fs.writeFileSync(
+    path.join(chromeDevtoolsMcpPackageRoot, 'build', 'src', 'bin', 'chrome-devtools-mcp.js'),
+    '// chrome devtools mcp fixture\n'
+  )
+  fs.writeFileSync(
+    path.join(chromeDevtoolsMcpPackageRoot, 'package.json'),
+    JSON.stringify({ name: 'chrome-devtools-mcp', version: '1.9.0' })
+  )
   fs.writeFileSync(path.join(runtimeRoot, 'runtime.json'), `${JSON.stringify({
     schema: 1,
     product: 'ZN',
@@ -48,9 +64,18 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
     python: pythonRelative,
     backend_root: backendRelative,
     browser_root: browserRelative,
-    veteran_runtime: veteranRelative
+    veteran_runtime: veteranRelative,
+    chrome_devtools_mcp_runtime: chromeMcpRelative,
+    chrome_devtools_mcp_version: '1.9.0'
   }, null, 2)}\n`)
-  return { runtimeRoot, runtimeId, backendRoot, browserRoot, veteranRuntimeRoot }
+  return {
+    runtimeRoot,
+    runtimeId,
+    backendRoot,
+    browserRoot,
+    veteranRuntimeRoot,
+    chromeDevtoolsMcpRuntimeRoot
+  }
 }
 
 test('packaged runtime materializes under ZN home and uses only ZN runtime entrypoints', () => {
@@ -69,12 +94,24 @@ test('packaged runtime materializes under ZN home and uses only ZN runtime entry
     assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, runtime.browserRoot)
     assert.equal(runtime.veteranRuntimeRoot, path.join(expectedRoot, 'veteran-engineer'))
     assert.equal(env.ZN_VETERAN_RUNTIME_ROOT, runtime.veteranRuntimeRoot)
+    assert.equal(
+      runtime.chromeDevtoolsMcpRuntimeRoot,
+      path.join(expectedRoot, 'browser-runtimes', 'chrome-devtools-mcp')
+    )
+    assert.equal(
+      env.ZN_CHROME_DEVTOOLS_MCP_ROOT,
+      runtime.chromeDevtoolsMcpRuntimeRoot
+    )
     assert.equal(env.ZN_DESKTOP_EXECUTABLE, path.resolve(process.execPath))
     assert.equal(env[`${retiredProduct.toUpperCase()}_DESKTOP_PYTHON`], undefined)
     assert.equal(env[`${retiredProduct.toUpperCase()}_DESKTOP_${retiredProduct.toUpperCase()}_ROOT`], undefined)
     fs.rmSync(path.join(resourcesPath, 'zn-runtime'), { recursive: true, force: true })
     assert.equal(resolveRuntime(expectedRoot, runtimeId).python, runtime.python)
     assert.equal(resolveRuntime(expectedRoot, runtimeId).browserRoot, runtime.browserRoot)
+    assert.equal(
+      resolveRuntime(expectedRoot, runtimeId).chromeDevtoolsMcpRuntimeRoot,
+      runtime.chromeDevtoolsMcpRuntimeRoot
+    )
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
@@ -104,10 +141,26 @@ test('packaged N+1 materializes beside N with its own managed browser root', () 
     assert.equal(current.browserRoot, path.join(current.root, 'playwright-browsers'))
     assert.equal(desired.browserRoot, path.join(desired.root, 'playwright-browsers'))
     assert.notEqual(desired.browserRoot, current.browserRoot)
+    assert.equal(
+      current.chromeDevtoolsMcpRuntimeRoot,
+      path.join(current.root, 'browser-runtimes', 'chrome-devtools-mcp')
+    )
+    assert.equal(
+      desired.chromeDevtoolsMcpRuntimeRoot,
+      path.join(desired.root, 'browser-runtimes', 'chrome-devtools-mcp')
+    )
+    assert.notEqual(
+      desired.chromeDevtoolsMcpRuntimeRoot,
+      current.chromeDevtoolsMcpRuntimeRoot
+    )
     assert.equal(env.ZN_AGENT_HOME, znHome)
     assert.equal(env.ZN_RUNTIME_ID, 'runtime-n-plus-1')
     assert.equal(env.ZN_RESIDENT_PYTHON, desired.python)
     assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, desired.browserRoot)
+    assert.equal(
+      env.ZN_CHROME_DEVTOOLS_MCP_ROOT,
+      desired.chromeDevtoolsMcpRuntimeRoot
+    )
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
@@ -127,6 +180,81 @@ test('packaged runtime without browser manifest clears inherited Playwright cach
     const runtime = configureZnPackagedRuntime({ resourcesPath, znHome, env })
     assert.equal(runtime.browserRoot, undefined)
     assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, undefined)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('packaged runtime clears inherited Chrome MCP authority when manifest omits the pair', () => {
+  const root = mkTmpRoot()
+  const resourcesPath = path.join(root, 'resources')
+  const znHome = path.join(root, 'zn-home')
+  const env: Record<string, string | undefined> = {
+    ZN_CHROME_DEVTOOLS_MCP_ROOT: 'machine-global-chrome-mcp'
+  }
+  try {
+    const { runtimeRoot } = writeBundledRuntime(resourcesPath)
+    const manifestPath = path.join(runtimeRoot, 'runtime.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    delete manifest.chrome_devtools_mcp_runtime
+    delete manifest.chrome_devtools_mcp_version
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`)
+    const runtime = configureZnPackagedRuntime({ resourcesPath, znHome, env })
+    assert.equal(runtime.chromeDevtoolsMcpRuntimeRoot, undefined)
+    assert.equal(env.ZN_CHROME_DEVTOOLS_MCP_ROOT, undefined)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('packaged runtime rejects Chrome MCP root escaping payload root', () => {
+  const root = mkTmpRoot()
+  const resourcesPath = path.join(root, 'resources')
+  try {
+    const { runtimeRoot } = writeBundledRuntime(resourcesPath)
+    const manifestPath = path.join(runtimeRoot, 'runtime.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.chrome_devtools_mcp_runtime = '../machine-chrome-mcp'
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`)
+    assert.throws(
+      () => resolveRuntime(runtimeRoot),
+      /chrome_devtools_mcp_runtime escapes its payload root/
+    )
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('packaged runtime rejects missing or wrong-version Chrome MCP runtime', () => {
+  const root = mkTmpRoot()
+  const resourcesPath = path.join(root, 'resources')
+  try {
+    const fixture = writeBundledRuntime(resourcesPath)
+    const server = path.join(
+      fixture.chromeDevtoolsMcpRuntimeRoot,
+      'node_modules',
+      'chrome-devtools-mcp',
+      'build',
+      'src',
+      'bin',
+      'chrome-devtools-mcp.js'
+    )
+    fs.rmSync(server)
+    assert.throws(() => resolveRuntime(fixture.runtimeRoot), /Chrome DevTools MCP server is missing/)
+
+    fs.mkdirSync(path.dirname(server), { recursive: true })
+    fs.writeFileSync(server, '// restored\n')
+    const packagePath = path.join(
+      fixture.chromeDevtoolsMcpRuntimeRoot,
+      'node_modules',
+      'chrome-devtools-mcp',
+      'package.json'
+    )
+    fs.writeFileSync(
+      packagePath,
+      JSON.stringify({ name: 'chrome-devtools-mcp', version: '9.9.9' })
+    )
+    assert.throws(() => resolveRuntime(fixture.runtimeRoot), /version mismatch/)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
