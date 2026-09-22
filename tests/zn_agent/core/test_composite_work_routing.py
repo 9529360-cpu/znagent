@@ -74,7 +74,7 @@ class CompositeWorkRoutingTests(unittest.TestCase):
         )
 
         self.assertFalse(decision.preempt_narrow_browser)
-        self.assertIn("browser_reference", decision.surfaces)
+        self.assertNotIn("browser_reference", decision.surfaces)
         self.assertNotIn("workspace_mutation", decision.surfaces)
 
     def test_missing_durable_work_binding_never_preempts_browser(self) -> None:
