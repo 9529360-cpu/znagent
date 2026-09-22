@@ -38,7 +38,7 @@ SHIPPED_PRIVATE_SCAN_FILES = {"apps/desktop/package.json"}
 
 PRODUCT_CORE_PREFIX = "runtime/python/zn_agent/core/"
 _RETIRED_SCENARIO_FRAGMENT = bytes.fromhex("653265").decode("ascii")
-SCENARIO_RUNTIME_NAME = re.compile(rf"(?:^|[_-]){_RETIRED_SCENARIO_FRAGMENT}\\d+", re.IGNORECASE)
+SCENARIO_RUNTIME_NAME = re.compile(rf"(?:^|[_-]){_RETIRED_SCENARIO_FRAGMENT}\d+", re.IGNORECASE)
 BROWSER_SCENARIO_BEHAVIOR_NAME = re.compile(
     r".*browser.*behavior\.py$",
     re.IGNORECASE,
