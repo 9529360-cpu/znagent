@@ -7,6 +7,7 @@ from typing import Any, Mapping
 
 from .action import NativeActionIntent
 from .action_execution import ActionRequest
+from .event_step_pipeline import EventStepDecision, register_event_step_handler
 from .models import ExecutionPath, ResidentRunResult, utc_now
 
 
@@ -245,13 +246,11 @@ def _run_action(
 
 
 def install_windows_audio_reflex_behavior(resident) -> None:
-    """Attach direct Windows audio Reflexes to the one Product Resident."""
+    """Register direct Windows audio Reflexes on the Resident event-step pipeline."""
     if getattr(resident, _INSTALL_MARKER, False):
         return
 
-    original_advance = resident._advance_event_step
-
-    def advance_event_step(
+    def audio_event_step(
         event,
         state,
         *,
@@ -259,67 +258,77 @@ def install_windows_audio_reflex_behavior(resident) -> None:
         learning_evidence,
         thought=None,
     ):
+        del readiness, learning_evidence, thought
         stage = str(state.stage or "")
         if stage == "orient":
             resolution, match, direct_ambiguous = _audio_match(resident, event)
             if direct_ambiguous:
-                return _blocked(
-                    resident,
-                    event,
-                    state,
-                    code="audio_reflex_ambiguous",
-                    detail=resolution.reason or "multiple direct audio intents matched",
-                    response="音量命令存在歧义，ZN 没有执行，也没有交给模型猜。",
+                return EventStepDecision.claim(
+                    _blocked(
+                        resident,
+                        event,
+                        state,
+                        code="audio_reflex_ambiguous",
+                        detail=resolution.reason or "multiple direct audio intents matched",
+                        response="音量命令存在歧义，ZN 没有执行，也没有交给模型猜。",
+                    )
                 )
             if match is not None and match.action_id:
-                return _run_action(
-                    resident,
-                    event,
-                    state,
-                    intent_id=match.intent_id,
-                    action_id=match.action_id,
-                    args=match.slots,
-                    reverify=False,
+                return EventStepDecision.claim(
+                    _run_action(
+                        resident,
+                        event,
+                        state,
+                        intent_id=match.intent_id,
+                        action_id=match.action_id,
+                        args=match.slots,
+                        reverify=False,
+                    )
                 )
 
         if stage == _REVERIFY_STAGE:
             meta = state.data.get(_STATE_KEY)
             if not isinstance(meta, dict):
-                return _blocked(
-                    resident,
-                    event,
-                    state,
-                    code="audio_reverify_state_missing",
-                    detail="durable Windows audio re-verification state is missing",
+                return EventStepDecision.claim(
+                    _blocked(
+                        resident,
+                        event,
+                        state,
+                        code="audio_reverify_state_missing",
+                        detail="durable Windows audio re-verification state is missing",
+                    )
                 )
             intent_id = str(meta.get("intent_id") or "")
             action_id = str(meta.get("action_id") or "")
             args = meta.get("args")
             if intent_id not in _AUDIO_INTENTS or not action_id or not isinstance(args, dict):
-                return _blocked(
+                return EventStepDecision.claim(
+                    _blocked(
+                        resident,
+                        event,
+                        state,
+                        code="audio_reverify_state_invalid",
+                        detail="durable Windows audio re-verification state is malformed",
+                    )
+                )
+            return EventStepDecision.claim(
+                _run_action(
                     resident,
                     event,
                     state,
-                    code="audio_reverify_state_invalid",
-                    detail="durable Windows audio re-verification state is malformed",
+                    intent_id=intent_id,
+                    action_id=action_id,
+                    args=args,
+                    reverify=True,
                 )
-            return _run_action(
-                resident,
-                event,
-                state,
-                intent_id=intent_id,
-                action_id=action_id,
-                args=args,
-                reverify=True,
             )
 
-        return original_advance(
-            event,
-            state,
-            readiness=readiness,
-            learning_evidence=learning_evidence,
-            thought=thought,
-        )
+        return None
 
-    resident._advance_event_step = advance_event_step
+    register_event_step_handler(
+        resident,
+        name="windows_audio_reflex_v1",
+        handler=audio_event_step,
+        priority=20,
+    )
     setattr(resident, _INSTALL_MARKER, True)
