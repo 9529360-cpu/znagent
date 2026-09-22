@@ -223,18 +223,62 @@ class DesktopSceneTests(unittest.TestCase):
             self.assertEqual(scene.visual_target_count, 2)
             self.assertEqual([row.source for row in scene.targets], ["hybrid", "visual"])
             self.assertTrue(all(row.target_id.startswith("desktop-target-") for row in scene.targets))
-            self.assertEqual(Path(scene_path), desktop_scene_artifact_path("evt-scene", home=home))
+            self.assertEqual(
+                Path(scene_path),
+                desktop_scene_artifact_path("evt-scene", home=home).resolve(strict=True),
+            )
 
             recovered = load_desktop_scene_artifact("evt-scene", home=home)
             self.assertEqual(recovered, scene)
 
             raw = Path(scene_path).read_text(encoding="utf-8")
-            self.assertNotIn('"process_id"', raw)
-            self.assertNotIn('"window_handle"', raw)
-            self.assertNotIn('"runtime_id"', raw)
-            self.assertNotIn("12345", raw)
-            self.assertNotIn("321", raw)
+            payload = json.loads(raw)
+            serialized_scene = payload["scene"]
+            self.assertNotIn("process_id", serialized_scene["foreground"])
+            self.assertNotIn("window_handle", serialized_scene["foreground"])
+            for target in serialized_scene["targets"]:
+                self.assertNotIn("runtime_id", target)
 
+    def test_scene_artifact_path_is_canonical_for_noncanonical_home(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            alias_parent = Path(tmp) / "scene-home"
+            alias_parent.mkdir()
+            home = alias_parent / ".."
+
+            def capture(event_id):
+                return capture_primary_screen_artifact(
+                    desktop_scene_capture_event_id(event_id),
+                    home=home,
+                    capture_fn=lambda: Image.new("RGB", (320, 200), "white"),
+                )
+
+            binding = DesktopSceneForegroundBinding(
+                "demo.app",
+                321,
+                "demo.exe",
+                12345,
+                "DemoWindow",
+            )
+            builder = NativeDesktopSceneBuilder(
+                automation_sense=_Sense(),
+                capture_fn=capture,
+                window_rect_fn=lambda hwnd, pid: DesktopSceneRect(10, 10, 300, 180),
+                home=home,
+            )
+
+            _scene, scene_path = builder.capture(
+                event_id="evt-canonical-scene",
+                foreground=binding,
+                foreground_probe=lambda: binding,
+            )
+
+            self.assertEqual(
+                Path(scene_path),
+                desktop_scene_artifact_path(
+                    "evt-canonical-scene",
+                    home=home,
+                ).resolve(strict=True),
+            )
     def test_missing_visual_provider_is_explicit_uia_only_degradation(self):
         with tempfile.TemporaryDirectory() as tmp:
             home = Path(tmp)

@@ -834,7 +834,7 @@ def save_desktop_scene_artifact(
             temp.unlink(missing_ok=True)
         except OSError:
             pass
-    return target
+    return target.expanduser().resolve(strict=True)
 
 
 def load_desktop_scene_artifact(
