@@ -275,7 +275,7 @@ jobs:
             'test_windows_interactive_authorized_user_browser_cdp.py',
             'test_windows_interactive_user_browser_named_goal.py',
             'test_windows_interactive_desktop_modal_recovery.py',
-            'test_windows_interactive_current_app_content_cleanup.py',
+            'test_windows_interactive_current_app_content_cleanup.py'
           )
           $tests = Get-ChildItem tests/zn_agent/e2e/test_windows_interactive_*.py |
             Where-Object { $_.Name -notin $excluded } |
