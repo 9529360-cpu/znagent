@@ -12,7 +12,10 @@ from zn_agent.core.browser import (
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
-from zn_agent.core.chrome_devtools_mcp_browser import ChromeDevToolsMcpManagedBrowser
+from zn_agent.core.chrome_devtools_mcp_browser import (
+    CHROME_DEVTOOLS_MCP_PROVIDER,
+    ChromeDevToolsMcpManagedBrowser,
+)
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -132,7 +135,12 @@ class MatureBrowserProviderE2ETests(unittest.TestCase):
             )
             self.assertTrue(clicked.success, clicked.error)
             self.assertEqual(clicked.url_after, self.origin + "/done")
-            self.assertEqual(clicked.data.get("provider"), "chrome-devtools-mcp")
+            self.assertEqual(clicked.data.get("provider"), CHROME_DEVTOOLS_MCP_PROVIDER)
+            self.assertEqual(clicked.data.get("provider"), "chrome-devtools-mcp@1.9.0")
+            page = browser.read_page(session.session_id, page_id=clicked.page_id)
+            self.assertEqual(page["url"], self.origin + "/done")
+            self.assertIn("Done", page["text"])
+            self.assertEqual(page["provider"], CHROME_DEVTOOLS_MCP_PROVIDER)
         finally:
             browser.close()
 
