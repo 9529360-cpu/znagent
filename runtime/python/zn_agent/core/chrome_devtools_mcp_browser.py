@@ -37,7 +37,7 @@ from .url_safety import is_safe_url
 
 CHROME_DEVTOOLS_MCP_PACKAGE = "chrome-devtools-mcp"
 CHROME_DEVTOOLS_MCP_VERSION = "1.9.0"
-CHROME_DEVTOOLS_MCP_PROVIDER = "chrome-devtools-mcp"
+CHROME_DEVTOOLS_MCP_PROVIDER = f"chrome-devtools-mcp@{CHROME_DEVTOOLS_MCP_VERSION}"
 
 _REQUIRED_TOOLS = (
     "list_pages",
