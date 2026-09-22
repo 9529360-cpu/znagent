@@ -1,22 +1,10 @@
 name: E2E25 Current Docs Adaptation Acceptance
 
+# Historical representative acceptance only. Generic browser/workspace routing and
+# provider contracts are covered by normal CI; this expensive real-model scenario
+# must not be a merge gate for substrate changes.
 on:
   workflow_dispatch:
-  pull_request:
-    branches: [main]
-    paths:
-      - '.github/workflows/e2e25-browser-coding-local-result.yml'
-      - '.github/scripts/test-zn-interactive-user-context.ps1'
-      - 'runtime/python/zn_agent/core/current_api_docs_adaptation_resident.py'
-      - 'runtime/python/zn_agent/core/provider_bridge.py'
-      - 'runtime/python/zn_agent/core/broad_goal_research_resident.py'
-      - 'runtime/python/zn_agent/core/broad_goal_completion_resident.py'
-      - 'runtime/python/zn_agent/core/delegated_work_coordinator.py'
-      - 'runtime/python/zn_agent/core/action_authority.py'
-      - 'runtime/python/zn_agent/core/worker_context_boundary.py'
-      - 'tests/zn_agent/core/test_e2e25_current_reference_and_workspace_read_baseline.py'
-      - 'tests/zn_agent/e2e/test_e2e25_api_docs_code_adaptation.py'
-      - 'apps/desktop/browser-extension/**'
 
 permissions:
   contents: read
