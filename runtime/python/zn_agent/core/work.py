@@ -749,6 +749,9 @@ class ResidentWorkLedger:
             "investigation": investigation_data,
             "body_actions": body_actions,
         }
+        if completed is not None:
+            result["execution_path"] = completed.execution_path.value
+            result["model_invocations"] = max(0, int(completed.model_invocations))
         if terminal and not finalized:
             result["error"] = "resident event is terminal but no durable work outcome is available"
         return result
@@ -1150,6 +1153,7 @@ class ResidentWorkLedger:
                     artifact_id,thread_id,event_id,kind,name,path,content,metadata_json,created_at
                 ) VALUES(?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(artifact_id) DO UPDATE SET
+                    event_id=excluded.event_id,
                     kind=excluded.kind,
                     name=excluded.name,
                     path=excluded.path,
