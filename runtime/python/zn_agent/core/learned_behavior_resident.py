@@ -17,7 +17,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
 from .action import NativeActionIntent, derive_native_action_intents
-from .current_api_docs_adaptation_resident import (
+from .browser_workspace_adaptation_resident import (
     BrowserWorkspaceAdaptationResidentRuntime,
 )
 from .models import AgentEvent, ResidentRunResult, WorkingState
