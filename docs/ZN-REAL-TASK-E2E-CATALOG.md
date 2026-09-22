@@ -38,7 +38,7 @@ The 50 scenario IDs and product intents remain stable. The status overlay record
 | E2E-12 | CLOSED representative path | Bounded public-Web evidence -> 1–3 explicit DOCX placeholders with prompt-safe two-source support and fresh reopen verification. Not arbitrary DOCX/Deep Research/Word. |
 | **E2E-13** | **VERIFIED NARROW / CLOSED representative path; PR #252 merged as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`** | Current foreground non-browser Windows app; exact process/HWND + unique multiline ValuePattern Edit; deterministic trim/drop-blank/stable-dedupe; guarded replacement; durable restart/no-replay reconciliation before ordinary content drift; at most one Save; fresh same-process read-only result verification. **Not Desktop complete, arbitrary app automation, Office automation or general RPA.** |
 | E2E-15 | CLOSED representative path | Exact same-process owned UIA modal with one deterministic safe defer/continue action; fresh parent readiness/re-ground. Not arbitrary dialogs/UAC/credentials/business decisions. |
-| E2E-24 | CLOSED representative path | Same Root USER Browser -> exact File -> exact Desktop customer record with fresh verification and stale UIA rejection. Not general RPA. |
+| E2E-24 | HISTORICAL representative closure; dedicated product behavior retired | The old USER Browser -> File -> Desktop customer-record path remains historical evidence only. Its E2E-specific Resident behavior and merge gate are retired; future cross-surface work must compose generic browser, file and desktop capabilities. |
 | E2E-27 | CLOSED representative path | Same-Work steering/replan/stale-old-worker gating/non-replay. |
 | E2E-28 | CLOSED representative path | Durable supervision, no-progress/stall detection, health-aware bounded retry/fallback/reassignment. |
 | E2E-29 | CLOSED | One actual model route can serve multiple isolated WorkerRuns while Root completion stays ZN-owned. |
@@ -289,7 +289,7 @@ User:
 
 > “从网站查这批客户的状态，整理成文件，再把异常的几项更新到桌面软件里。”
 
-Must preserve one business identity across USER Browser, exact File and exact Desktop record, with fresh verification after each mutation. Current representative closure is bounded and is not general RPA.
+Must preserve one business identity across USER Browser, exact File and exact Desktop record, with fresh verification after each mutation. The old E2E-24-specific Resident behavior and isolated acceptance path are retired from the product line; future proof must come from generic browser, file and desktop capability composition rather than reintroducing a scenario handler.
 
 ### E2E-25 — Browser + coding + local result
 
