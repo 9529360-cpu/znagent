@@ -215,6 +215,35 @@ class BrowserProviderRegistryTests(unittest.TestCase):
                 required_actions=(BrowserActionKind.DOWNLOAD_FILE,),
             )
 
+    def test_explicit_provider_router_rejects_unsupported_permission_before_session(self):
+        registry = BrowserProviderRegistry()
+        registry.register(
+            BrowserProviderDescriptor(
+                name="mature",
+                plane=BrowserPlane.MANAGED,
+                priority=200,
+                factory=lambda: _Adapter("mature"),
+                available=lambda: True,
+                supported_actions=frozenset(
+                    kind
+                    for kind in BrowserActionKind
+                    if kind is not BrowserActionKind.DOWNLOAD_FILE
+                ),
+            )
+        )
+        adapter = build_managed_browser_adapter(
+            preferred="mature",
+            registry=registry,
+        )
+        self.assertIsInstance(adapter, ManagedBrowserProviderRouter)
+        with self.assertRaisesRegex(RuntimeError, "does not support required actions"):
+            adapter.open_session(
+                permission=BrowserPermissionContext(
+                    allow_page_interaction=True,
+                    allow_downloads=True,
+                )
+            )
+
     def test_explicit_unavailable_provider_fails_closed(self):
         registry = BrowserProviderRegistry()
         registry.register(

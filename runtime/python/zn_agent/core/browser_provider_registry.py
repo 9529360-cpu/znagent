@@ -123,8 +123,10 @@ class ManagedBrowserProviderRouter:
         self,
         *,
         registry: BrowserProviderRegistry,
+        preferred: str = "",
     ) -> None:
         self._registry = registry
+        self._preferred = str(preferred or "").strip().lower()
         self._sessions: dict[str, BrowserAdapter] = {}
 
     @staticmethod
@@ -144,6 +146,7 @@ class ManagedBrowserProviderRouter:
         policy = permission or BrowserPermissionContext()
         descriptor = self._registry.resolve(
             plane=BrowserPlane.MANAGED,
+            preferred=self._preferred,
             required_actions=self._required_actions(policy),
         )
         adapter = descriptor.factory()
@@ -306,11 +309,14 @@ def build_managed_browser_adapter(
     )
     providers = registry or default_managed_browser_registry()
     if selected:
-        descriptor = providers.resolve(
+        providers.resolve(
             plane=BrowserPlane.MANAGED,
             preferred=selected,
         )
-        return descriptor.factory()
+        return ManagedBrowserProviderRouter(
+            registry=providers,
+            preferred=selected,
+        )
 
     available = list(providers.available(plane=BrowserPlane.MANAGED))
     if len(available) == 1:
