@@ -97,6 +97,17 @@ class CompositeWorkRoutingTests(unittest.TestCase):
         self.assertNotIn("browser_reference", decision.surfaces)
         self.assertIn("workspace_mutation", decision.surfaces)
 
+    def test_report_does_not_match_repo_marker(self) -> None:
+        decision = classify_composite_work_route(
+            _event(
+                "Use this page as the reference to update the report, then verify it."
+            )
+        )
+
+        self.assertFalse(decision.preempt_narrow_browser)
+        self.assertIn("browser_reference", decision.surfaces)
+        self.assertNotIn("workspace_mutation", decision.surfaces)
+
     def test_repository_documentation_update_is_not_a_browser_reference(self) -> None:
         decision = classify_composite_work_route(
             _event("Update the documentation in this repository and run tests.")
