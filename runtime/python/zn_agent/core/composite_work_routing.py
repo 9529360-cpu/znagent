@@ -22,14 +22,14 @@ _BROWSER_CONTEXT_MARKERS = (
     "current site",
     "this page",
     "current page",
-    "browser",
+    "current browser",
+    "browser page",
     "这个网站",
     "当前网站",
     "这个页面",
     "当前页面",
-    "浏览器",
-    "api 文档",
-    "api文档",
+    "当前浏览器",
+    "浏览器页面",
 )
 
 _BROWSER_REFERENCE_RELATION_MARKERS = (
