@@ -1153,6 +1153,7 @@ class ResidentWorkLedger:
                     artifact_id,thread_id,event_id,kind,name,path,content,metadata_json,created_at
                 ) VALUES(?,?,?,?,?,?,?,?,?)
                 ON CONFLICT(artifact_id) DO UPDATE SET
+                    event_id=excluded.event_id,
                     kind=excluded.kind,
                     name=excluded.name,
                     path=excluded.path,

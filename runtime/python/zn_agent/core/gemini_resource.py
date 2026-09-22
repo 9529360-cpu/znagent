@@ -8,6 +8,8 @@ semantics. ZN therefore keeps a native ``generateContent`` transport here and
 normalizes only the bounded cognitive increment the resident asked for.
 """
 
+import base64
+import json
 import os
 import re
 from typing import Any, Mapping
@@ -21,6 +23,9 @@ from .models import ModelRoute
 
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 GEMINI_DEFAULT_MAX_OUTPUT_TOKENS = 65_535
+GEMINI_MAX_INLINE_IMAGE_BYTES = 12 * 1024 * 1024
+GEMINI_MAX_RESPONSE_SCHEMA_CHARS = 16_384
+_SUPPORTED_INLINE_IMAGE_MIME_TYPES = frozenset({"image/png", "image/jpeg", "image/jpg", "image/webp"})
 
 _FINISH_REASON_MAP = {
     "STOP": "stop",
@@ -157,7 +162,73 @@ class GeminiCognitiveResource:
         text = str(question or "").strip()
         if not text:
             raise ValueError("bounded cognition question must not be empty")
+        return self._invoke_parts(
+            parts=[{"text": text}],
+            context=context,
+            generation=self._generation_config(),
+        )
 
+    def invoke_image(
+        self,
+        *,
+        question: str,
+        context: str,
+        image_bytes: bytes | bytearray | memoryview,
+        mime_type: str = "image/png",
+        response_schema: Mapping[str, Any] | None = None,
+    ) -> CognitiveIncrement:
+        """Ask one bounded visual question about one inline image.
+
+        This is a cognitive resource call only. It never owns screen capture,
+        pointer authority, task state, or any action loop.
+        """
+
+        text = str(question or "").strip()
+        if not text:
+            raise ValueError("bounded visual cognition question must not be empty")
+        if not isinstance(image_bytes, (bytes, bytearray, memoryview)):
+            raise ValueError("inline image must be bytes-like")
+        image = bytes(image_bytes)
+        if not image:
+            raise ValueError("inline image must not be empty")
+        if len(image) > GEMINI_MAX_INLINE_IMAGE_BYTES:
+            raise ValueError(
+                f"inline image exceeds {GEMINI_MAX_INLINE_IMAGE_BYTES} bytes"
+            )
+
+        normalized_mime = str(mime_type or "").strip().lower()
+        if normalized_mime not in _SUPPORTED_INLINE_IMAGE_MIME_TYPES:
+            raise ValueError(
+                "inline image mime_type must be image/png, image/jpeg, image/jpg, or image/webp"
+            )
+
+        increment = self._invoke_parts(
+            parts=[
+                {
+                    "inlineData": {
+                        "mimeType": normalized_mime,
+                        "data": base64.b64encode(image).decode("ascii"),
+                    }
+                },
+                {"text": text},
+            ],
+            context=context,
+            generation=self._generation_config(response_schema=response_schema),
+        )
+        increment.metadata.update(
+            {
+                "input_media_mime_type": normalized_mime,
+                "input_media_bytes": len(image),
+                "structured_output": response_schema is not None,
+            }
+        )
+        return increment
+
+    def _generation_config(
+        self,
+        *,
+        response_schema: Mapping[str, Any] | None = None,
+    ) -> dict[str, Any]:
         generation: dict[str, Any] = {
             "maxOutputTokens": max(
                 1,
@@ -175,9 +246,40 @@ class GeminiCognitiveResource:
         if isinstance(thinking, dict) and thinking:
             generation["thinkingConfig"] = dict(thinking)
 
+        if response_schema is not None:
+            if not isinstance(response_schema, Mapping) or not response_schema:
+                raise ValueError("response_schema must be a non-empty mapping")
+            schema = dict(response_schema)
+            try:
+                encoded = json.dumps(
+                    schema,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    separators=(",", ":"),
+                )
+            except (TypeError, ValueError) as exc:
+                raise ValueError("response_schema must be JSON serializable") from exc
+            if len(encoded) > GEMINI_MAX_RESPONSE_SCHEMA_CHARS:
+                raise ValueError(
+                    f"response_schema exceeds {GEMINI_MAX_RESPONSE_SCHEMA_CHARS} characters"
+                )
+            generation["responseMimeType"] = "application/json"
+            generation["responseJsonSchema"] = schema
+        return generation
+
+    def _invoke_parts(
+        self,
+        *,
+        parts: list[dict[str, Any]],
+        context: str,
+        generation: Mapping[str, Any],
+    ) -> CognitiveIncrement:
+        if not parts:
+            raise ValueError("Gemini request parts must not be empty")
+
         payload: dict[str, Any] = {
-            "contents": [{"role": "user", "parts": [{"text": text}]}],
-            "generationConfig": generation,
+            "contents": [{"role": "user", "parts": list(parts)}],
+            "generationConfig": dict(generation),
         }
         bounded_context = str(context or "").strip()
         if bounded_context:
@@ -231,14 +333,14 @@ class GeminiCognitiveResource:
         if not isinstance(candidate, dict):
             raise GeminiResourceError("Gemini returned an invalid candidate")
         content = candidate.get("content") or {}
-        parts = content.get("parts") if isinstance(content, dict) else None
-        if not isinstance(parts, list):
-            parts = []
+        candidate_parts = content.get("parts") if isinstance(content, dict) else None
+        if not isinstance(candidate_parts, list):
+            candidate_parts = []
 
         text_parts: list[str] = []
         thought_parts: list[str] = []
         thought_signatures: list[str] = []
-        for part in parts:
+        for part in candidate_parts:
             if not isinstance(part, dict):
                 continue
             part_text = part.get("text")
@@ -252,7 +354,10 @@ class GeminiCognitiveResource:
                 text_parts.append(part_text)
 
         finish_raw = str(candidate.get("finishReason") or "")
-        finish_reason = _FINISH_REASON_MAP.get(finish_raw, finish_raw.lower() or "stop")
+        finish_reason = _FINISH_REASON_MAP.get(
+            finish_raw,
+            finish_raw.lower() or "stop",
+        )
         result_text = "\n".join(text_parts).strip()
         if not result_text and finish_raw not in {
             "SAFETY",

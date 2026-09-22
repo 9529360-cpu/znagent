@@ -42,6 +42,7 @@ class NativeActionTests(unittest.TestCase):
                 config={"model": {}},
                 store_path=root / "kernel.db",
             )
+            capabilities_before = resident.capabilities.names()
             self.assertIsInstance(resident, EmbodiedResidentRuntime)
 
             event = resident.enqueue(
@@ -92,7 +93,7 @@ class NativeActionTests(unittest.TestCase):
             self.assertEqual(result.execution_path, ExecutionPath.BODY)
             self.assertEqual(result.model_invocations, 0)
             self.assertIn("independently verifying", result.reason)
-            self.assertEqual(resident.capabilities.names(), ())
+            self.assertEqual(resident.capabilities.names(), capabilities_before)
 
             movements = [
                 item.kind

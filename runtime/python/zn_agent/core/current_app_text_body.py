@@ -10,11 +10,11 @@ from . import side_effect_attempts
 from .automation_text_content import NativeAutomationValueReplacementBody, text_sha256
 from .body import BodyAction, BodyActionResult
 from .local_service_diagnosis import LocalServiceDiagnoser, LocalServiceTarget
-from .machine_capability_body import MachineCapabilityBody
+from .office_com_body import OfficeComAwareBody
 from .models import utc_now
 
 
-class CurrentAppTextAwareBody(MachineCapabilityBody):
+class CurrentAppTextAwareBody(OfficeComAwareBody):
     """Extend the one product Body without creating a second execution surface.
 
     The raw E2E-13 replacement exists only in the live call. Durable action

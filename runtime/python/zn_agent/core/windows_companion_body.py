@@ -27,6 +27,13 @@ from .windows_audio import (
     set_default_render_volume_percent,
     validate_volume_percent,
 )
+from .windows_brightness import (
+    WindowsBrightnessDispatchUncertain,
+    read_active_brightness,
+    set_active_brightness,
+    validate_brightness_percent,
+)
+from .windows_wifi import read_windows_wifi_state
 
 
 class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
@@ -35,6 +42,9 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
     _WINDOWS_CONTEXT_KIND = "windows_companion_context"
     _WINDOWS_VOLUME_READ_KIND = "windows_audio_volume_read"
     _WINDOWS_VOLUME_SET_KIND = "windows_audio_volume_set"
+    _WINDOWS_BRIGHTNESS_READ_KIND = "windows_display_brightness_read"
+    _WINDOWS_BRIGHTNESS_SET_KIND = "windows_display_brightness_set"
+    _WINDOWS_WIFI_READ_KIND = "windows_network_wifi_read"
     _INTERACTIVE_INPUT_KINDS = frozenset({
         "pointer_move",
         "pointer_click",
@@ -43,7 +53,7 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
 
     @classmethod
     def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
-        if kind == cls._WINDOWS_VOLUME_SET_KIND:
+        if kind in {cls._WINDOWS_VOLUME_SET_KIND, cls._WINDOWS_BRIGHTNESS_SET_KIND}:
             return True
         return super()._requires_guard(kind, args)
 
@@ -129,6 +139,127 @@ class WindowsCompanionAwareBody(CurrentAppTextAwareBody):
                     completed_at=utc_now(),
                 )
             return self._ok(action, started, data=data)
+
+        if action.kind == self._WINDOWS_BRIGHTNESS_READ_KIND:
+            if action.args:
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={"dispatch_sent": False, "disposition": "unexpected_arguments"},
+                    error="windows_display_brightness_read accepts no action arguments",
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+            observed = read_active_brightness()
+            return self._ok(
+                action,
+                started,
+                data={
+                    "level_percent": observed.level_percent,
+                    "instance_name": observed.instance_name,
+                    "source": "windows_wmi_brightness",
+                    "read_only": True,
+                    "dispatch_sent": False,
+                },
+            )
+
+        if action.kind == self._WINDOWS_BRIGHTNESS_SET_KIND:
+            if set(action.args) != {"level_percent"}:
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={"dispatch_sent": False, "disposition": "invalid_arguments"},
+                    error="windows_display_brightness_set requires only level_percent",
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+            requested = validate_brightness_percent(action.args["level_percent"])
+            previous = read_active_brightness()
+            try:
+                observed = set_active_brightness(
+                    requested,
+                    expected_instance_name=previous.instance_name,
+                )
+            except WindowsBrightnessDispatchUncertain as exc:
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={
+                        "instance_name": previous.instance_name,
+                        "previous_level_percent": previous.level_percent,
+                        "requested_level_percent": requested,
+                        "verified": False,
+                        "source": "windows_wmi_brightness",
+                        "dispatch_sent": True,
+                        "side_effect_uncertain": True,
+                    },
+                    error=str(exc),
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+            verified = (
+                observed.instance_name == previous.instance_name
+                and abs(observed.level_percent - requested) <= 0.5
+            )
+            data = {
+                "instance_name": observed.instance_name,
+                "previous_level_percent": previous.level_percent,
+                "requested_level_percent": requested,
+                "observed_level_percent": observed.level_percent,
+                "verification_tolerance_percent": 0.5,
+                "verified": verified,
+                "source": "windows_wmi_brightness",
+                "dispatch_sent": True,
+            }
+            if not verified:
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data=data,
+                    error=(
+                        "WMI accepted the brightness write but fresh active-monitor "
+                        "readback did not prove the requested level"
+                    ),
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+            return self._ok(action, started, data=data)
+
+        if action.kind == self._WINDOWS_WIFI_READ_KIND:
+            if action.args:
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={"dispatch_sent": False, "disposition": "unexpected_arguments"},
+                    error="windows_network_wifi_read accepts no action arguments",
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+            observed = read_windows_wifi_state()
+            return self._ok(
+                action,
+                started,
+                data={
+                    "interfaces": [asdict(item) for item in observed.interfaces],
+                    "interface_count": observed.interface_count,
+                    "connected_interface_count": observed.connected_interface_count,
+                    "connected": observed.connected,
+                    "observed_at": observed.observed_at,
+                    "source": "windows_native_wifi",
+                    "read_only": True,
+                    "dispatch_sent": False,
+                },
+            )
 
         if action.kind == self._WINDOWS_CONTEXT_KIND:
             if action.args:

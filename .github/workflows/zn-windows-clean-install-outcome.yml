@@ -1,0 +1,89 @@
+name: ZN Windows Clean Install Outcome
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/zn-windows-clean-install-outcome.yml'
+      - '.github/scripts/classify-zn-windows-clean-install-outcome.cjs'
+      - '.github/scripts/classify-zn-windows-clean-install-outcome.test.cjs'
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/zn-windows-clean-install-outcome.yml'
+      - '.github/scripts/classify-zn-windows-clean-install-outcome.cjs'
+      - '.github/scripts/classify-zn-windows-clean-install-outcome.test.cjs'
+  workflow_run:
+    workflows:
+      - ZN Windows Clean Install
+    types:
+      - completed
+
+permissions:
+  contents: read
+  actions: read
+  statuses: write
+
+jobs:
+  test-classifier:
+    name: Test clean-install outcome classifier
+    if: ${{ github.event_name != 'workflow_run' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Test outcome classification
+        run: node --test .github/scripts/classify-zn-windows-clean-install-outcome.test.cjs
+
+  classify:
+    name: Classify Windows clean-install outcome
+    if: ${{ github.event_name == 'workflow_run' }}
+    permissions:
+      contents: read
+      actions: read
+      statuses: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout trusted classifier from default branch
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+
+      - name: Publish causal clean-install status
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const path = require('node:path')
+            const classifierPath = path.join(process.env.GITHUB_WORKSPACE, '.github', 'scripts', 'classify-zn-windows-clean-install-outcome.cjs')
+            const { classifyCleanInstallOutcome } = require(classifierPath)
+            const run = context.payload.workflow_run
+            if (!run?.head_sha) {
+              core.setFailed('workflow_run head SHA is missing')
+              return
+            }
+            const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: run.id,
+              filter: 'latest',
+              per_page: 100,
+            })
+            const cleanJob = jobs.find(job => job.name === 'Windows x64 clean install and start') || null
+            const outcome = classifyCleanInstallOutcome(run, cleanJob)
+            core.notice(`clean_install.outcome_class=${outcome.classification}`)
+            core.notice(`clean_install.workflow_run_id=${run.id}`)
+            core.notice(`clean_install.workflow_conclusion=${run.conclusion || 'unknown'}`)
+            core.notice(`clean_install.job_conclusion=${cleanJob?.conclusion || 'missing'}`)
+            await github.rest.repos.createCommitStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              sha: run.head_sha,
+              state: outcome.state,
+              context: 'ZN Windows Clean Install',
+              description: outcome.description,
+              target_url: run.html_url,
+            })
