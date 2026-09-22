@@ -99,7 +99,18 @@ class BrowserProviderRegistry:
         candidates.sort(key=lambda item: (-item.priority, item.name))
         return candidates[0]
 
-
+    def available(
+        self,
+        *,
+        plane: BrowserPlane,
+    ) -> tuple[BrowserProviderDescriptor, ...]:
+        rows = [
+            descriptor
+            for descriptor in self._providers.values()
+            if descriptor.plane is plane and descriptor.available()
+        ]
+        rows.sort(key=lambda item: (-item.priority, item.name))
+        return tuple(rows)
 
 
 class ManagedBrowserProviderRouter:
@@ -210,7 +221,7 @@ def default_managed_browser_registry() -> BrowserProviderRegistry:
         BrowserProviderDescriptor(
             name="chrome-devtools-mcp",
             plane=BrowserPlane.MANAGED,
-            priority=100,
+            priority=200,
             factory=ChromeDevToolsMcpManagedBrowser,
             available=chrome_devtools_mcp_available,
             supported_actions=frozenset(
@@ -228,7 +239,7 @@ def default_managed_browser_registry() -> BrowserProviderRegistry:
         BrowserProviderDescriptor(
             name="playwright",
             plane=BrowserPlane.MANAGED,
-            priority=200,
+            priority=100,
             factory=ResearchSemanticPlaywrightManagedBrowser,
             available=lambda: True,
         )
@@ -280,12 +291,12 @@ def build_managed_browser_adapter(
     preferred: str | None = None,
     registry: BrowserProviderRegistry | None = None,
 ) -> BrowserAdapter:
-    """Build the complete interactive managed-browser owner.
+    """Build the capability-routed interactive managed-browser owner.
 
-    The default provider remains Playwright because ZN's active BrowserScene,
-    causal popup and file-transfer contracts extend beyond the base
-    BrowserAdapter protocol. Read-only research uses
-    build_readable_managed_browser_adapter() and can prefer Chrome DevTools MCP.
+    When both providers are available, ordinary semantic browser sessions prefer
+    Chrome DevTools MCP. Sessions whose granted permissions admit actions the
+    mature provider does not yet implement (currently upload/download) route to
+    Playwright before a browser session is opened.
     """
 
     selected = (
@@ -301,11 +312,7 @@ def build_managed_browser_adapter(
         )
         return descriptor.factory()
 
-    available = [
-        descriptor
-        for descriptor in providers._providers.values()
-        if descriptor.plane is BrowserPlane.MANAGED and descriptor.available()
-    ]
+    available = list(providers.available(plane=BrowserPlane.MANAGED))
     if len(available) == 1:
         return available[0].factory()
     if not available:
