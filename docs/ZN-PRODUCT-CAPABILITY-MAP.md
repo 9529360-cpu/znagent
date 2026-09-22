@@ -31,7 +31,6 @@ This map is capability-owned. Representative task stories are evidence, not arch
 | Machine/application inventory | CONNECTED | fresh machine evidence owns application identity |
 | Existing-window activation | VERIFIED NARROW | exact window/process binding; no arbitrary retarget |
 | Pointer/keyboard/UIA | CONNECTED + VERIFIED NARROW | one Body and authority path |
-| Modal window sensing | PRIMITIVE / NOT PRODUCT-WIRED | bounded modal observation remains; automatic task-specific recovery is retired |
 | Action Fabric / app competence | CONNECTED + PARTIAL | reusable action descriptions/recipes; no second execution authority |
 | Audio / brightness / Wi-Fi sensing | PARTIAL | bounded native capabilities only |
 

@@ -46,7 +46,6 @@ on:
       - runtime/python/zn_agent/core/goal_resident.py
       - runtime/python/zn_agent/core/browser_goal_understanding_resident.py
       - runtime/python/zn_agent/core/automation_named_control_sense.py
-      - runtime/python/zn_agent/core/modal_window_sense.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
       - runtime/python/zn_agent/core/pointer_click_semantic_resident.py
@@ -107,7 +106,6 @@ on:
       - runtime/python/zn_agent/core/goal_resident.py
       - runtime/python/zn_agent/core/browser_goal_understanding_resident.py
       - runtime/python/zn_agent/core/automation_named_control_sense.py
-      - runtime/python/zn_agent/core/modal_window_sense.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
       - runtime/python/zn_agent/core/pointer_click_semantic_resident.py

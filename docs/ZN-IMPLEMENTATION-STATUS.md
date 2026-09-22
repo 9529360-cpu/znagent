@@ -27,7 +27,6 @@ External model or tool success is evidence only.
 | Browser semantic grounding | CONNECTED + VERIFIED NARROW | fresh target observation, exact target binding and post-action verification; arbitrary web complexity remains open |
 | Windows application awareness | CONNECTED | installed-app/process/window identity and bounded activation use fresh machine evidence |
 | Windows interactive actions | CONNECTED + VERIFIED NARROW | pointer/keyboard/UIA movements remain Body-owned and authority-gated |
-| Modal window sensing | PRIMITIVE / NOT PRODUCT-WIRED | bounded modal observation remains available, but the task-specific automatic recovery route is retired |
 | Atomic file overwrite | CONNECTED + VERIFIED | staged write, identity checks, durable attempt tracking and recovery contracts |
 | Document/presentation primitives | CONNECTED + PARTIAL | generic document/presentation behaviors remain; scenario-owned document completion paths were retired |
 | Spreadsheet primitives | CONNECTED + PARTIAL | generic workbook operations remain; no task-specific browser-to-sheet product route owns the architecture |
@@ -49,7 +48,7 @@ The cleanup removes product code whose primary owner was a narrow representative
 - browser-result-to-file story route;
 - fixed delegated-worker story orchestration;
 - File-to-Desktop composite goal / semantic grounding route;
-- automatic desktop modal-recovery behavior;
+- task-specific desktop modal sensing/recovery stack;
 - payment-date-specific DOCX inspection and mutation path.
 
 Their removal does not revoke the generic Work, Body, authority, browser, file, research, Office, delegation or recovery mechanisms they previously composed.
