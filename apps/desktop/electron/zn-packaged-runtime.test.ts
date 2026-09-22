@@ -22,9 +22,11 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
   const pythonRelative = process.platform === 'win32' ? 'python/python.exe' : 'python/bin/python3'
   const backendRelative = 'python/site-packages'
   const browserRelative = 'playwright-browsers'
+  const veteranRelative = 'veteran-engineer'
   const python = path.join(runtimeRoot, ...pythonRelative.split('/'))
   const backendRoot = path.join(runtimeRoot, ...backendRelative.split('/'))
   const browserRoot = path.join(runtimeRoot, browserRelative)
+  const veteranRuntimeRoot = path.join(runtimeRoot, veteranRelative)
   fs.mkdirSync(path.dirname(python), { recursive: true })
   fs.writeFileSync(python, 'portable-python')
   fs.mkdirSync(path.join(backendRoot, 'zn_agent', 'core'), { recursive: true })
@@ -32,6 +34,9 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
   fs.writeFileSync(path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py'), '# resident core\n')
   fs.mkdirSync(path.join(browserRoot, 'chromium-fixture'), { recursive: true })
   fs.writeFileSync(path.join(browserRoot, 'chromium-fixture', 'marker'), 'managed chromium')
+  fs.mkdirSync(path.join(veteranRuntimeRoot, 'mcp'), { recursive: true })
+  fs.writeFileSync(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), '// veteran fixture\n')
+  fs.writeFileSync(path.join(veteranRuntimeRoot, 'VENDOR.json'), '{}\n')
   fs.writeFileSync(path.join(runtimeRoot, 'runtime.json'), `${JSON.stringify({
     schema: 1,
     product: 'ZN',
@@ -42,9 +47,10 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
     arch: process.arch,
     python: pythonRelative,
     backend_root: backendRelative,
-    browser_root: browserRelative
+    browser_root: browserRelative,
+    veteran_runtime: veteranRelative
   }, null, 2)}\n`)
-  return { runtimeRoot, runtimeId, backendRoot, browserRoot }
+  return { runtimeRoot, runtimeId, backendRoot, browserRoot, veteranRuntimeRoot }
 }
 
 test('packaged runtime materializes under ZN home and uses only ZN runtime entrypoints', () => {
@@ -61,6 +67,9 @@ test('packaged runtime materializes under ZN home and uses only ZN runtime entry
     assert.equal(env.ZN_RESIDENT_PYTHON, runtime.python)
     assert.equal(runtime.browserRoot, path.join(expectedRoot, 'playwright-browsers'))
     assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, runtime.browserRoot)
+    assert.equal(runtime.veteranRuntimeRoot, path.join(expectedRoot, 'veteran-engineer'))
+    assert.equal(env.ZN_VETERAN_RUNTIME_ROOT, runtime.veteranRuntimeRoot)
+    assert.equal(env.ZN_DESKTOP_EXECUTABLE, path.resolve(process.execPath))
     assert.equal(env[`${retiredProduct.toUpperCase()}_DESKTOP_PYTHON`], undefined)
     assert.equal(env[`${retiredProduct.toUpperCase()}_DESKTOP_${retiredProduct.toUpperCase()}_ROOT`], undefined)
     fs.rmSync(path.join(resourcesPath, 'zn-runtime'), { recursive: true, force: true })
@@ -161,6 +170,33 @@ test('packaged runtime rejects browser root escaping payload root', () => {
     manifest.browser_root = '../machine-browser-cache'
     fs.writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`)
     assert.throws(() => resolveRuntime(runtimeRoot), /browser_root escapes its payload root/)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('packaged runtime rejects Veteran runtime escaping payload root', () => {
+  const root = mkTmpRoot()
+  const resourcesPath = path.join(root, 'resources')
+  try {
+    const { runtimeRoot } = writeBundledRuntime(resourcesPath)
+    const manifestPath = path.join(runtimeRoot, 'runtime.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.veteran_runtime = '../outside-veteran'
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`)
+    assert.throws(() => resolveRuntime(runtimeRoot), /veteran_runtime escapes its payload root/)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('packaged runtime requires declared Veteran MCP server', () => {
+  const root = mkTmpRoot()
+  const resourcesPath = path.join(root, 'resources')
+  try {
+    const { runtimeRoot, veteranRuntimeRoot } = writeBundledRuntime(resourcesPath)
+    fs.rmSync(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'))
+    assert.throws(() => resolveRuntime(runtimeRoot), /Veteran MCP server is missing/)
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }

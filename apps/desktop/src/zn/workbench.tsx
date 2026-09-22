@@ -1,4 +1,27 @@
+import type { TFunction } from 'i18next'
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import {
+  ArrowUp,
+  ArrowsInSimple,
+  ArrowsOutSimple,
+  Brain,
+  CheckCircle,
+  CircleNotch,
+  ClockCounterClockwise,
+  Desktop,
+  FileText,
+  FolderSimple,
+  GearSix,
+  MagnifyingGlass,
+  Paperclip,
+  Plus,
+  Pulse,
+  SidebarSimple,
+  Sparkle,
+  Stop,
+  X
+} from '@phosphor-icons/react'
 
 import {
   applyZnUpdate,
@@ -18,11 +41,15 @@ import {
   type ZnResidentSnapshot,
   type ZnWorkProgress
 } from './resident-client'
+import { describeZnProviderReadiness } from './provider-readiness'
 import {
-  describeZnProviderReadiness,
-  providerUpdateNotice
-} from './provider-readiness'
+  getZnDesktopLocaleState,
+  setZnDesktopLocalePreference
+} from './i18n'
+import type { ZnLocalePreference } from '../../localization/zn-localization'
 import { ZnMissingRestoreControls } from './restore-controls'
+import { ZnSlidesWorkstation } from './slides-workstation'
+import { ZnDocumentWorkstation } from './document-workstation'
 import {
   addZnThreadMessage,
   loadZnThreadCache,
@@ -35,6 +62,7 @@ import {
 
 type ResidentHealth = 'connecting' | 'live' | 'offline'
 type MainView = 'work' | 'settings'
+type WindowMode = 'compact' | 'expanded'
 
 function renderUnknown(value: unknown): string {
   if (typeof value === 'string') return value
@@ -45,41 +73,70 @@ function renderUnknown(value: unknown): string {
   }
 }
 
-function timeLabel(value: number): string {
-  return new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
+function timeLabel(value: number, locale: string): string {
+  return new Intl.DateTimeFormat(locale, { hour: '2-digit', minute: '2-digit' }).format(new Date(value))
 }
 
-function artifactKindLabel(kind: string): string {
-  if (kind === 'diff') return 'Diff'
-  if (kind === 'file') return 'File'
-  if (kind === 'terminal') return 'Terminal'
-  return 'Artifact'
+function artifactKindLabel(kind: string, t: TFunction): string {
+  if (kind === 'diff') return t('artifact.diff')
+  if (kind === 'file') return t('artifact.file')
+  if (kind === 'terminal') return t('artifact.terminal')
+  if (kind === 'presentation') return 'Slides'
+  return t('artifact.other')
 }
 
-function restorePointStatusLabel(status: ZnRestorePointCurrentStatus): string {
-  if (status === 'unchanged') return 'Current target unchanged'
-  if (status === 'changed') return 'Current target changed'
-  if (status === 'missing') return 'Current target missing'
-  return 'Current target cannot be compared safely'
+function restorePointStatusLabel(status: ZnRestorePointCurrentStatus, t: TFunction): string {
+  if (status === 'unchanged') return t('restore.status.unchanged')
+  if (status === 'changed') return t('restore.status.changed')
+  if (status === 'missing') return t('restore.status.missing')
+  return t('restore.status.unsupported')
 }
 
-function restoreProposalStatusLabel(status: ZnRestoreProposalStatus): string {
-  if (status === 'candidate') return 'Restore candidate'
-  if (status === 'conflict_review_required') return 'Review current changes before any restore'
-  if (status === 'missing_target_review_required') return 'Review missing target before any restore'
-  return 'Restore proposal blocked'
+function restoreProposalStatusLabel(status: ZnRestoreProposalStatus, t: TFunction): string {
+  if (status === 'candidate') return t('restore.proposal.candidate')
+  if (status === 'conflict_review_required') return t('restore.proposal.conflict')
+  if (status === 'missing_target_review_required') return t('restore.proposal.missing')
+  return t('restore.proposal.blocked')
 }
 
-function delegatedKindLabel(kind: string): string {
-  if (kind === 'research') return 'Research'
-  if (kind === 'coding') return 'Coding'
-  if (kind === 'review') return 'Review'
-  return 'Work'
+function delegatedKindLabel(kind: string, t: TFunction): string {
+  if (kind === 'research') return t('delegated.kind.research')
+  if (kind === 'coding') return t('delegated.kind.coding')
+  if (kind === 'review') return t('delegated.kind.review')
+  return t('delegated.kind.work')
 }
 
-function delegatedStageLabel(stage: string): string {
-  if (stage === 'result_ready') return 'result ready'
+function statusLabel(status: string, t: TFunction): string {
+  if (status === 'pending') return t('status.pending')
+  if (status === 'running') return t('status.running')
+  if (status === 'completed') return t('status.completed')
+  if (status === 'failed') return t('status.failed')
+  if (status === 'blocked') return t('status.blocked')
+  if (status === 'cancelled' || status === 'canceled') return t('status.cancelled')
+  if (status === 'superseded') return t('status.superseded')
+  if (status === 'waiting_for_user') return t('status.waitingForUser')
+  return status.replaceAll('_', ' ')
+}
+
+function stageLabel(stage: string, t: TFunction): string {
+  if (stage === 'result_ready') return t('delegated.stage.resultReady')
+  if (stage === 'queued') return t('stage.queued')
+  if (stage === 'waiting') return t('stage.waiting')
+  if (stage === 'starting') return t('stage.starting')
+  if (stage === 'preparing') return t('stage.preparing')
+  if (stage === 'acting') return t('stage.acting')
+  if (stage === 'verifying') return t('stage.verifying')
+  if (stage === 'verified') return t('stage.verified')
+  if (stage === 'working') return t('stage.working')
+  if (stage === 'completed') return t('stage.completed')
+  if (stage === 'failed') return t('stage.failed')
+  if (stage === 'superseded') return t('stage.superseded')
+  if (stage === 'inspection_complete') return t('stage.inspectionComplete')
   return stage.replaceAll('_', ' ')
+}
+
+function delegatedStageLabel(stage: string, t: TFunction): string {
+  return stageLabel(stage, t)
 }
 
 function delegatedStatusMarker(status: string): string {
@@ -90,23 +147,88 @@ function delegatedStatusMarker(status: string): string {
   return '○'
 }
 
-function credentialLabel(settings: ZnProviderSettings | null): string {
-  if (!settings) return 'Credential status unavailable'
+type ExecutionEvidence = {
+  executionPath: string
+  modelInvocations: number
+}
+
+function executionPathLabel(path: string, t: TFunction): string {
+  if (path === 'memory') return t('execution.memory')
+  if (path === 'capability') return t('execution.capability')
+  if (path === 'investigation') return t('execution.investigation')
+  if (path === 'body') return t('execution.body')
+  if (path === 'model') return t('execution.model')
+  if (path === 'control') return t('execution.control')
+  if (path === 'budget_blocked') return t('execution.budgetBlocked')
+  return path.replaceAll('_', ' ')
+}
+
+function executionEvidenceFromDetail(detail?: Record<string, unknown>): ExecutionEvidence | null {
+  if (!detail) return null
+  const executionPath = String(detail.execution_path ?? detail.executionPath ?? '').trim()
+  const modelInvocations = Number(detail.model_invocations ?? detail.modelInvocations)
+  if (!executionPath || !Number.isSafeInteger(modelInvocations) || modelInvocations < 0) return null
+  return { executionPath, modelInvocations }
+}
+
+function credentialLabel(settings: ZnProviderSettings | null, t: TFunction): string {
+  if (!settings) return t('credential.unavailable')
   const { credential } = settings
-  if (credential.source === 'secure_store') return 'Credential stored in the resident secure store'
+  if (credential.source === 'secure_store') return t('credential.secureStore')
   if (credential.source === 'environment') {
-    return `Credential supplied by ${credential.environmentName || 'provider environment'}`
+    return t('credential.environment', {
+      environment: credential.environmentName || t('credential.environmentFallback')
+    })
   }
-  if (credential.source === 'config') return 'Legacy plaintext credential exists in config; replace it to migrate securely'
-  if (credential.source === 'secure_store_unavailable') return 'Credential reference exists, but this OS secure store is unavailable'
-  return 'No credential configured; local providers or provider environment variables can still work'
+  if (credential.source === 'config') return t('credential.config')
+  if (credential.source === 'secure_store_unavailable') return t('credential.secureStoreUnavailable')
+  return t('credential.none')
+}
+
+function providerReadinessDetail(
+  settings: ZnProviderSettings | null,
+  t: TFunction
+): string {
+  if (!settings) return t('provider.checking.detail')
+  if (settings.cognitionAvailable) {
+    const active = settings.activeRoutes[0]
+    const route = active
+      ? [active.provider, active.model].filter(Boolean).join(' · ')
+      : [settings.provider, settings.model].filter(Boolean).join(' · ')
+    return route || t('provider.ready.detail')
+  }
+  const error = settings.configurationError?.trim()
+  if (error) return error
+  if (!settings.model.trim()) return t('provider.notConfigured.detail')
+  return t('provider.unavailable.detail')
+}
+
+function threadDisplayTitle(title: string, t: TFunction): string {
+  return title === 'New work' ? t('sidebar.newWork') : title
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => window.setTimeout(resolve, ms))
 }
 
+function focusComposerInput(): void {
+  window.requestAnimationFrame(() => {
+    const composer = document.querySelector<HTMLTextAreaElement>('.zn-composer textarea')
+    composer?.focus()
+    composer?.setSelectionRange(composer.value.length, composer.value.length)
+  })
+}
+
+const ZN_HOME_QUICK_STARTS = [
+  { labelKey: 'home.openApp', promptKey: 'home.prompt.openApp' },
+  { labelKey: 'home.cleanApp', promptKey: 'home.prompt.cleanApp' },
+  { labelKey: 'home.researchTopic', promptKey: 'home.prompt.researchTopic' }
+] as const
+
 export function ZnWorkbench() {
+  const { t } = useTranslation()
+  const [localeState, setLocaleState] = useState(getZnDesktopLocaleState)
+  const [localeBusy, setLocaleBusy] = useState(false)
   const [threads, setThreads] = useState<ZnThread[]>(() => {
     const cached = loadZnThreadCache()
     return cached.length > 0 ? cached : [newZnThread()]
@@ -121,7 +243,8 @@ export function ZnWorkbench() {
   const [cancelBusy, setCancelBusy] = useState(false)
   const [workspaceBusy, setWorkspaceBusy] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
-  const [contextOpen, setContextOpen] = useState(true)
+  const [contextOpen, setContextOpen] = useState(false)
+  const [windowMode, setWindowMode] = useState<WindowMode>(() => window.innerWidth <= 720 ? 'compact' : 'expanded')
   const [residentHealth, setResidentHealth] = useState<ResidentHealth>('connecting')
   const [residentSnapshot, setResidentSnapshot] = useState<ZnResidentSnapshot | null>(null)
   const [residentError, setResidentError] = useState<string | null>(null)
@@ -142,6 +265,18 @@ export function ZnWorkbench() {
   )
   const activeWorkspace = activeThread?.workspace || null
   const activeArtifacts = useMemo(() => activeThread?.artifacts || [], [activeThread])
+  const activeWorkstationArtifact = useMemo(
+    () => activeArtifacts.find(
+      artifact => artifact.kind === 'presentation' || artifact.kind === 'document'
+    ) || null,
+    [activeArtifacts]
+  )
+  const activePresentation = activeWorkstationArtifact?.kind === 'presentation'
+    ? activeWorkstationArtifact
+    : null
+  const activeDocument = activeWorkstationArtifact?.kind === 'document'
+    ? activeWorkstationArtifact
+    : null
   const activeRestorePoints = activeThread?.restorePoints
   const selectedArtifact = useMemo(
     () => activeArtifacts.find(artifact => artifact.id === selectedArtifactId) || activeArtifacts[0] || null,
@@ -157,6 +292,20 @@ export function ZnWorkbench() {
     () => describeZnProviderReadiness(providerSettings),
     [providerSettings]
   )
+  const localizedProviderReadinessDetail = useMemo(
+    () => providerReadinessDetail(providerSettings, t),
+    [providerSettings, t]
+  )
+
+  const changeLocale = useCallback(async (preference: ZnLocalePreference) => {
+    if (localeBusy || preference === localeState.preference) return
+    setLocaleBusy(true)
+    try {
+      setLocaleState(await setZnDesktopLocalePreference(preference))
+    } finally {
+      setLocaleBusy(false)
+    }
+  }, [localeBusy, localeState.preference])
 
   useEffect(() => saveZnThreadCache(threads), [threads])
 
@@ -258,6 +407,39 @@ export function ZnWorkbench() {
     return window.znDesktop?.shell?.onDeepLink(link => {
       setDeepLinkNotice(link)
       setView('work')
+    })
+  }, [])
+
+  useEffect(() => {
+    const syncWindowMode = () => setWindowMode(window.innerWidth <= 720 ? 'compact' : 'expanded')
+    syncWindowMode()
+    window.addEventListener('resize', syncWindowMode)
+    return () => window.removeEventListener('resize', syncWindowMode)
+  }, [])
+
+  useEffect(() => {
+    return window.znDesktop?.shell?.onGlobalInvocation(() => {
+      setWindowMode('compact')
+      setView('work')
+      setContextOpen(false)
+      focusComposerInput()
+    })
+  }, [])
+
+  useEffect(() => {
+    return window.znDesktop?.shell?.onWindowModeTransition(transition => {
+      if (transition.phase === 'prepare') {
+        if (transition.mode === 'compact') setContextOpen(false)
+        window.requestAnimationFrame(() => {
+          void window.znDesktop?.shell?.ackWindowModeTransition({
+            transitionId: transition.transitionId,
+            mode: transition.mode
+          })
+        })
+        return
+      }
+      setWindowMode(transition.mode)
+      if (transition.mode === 'compact') setContextOpen(false)
     })
   }, [])
 
@@ -368,7 +550,7 @@ export function ZnWorkbench() {
           return
         }
         if (!current.finalized) {
-          throw new Error(current.error || 'Resident work ended without a durable work outcome')
+          throw new Error(current.error || t('error.missingDurableOutcome'))
         }
         if (!finalThread) {
           const update = await loadZnWorkProgress(progressThreadId, current.eventId)
@@ -378,7 +560,7 @@ export function ZnWorkbench() {
           replaceThread(finalThread)
           if (finalThread.artifacts.length > 0) {
             setSelectedArtifactId(finalThread.artifacts[0].id)
-            setContextOpen(true)
+            setContextOpen(false)
           }
         }
         setWorkProgress(null)
@@ -398,7 +580,7 @@ export function ZnWorkbench() {
         }
         setResidentError(
           residentAccepted
-            ? `${message} ZN may keep working on this task while the desktop reconnects.`
+            ? t('error.desktopReconnect', { message })
             : message
         )
         setResidentHealth(residentAccepted ? 'connecting' : 'offline')
@@ -406,7 +588,7 @@ export function ZnWorkbench() {
         setBusy(false)
       }
     },
-    [activeThread, busy, draft, replaceThread]
+    [activeThread, busy, draft, replaceThread, t]
   )
 
   const saveProvider = useCallback(async (event: FormEvent) => {
@@ -420,14 +602,16 @@ export function ZnWorkbench() {
         ...(providerApiKey.trim() ? { apiKey: providerApiKey } : {})
       })
       applyProviderSettings(settings)
-      setProviderNotice(providerUpdateNotice(settings))
+      const readiness = describeZnProviderReadiness(settings)
+      const detail = providerReadinessDetail(settings, t)
+      setProviderNotice(t(readiness.ready ? 'provider.notice.ready' : 'provider.notice.notReady', { detail }))
       setResidentHealth('live')
     } catch (error) {
       setProviderNotice(error instanceof Error ? error.message : String(error))
     } finally {
       setProviderBusy(false)
     }
-  }, [applyProviderSettings, providerApiKey, providerBaseUrl, providerModel, providerName])
+  }, [applyProviderSettings, providerApiKey, providerBaseUrl, providerModel, providerName, t])
 
   const clearProviderCredential = useCallback(async () => {
     if (!providerSettings?.editable) return
@@ -440,13 +624,13 @@ export function ZnWorkbench() {
         clearCredential: true
       })
       applyProviderSettings(settings)
-      setProviderNotice('Stored provider credential cleared.')
+      setProviderNotice(t('settings.models.storedCredentialCleared'))
     } catch (error) {
       setProviderNotice(error instanceof Error ? error.message : String(error))
     } finally {
       setProviderBusy(false)
     }
-  }, [applyProviderSettings, providerBaseUrl, providerModel, providerName, providerSettings?.editable])
+  }, [applyProviderSettings, providerBaseUrl, providerModel, providerName, providerSettings?.editable, t])
 
   const checkUpdates = useCallback(async () => {
     setUpdateBusy(true)
@@ -476,171 +660,252 @@ export function ZnWorkbench() {
   }, [])
 
   const showClearCredential = providerSettings?.credential.source === 'secure_store' || providerSettings?.credential.source === 'config'
-  const showProviderGuidance = providerSettings !== null && !providerSettings.cognitionAvailable
+  const chooseHomePrompt = (prompt: string) => {
+    setDraft(prompt)
+    focusComposerInput()
+  }
+
+  const requestWindowMode = useCallback((mode: WindowMode) => {
+    if (mode === 'compact') setContextOpen(false)
+    void window.znDesktop?.shell?.setWindowMode?.(mode).catch(error => {
+      console.error('[ZN] failed to request resident window mode', error)
+    })
+  }, [])
+
+  useEffect(() => {
+    if (activeWorkstationArtifact && view === 'work') requestWindowMode('expanded')
+  }, [activeWorkstationArtifact?.id, activeThreadId, requestWindowMode, view])
+
+  const openSettings = useCallback(() => {
+    setView('settings')
+    requestWindowMode('expanded')
+  }, [requestWindowMode])
+
+  const openDetails = useCallback(() => {
+    setContextOpen(true)
+    requestWindowMode('expanded')
+  }, [requestWindowMode])
+
+  const toggleWindowMode = useCallback(() => {
+    if (windowMode === 'expanded') {
+      if (view === 'settings') setView('work')
+      requestWindowMode('compact')
+      focusComposerInput()
+      return
+    }
+    requestWindowMode('expanded')
+  }, [requestWindowMode, view, windowMode])
+
+  const showActiveWork = workProgress && activeThread && workProgress.threadId === activeThread.id && !workProgress.finalized
+  const firstResult = activeArtifacts[0] || null
 
   return (
-    <div className={`zn-app${contextOpen ? '' : ' context-closed'}`}>
+    <div className={'zn-app ' + windowMode + (contextOpen ? ' details-open' : '') + (activePresentation && view === 'work' ? ' slides-open' : '') + (activeDocument && view === 'work' ? ' document-open' : '')}>
       <aside className="zn-sidebar">
         <div className="zn-brand-row">
-          <div className="zn-mark">ZN</div>
-          <div>
+          <div className="zn-mark" aria-hidden="true">ZN</div>
+          <div className="zn-brand-copy">
             <div className="zn-brand">ZN</div>
-            <div className="zn-muted zn-small">your ideas, further.</div>
+            <div className="zn-muted zn-small">{t('sidebar.alwaysHere')}</div>
           </div>
         </div>
 
         <button className="zn-primary zn-new-work" type="button" onClick={openNewWork}>
-          + New task
+          <Plus size={16} weight="bold" />
+          <span>{t('sidebar.newWork')}</span>
         </button>
-        <input
-          className="zn-search"
-          aria-label="Search recent work"
-          placeholder="Search"
-          value={query}
-          onChange={event => setQuery(event.target.value)}
-        />
 
-        <nav className="zn-nav" aria-label="Recent work">
-          <div className="zn-section-label">Recent</div>
+        <label className="zn-search-shell">
+          <MagnifyingGlass size={15} />
+          <input
+            className="zn-search"
+            aria-label={t('sidebar.searchRecent')}
+            placeholder={t('sidebar.searchRecent')}
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+          />
+        </label>
+
+        <nav className="zn-nav" aria-label={t('topbar.recentWork')}>
+          <div className="zn-section-label">{t('sidebar.recent')}</div>
           <div className="zn-thread-list">
             {recentThreads.map(thread => (
               <button
-                className={`zn-thread-link${thread.id === activeThread?.id && view === 'work' ? ' active' : ''}`}
+                className={'zn-thread-link' + (thread.id === activeThread?.id && view === 'work' ? ' active' : '')}
                 key={thread.id}
                 type="button"
                 onClick={() => {
                   setActiveThreadId(thread.id)
                   setView('work')
-                  setContextOpen(true)
+                  setContextOpen(false)
                   void refreshRestorePoints(thread.id)
                 }}
               >
-                <span>{thread.title}</span>
-                <span className="zn-thread-time">{timeLabel(thread.updatedAt)}</span>
+                <span>{threadDisplayTitle(thread.title, t)}</span>
+                <span className="zn-thread-time">{timeLabel(thread.updatedAt, localeState.resolvedLocale)}</span>
               </button>
             ))}
           </div>
 
-          <div className="zn-section-label zn-section-spaced">Workspaces</div>
+          <div className="zn-section-label zn-section-spaced">{t('sidebar.workspaces')}</div>
           <div className="zn-workspace-card">
-            <span className="zn-workspace-dot" />
+            <FolderSimple size={17} />
             <div className="zn-workspace-copy">
-              <div>{activeWorkspace?.name || 'Local work'}</div>
-              <div
-                className="zn-muted zn-small zn-workspace-path"
-                title={activeWorkspace?.path}
-              >
-                {activeWorkspace?.path || 'No folder attached'}
+              <div>{activeWorkspace?.name || t('sidebar.localWork')}</div>
+              <div className="zn-muted zn-small zn-workspace-path" title={activeWorkspace?.path}>
+                {activeWorkspace?.path || t('sidebar.noFolder')}
               </div>
             </div>
           </div>
           <div className="zn-workspace-actions">
             <button type="button" disabled={workspaceBusy || busy || !activeThread} onClick={() => void attachWorkspace()}>
-              {workspaceBusy ? 'Working…' : activeWorkspace ? 'Change folder' : 'Attach folder'}
+              {workspaceBusy ? t('common.working') : activeWorkspace ? t('sidebar.changeFolder') : t('sidebar.attachFolder')}
             </button>
             {activeWorkspace ? (
               <button type="button" disabled={workspaceBusy || busy} onClick={() => void detachWorkspace()}>
-                Detach
+                {t('sidebar.detach')}
               </button>
             ) : null}
           </div>
         </nav>
 
         <div className="zn-sidebar-footer">
-          <button
-            className={`zn-nav-button${view === 'settings' ? ' active' : ''}`}
-            type="button"
-            onClick={() => setView('settings')}
-          >
-            Settings
-          </button>
-          <button className="zn-nav-button" type="button" onClick={() => setContextOpen(value => !value)}>
-            {contextOpen ? 'Hide context' : 'Show context'}
+          <button className="zn-nav-button" type="button" onClick={openSettings}>
+            <GearSix size={16} />
+            <span>{t('settings.title')}</span>
           </button>
         </div>
       </aside>
 
       <section className="zn-main-column">
         <header className="zn-topbar">
-          <div>
-            <div className="zn-topbar-title">
-              {view === 'settings' ? 'Settings' : activeThread?.title || 'New work'}
-            </div>
-            <div className="zn-muted zn-small">
-              {view === 'settings' ? 'ZN desktop' : activeWorkspace?.name || 'Local work'}
+          <div className="zn-topbar-brand">
+            <div className="zn-mark zn-mark-small" aria-hidden="true">ZN</div>
+            <div>
+              <div className="zn-brand">ZN</div>
+              <div className="zn-topbar-presence">
+                <span className={'zn-health-dot ' + residentHealth} />
+                {residentHealth === 'live' ? t('common.ready') : residentHealth === 'connecting' ? t('common.connecting') : t('common.offline')}
+              </div>
             </div>
           </div>
-          <button className="zn-resident-pill" type="button" onClick={() => void refreshResident()}>
-            <span className={`zn-health-dot ${residentHealth}`} />
-            {residentHealth === 'live' ? 'ZN ready' : residentHealth === 'connecting' ? 'Connecting' : 'Offline'}
-          </button>
+
+          <div className="zn-topbar-copy">
+            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeWorkstationArtifact ? activeWorkstationArtifact.name : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
+            <div className="zn-muted zn-small">{view === 'settings' ? `ZN · ${t('topbar.thisComputer')}` : activeWorkspace?.name || t('topbar.thisComputer')}</div>
+          </div>
+
+          <div className="zn-topbar-actions">
+            <button type="button" aria-label={t('topbar.recentWork')} title={t('topbar.recentWork')} onClick={() => requestWindowMode('expanded')}>
+              <ClockCounterClockwise size={17} />
+            </button>
+            <button type="button" aria-label={t('topbar.workDetails')} title={t('details.title')} disabled={!activeThread} onClick={openDetails}>
+              <SidebarSimple size={17} />
+            </button>
+            <button type="button" aria-label={t('topbar.openSettings')} title={t('settings.title')} onClick={openSettings}>
+              <GearSix size={17} />
+            </button>
+            <button
+              type="button"
+              aria-label={windowMode === 'compact' ? t('topbar.expandZn') : t('topbar.compactZn')}
+              title={windowMode === 'compact' ? t('topbar.expand') : t('topbar.compact')}
+              onClick={toggleWindowMode}
+            >
+              {windowMode === 'compact' ? <ArrowsOutSimple size={17} /> : <ArrowsInSimple size={17} />}
+            </button>
+          </div>
         </header>
 
         {view === 'settings' ? (
           <main className="zn-settings">
             <div className="zn-page-intro">
-              <span className="zn-eyebrow">ZN desktop</span>
-              <h1>Settings</h1>
-              <p>
-                Settings apply to ZN on this device. Provider secrets stay behind ZN's secure credential boundary and are never returned to this renderer.
-              </p>
+              <span className="zn-eyebrow">{t('settings.eyebrow')}</span>
+              <h1>{t('settings.title')}</h1>
+              <p>{t('settings.description')}</p>
             </div>
             <div className="zn-settings-grid">
               <section className="zn-card">
-                <h2>Background service</h2>
-                <p className="zn-muted">
-                  ZN can stay available when this window closes, so longer tasks can continue and reconnect here later.
+                <h2>{t('settings.language.title')}</h2>
+                <p className="zn-muted">{t('settings.language.description')}</p>
+                <label className="zn-setting-field">
+                  <span className="zn-context-title">{t('settings.language.label')}</span>
+                  <select
+                    className="zn-search"
+                    aria-label={t('settings.language.label')}
+                    value={localeState.preference}
+                    disabled={localeBusy}
+                    onChange={event => void changeLocale(event.target.value as ZnLocalePreference)}
+                  >
+                    <option value="system">{t('settings.language.system')}</option>
+                    <option value="zh-CN">{t('settings.language.zhCN')}</option>
+                    <option value="en-US">{t('settings.language.enUS')}</option>
+                  </select>
+                </label>
+                <p className="zn-muted zn-small">
+                  {t('settings.language.systemDetected', {
+                    languages: localeState.preferredSystemLanguages.join(', ') || localeState.resolvedLocale
+                  })}
                 </p>
-                <button type="button" onClick={() => void refreshResident()}>Refresh status</button>
+              </section>
+
+              <section className="zn-card">
+                <h2>{t('settings.background.title')}</h2>
+                <p className="zn-muted">{t('settings.background.description')}</p>
+                <button type="button" onClick={() => void refreshResident()}>{t('settings.background.refresh')}</button>
                 {residentError ? <div className="zn-error-text">{residentError}</div> : null}
                 <details>
-                  <summary className="zn-muted zn-small">Technical details</summary>
-                  <pre className="zn-compact-pre">{residentSnapshot ? renderUnknown(residentSnapshot) : 'Waiting for ZN…'}</pre>
+                  <summary className="zn-muted zn-small">{t('settings.background.technical')}</summary>
+                  <pre className="zn-compact-pre">{residentSnapshot ? renderUnknown(residentSnapshot) : t('settings.background.waiting')}</pre>
                 </details>
               </section>
+
               <section className="zn-card">
-                <h2>Models & providers</h2>
-                <p className="zn-muted">
-                  Choose the model connection ZN can use for open-ended reasoning. Saving here applies the connection without replacing ZN's identity or history.
-                </p>
+                <h2>{t('settings.models.title')}</h2>
+                <p className="zn-muted">{t('settings.models.description')}</p>
                 {providerSettings && !providerSettings.editable ? (
                   <>
                     <div className="zn-setting-state">
-                      Advanced {providerSettings.mode} configuration is active
-                      {providerSettings.routeCount ? ` · ${providerSettings.routeCount} routes` : ''}.
+                      {t('settings.models.advancedActive', {
+                        mode: providerSettings.mode,
+                        routes: providerSettings.routeCount
+                          ? t('settings.models.routes', { count: providerSettings.routeCount })
+                          : ''
+                      })}
                     </div>
-                    <p className="zn-muted zn-small">
-                      The simple editor will not overwrite advanced model routing configuration.
-                    </p>
+                    <p className="zn-muted zn-small">{t('settings.models.advancedWarning')}</p>
                   </>
                 ) : (
                   <form onSubmit={saveProvider}>
-                    <div className="zn-context-title">Provider</div>
-                    <input className="zn-search" aria-label="Model provider" value={providerName} disabled={providerBusy} onChange={event => setProviderName(event.target.value)} placeholder="openai, anthropic, gemini, ollama…" />
-                    <div className="zn-context-title zn-context-title-spaced">Model</div>
-                    <input className="zn-search" aria-label="Provider model" value={providerModel} disabled={providerBusy} onChange={event => setProviderModel(event.target.value)} placeholder="Model ID" />
-                    <div className="zn-context-title zn-context-title-spaced">Base URL</div>
-                    <input className="zn-search" aria-label="Provider base URL" value={providerBaseUrl} disabled={providerBusy} onChange={event => setProviderBaseUrl(event.target.value)} placeholder="Optional custom endpoint" />
-                    <div className="zn-context-title zn-context-title-spaced">Credential</div>
-                    <input className="zn-search" aria-label="Provider API key" type="password" autoComplete="new-password" value={providerApiKey} disabled={providerBusy} onChange={event => setProviderApiKey(event.target.value)} placeholder={providerSettings?.credential.configured ? 'Leave blank to keep current credential' : 'Optional for local/env-configured providers'} />
-                    <p className="zn-muted zn-small">{credentialLabel(providerSettings)}</p>
-                    {providerSettings ? <p className="zn-muted zn-small">Secure store: {providerSettings.credential.secureStore.available ? 'available' : 'unavailable'} · {providerSettings.credential.secureStore.backend}</p> : null}
+                    <div className="zn-context-title">{t('settings.models.provider')}</div>
+                    <input className="zn-search" aria-label={t('settings.models.providerAria')} value={providerName} disabled={providerBusy} onChange={event => setProviderName(event.target.value)} placeholder="openai, anthropic, gemini, ollama..." />
+                    <div className="zn-context-title zn-context-title-spaced">{t('settings.models.model')}</div>
+                    <input className="zn-search" aria-label={t('settings.models.modelAria')} value={providerModel} disabled={providerBusy} onChange={event => setProviderModel(event.target.value)} placeholder={t('settings.models.modelPlaceholder')} />
+                    <div className="zn-context-title zn-context-title-spaced">{t('settings.models.baseUrl')}</div>
+                    <input className="zn-search" aria-label={t('settings.models.baseUrlAria')} value={providerBaseUrl} disabled={providerBusy} onChange={event => setProviderBaseUrl(event.target.value)} placeholder={t('settings.models.baseUrlPlaceholder')} />
+                    <div className="zn-context-title zn-context-title-spaced">{t('settings.models.credential')}</div>
+                    <input className="zn-search" aria-label={t('settings.models.credentialAria')} type="password" autoComplete="new-password" value={providerApiKey} disabled={providerBusy} onChange={event => setProviderApiKey(event.target.value)} placeholder={providerSettings?.credential.configured ? t('settings.models.keepCredential') : t('settings.models.optionalCredential')} />
+                    <p className="zn-muted zn-small">{credentialLabel(providerSettings, t)}</p>
+                    {providerSettings ? <p className="zn-muted zn-small">{t('settings.models.secureStore', {
+                      status: providerSettings.credential.secureStore.available ? t('common.available') : t('common.unavailable'),
+                      backend: providerSettings.credential.secureStore.backend
+                    })}</p> : null}
                     {providerSettings?.configurationError ? <div className="zn-error-text">{providerSettings.configurationError}</div> : null}
                     {providerNotice ? <div className="zn-setting-state">{providerNotice}</div> : null}
-                    <div className="zn-inline-actions" style={{ marginTop: 12 }}>
-                      <button className="zn-primary" type="submit" disabled={providerBusy || !providerName.trim() || !providerModel.trim()}>{providerBusy ? 'Applying…' : 'Save provider'}</button>
-                      {showClearCredential ? <button type="button" disabled={providerBusy} onClick={() => void clearProviderCredential()}>Clear credential</button> : null}
-                      <button type="button" disabled={providerBusy} onClick={() => void refreshProviderSettings()}>Refresh</button>
+                    <div className="zn-inline-actions zn-settings-actions">
+                      <button className="zn-primary" type="submit" disabled={providerBusy || !providerName.trim() || !providerModel.trim()}>{providerBusy ? t('common.applying') : t('settings.models.save')}</button>
+                      {showClearCredential ? <button type="button" disabled={providerBusy} onClick={() => void clearProviderCredential()}>{t('settings.models.clearCredential')}</button> : null}
+                      <button type="button" disabled={providerBusy} onClick={() => void refreshProviderSettings()}>{t('common.refresh')}</button>
                     </div>
                   </form>
                 )}
               </section>
+
               <section className="zn-card">
-                <h2>Updates</h2>
-                <p className="zn-muted">Check the ZN stable channel without source-repository credentials.</p>
+                <h2>{t('settings.updates.title')}</h2>
+                <p className="zn-muted">{t('settings.updates.description')}</p>
                 <div className="zn-inline-actions">
-                  <button type="button" disabled={updateBusy} onClick={() => void checkUpdates()}>{updateBusy ? 'Checking…' : 'Check for updates'}</button>
-                  {updateStatus?.updateAvailable ? <button className="zn-primary" type="button" disabled={updateBusy} onClick={() => void applyUpdate()}>Apply {updateStatus.availableVersion || 'update'}</button> : null}
+                  <button type="button" disabled={updateBusy} onClick={() => void checkUpdates()}>{updateBusy ? t('common.checking') : t('settings.updates.check')}</button>
+                  {updateStatus?.updateAvailable ? <button className="zn-primary" type="button" disabled={updateBusy} onClick={() => void applyUpdate()}>{t('settings.updates.apply', { version: updateStatus.availableVersion || t('settings.updates.updateFallback') })}</button> : null}
                 </div>
                 {updateStatus ? <pre className="zn-compact-pre">{renderUnknown(updateStatus)}</pre> : null}
               </section>
@@ -648,142 +913,314 @@ export function ZnWorkbench() {
           </main>
         ) : (
           <>
+            {activeDocument ? (
+              <ZnDocumentWorkstation artifact={activeDocument} />
+            ) : activePresentation ? (
+              <ZnSlidesWorkstation artifact={activePresentation} artifacts={activeArtifacts} />
+            ) : (
             <main className="zn-thread-surface">
-              {showProviderGuidance ? (
-                <div className="zn-notice" role="status">
-                  <strong>{providerReadiness.headline}.</strong> {providerReadiness.detail}
-                  <div className="zn-muted zn-small">
-                    Open-ended model-backed reasoning needs a working provider and model. Local and deterministic Resident paths remain available.
-                  </div>
-                  <button type="button" onClick={() => setView('settings')}>Open Settings</button>
+              {deepLinkNotice ? (
+                <div className="zn-notice">
+                  <strong>{t('deepLink.received')}</strong> {t('deepLink.safe')}
+                  <button type="button" onClick={() => setDeepLinkNotice(null)}>{t('deepLink.dismiss')}</button>
                 </div>
               ) : null}
-              {deepLinkNotice ? <div className="zn-notice"><strong>Deep link received.</strong> Nothing was executed automatically.<button type="button" onClick={() => setDeepLinkNotice(null)}>Dismiss</button></div> : null}
+
+              {activeThread && activeThread.messages.length === 0 && !showActiveWork ? (
+                <section className="zn-home">
+                  <div className="zn-home-hero">
+                    <span className="zn-home-orbit"><Sparkle size={18} weight="fill" /></span>
+                    <span className="zn-eyebrow">{t('home.eyebrow')}</span>
+                    <h1>{t('home.title')}</h1>
+                    <p>{t('home.description')}</p>
+                  </div>
+
+                  <div className="zn-home-quick-starts" aria-label={t('home.quickStartsAria')}>
+                    {ZN_HOME_QUICK_STARTS.map((action, index) => (
+                      <button key={action.labelKey} type="button" onClick={() => chooseHomePrompt(t(action.promptKey))}>
+                        {index === 0 ? <Desktop size={17} /> : index === 1 ? <FileText size={17} /> : <Brain size={17} />}
+                        <span>{t(action.labelKey)}</span>
+                      </button>
+                    ))}
+                    {activeWorkspace ? (
+                      <button type="button" onClick={() => chooseHomePrompt(t('home.prompt.reviewWorkspace'))}>
+                        <FolderSimple size={17} />
+                        <span>{t('home.reviewWorkspace')}</span>
+                      </button>
+                    ) : (
+                      <button type="button" disabled={workspaceBusy || busy || !activeThread} onClick={() => void attachWorkspace()}>
+                        <FolderSimple size={17} />
+                        <span>{workspaceBusy ? t('home.attaching') : t('sidebar.attachFolder')}</span>
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="zn-home-status" aria-label={t('home.readinessAria')}>
+                    <span><i className={'zn-health-dot ' + residentHealth} />{residentHealth === 'live' ? t('home.residentReady') : residentHealth === 'connecting' ? t('home.residentConnecting') : t('home.residentOffline')}</span>
+                    <span>{activeWorkspace ? t('home.workspace', { name: activeWorkspace.name }) : t('topbar.thisComputer')}</span>
+                    <span title={localizedProviderReadinessDetail}>{providerReadiness.ready ? t('home.cognitionAvailable') : t('home.cognitionSetupNeeded')}</span>
+                  </div>
+                </section>
+              ) : null}
 
               {activeThread && activeThread.messages.length > 0 ? (
                 <div className="zn-messages">
-                  {activeThread.messages.map(message => (
-                    <article className={`zn-message ${message.role}`} key={message.id}>
-                      <div className="zn-message-label">{message.role === 'user' ? 'You' : message.role === 'zn' ? 'ZN' : 'Activity'}</div>
-                      <div className="zn-message-body">{message.text}</div>
-                      {message.detail ? <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre> : null}
-                    </article>
-                  ))}
-                  {workProgress && workProgress.threadId === activeThread.id && !workProgress.finalized ? (
-                    <article className="zn-message activity" aria-live="polite">
-                      <div className="zn-message-label">Resident progress · {workProgress.status}</div>
-                      <div className="zn-message-body">{workProgress.stage} · {workProgress.nextAction || 'continuing work'}</div>
-                      {workProgress.delegation ? (
-                        <div className="zn-activity-detail" aria-label="Delegated work progress">
-                          <div><strong>Delegated work</strong> · {workProgress.delegation.status}</div>
-                          {workProgress.delegation.phases.map((phase, index) => (
-                            <div key={`${phase.kind}-${phase.status}-${phase.updatedAt || 0}-${index}`}>
-                              {delegatedStatusMarker(phase.status)} {delegatedKindLabel(phase.kind)} · {delegatedStageLabel(phase.stage)}
-                            </div>
-                          ))}
+                  {activeThread.messages.map(message => {
+                    const executionEvidence = message.role === 'activity'
+                      ? executionEvidenceFromDetail(message.detail)
+                      : null
+                    return (
+                      <article className={'zn-message ' + message.role} key={message.id}>
+                        <div className="zn-message-label">{message.role === 'user' ? t('message.you') : message.role === 'zn' ? 'ZN' : t('message.activity')}</div>
+                        <div className="zn-message-body">{message.text}</div>
+                        {executionEvidence ? (
+                          <div className="zn-execution-evidence" aria-label={t('message.executionEvidence')}>
+                            <span>{executionPathLabel(executionEvidence.executionPath, t)}</span>
+                            <span>{t('message.modelCalls', { count: executionEvidence.modelInvocations })}</span>
+                          </div>
+                        ) : null}
+                        {message.detail ? (
+                          executionEvidence ? (
+                            <details className="zn-activity-technical">
+                              <summary>{t('message.technical')}</summary>
+                              <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
+                            </details>
+                          ) : <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
+                        ) : null}
+                      </article>
+                    )
+                  })}
+                </div>
+              ) : null}
+
+              {showActiveWork && workProgress ? (
+                <section className="zn-current-work" aria-live="polite">
+                  <div className="zn-current-work-head">
+                    <span className="zn-current-work-icon"><Pulse size={19} weight="bold" /></span>
+                    <div className="zn-current-work-copy">
+                      <div className="zn-eyebrow">{t('work.residentProgress', { status: statusLabel(workProgress.status, t) })}</div>
+                      <h2>{activeThread ? threadDisplayTitle(activeThread.title, t) : t('work.workingOnIt')}</h2>
+                      <p>{stageLabel(workProgress.stage, t)} · {workProgress.nextAction || t('work.continuing')}</p>
+                    </div>
+                    {workProgress.recovery?.replayBlocked ? (
+                      <button className="zn-stop-button" type="button" disabled={cancelBusy} onClick={() => void cancelCurrentWork()}>
+                        <Stop size={15} weight="fill" />
+                        <span>{cancelBusy ? t('work.stopping') : t('work.stop')}</span>
+                      </button>
+                    ) : null}
+                  </div>
+
+                  <div className="zn-work-steps" aria-label={t('work.statusAria')}>
+                    <div className="done"><CheckCircle size={17} weight="fill" /><span>{t('work.accepted')}</span></div>
+                    <div className="active"><CircleNotch className="zn-spin" size={17} /><span>{stageLabel(workProgress.stage, t)}</span></div>
+                    <div><CheckCircle size={17} /><span>{t('work.verify')}</span></div>
+                  </div>
+
+                  {workProgress.delegation ? (
+                    <div className="zn-work-detail" aria-label={t('work.delegatedProgressAria')}>
+                      <div><strong>{t('work.delegated')}</strong> · {statusLabel(workProgress.delegation.status, t)}</div>
+                      {workProgress.delegation.phases.map((phase, index) => (
+                        <div key={phase.kind + '-' + phase.status + '-' + (phase.updatedAt || 0) + '-' + index}>
+                          {delegatedStatusMarker(phase.status)} {delegatedKindLabel(phase.kind, t)} · {delegatedStageLabel(phase.stage, t)}
                         </div>
-                      ) : null}
-                      {workProgress.recovery?.replayBlocked ? (
-                        <div className="zn-notice">
-                          <strong>Outside-world effect is uncertain.</strong> ZN will not replay this action automatically. Stopping this Work prevents further ZN action, but it cannot undo or prove what already happened outside ZN.
-                          {workProgress.recovery.reason ? <div className="zn-muted zn-small">{workProgress.recovery.reason}</div> : null}
-                          <button type="button" disabled={cancelBusy} onClick={() => void cancelCurrentWork()}>
-                            {cancelBusy ? 'Stopping…' : 'Stop work'}
-                          </button>
-                        </div>
-                      ) : null}
-                      {workProgress.thought ? (
-                        <div className="zn-muted zn-small">
-                          {workProgress.thought.action || workProgress.thought.focus}
-                          {workProgress.thought.reason ? ` — ${workProgress.thought.reason}` : ''}
-                        </div>
-                      ) : null}
-                      {workProgress.investigation ? (
-                        <div className="zn-muted zn-small">
-                          Investigation round {workProgress.investigation.rounds} · {workProgress.investigation.status}
-                          {workProgress.investigation.nextProbe ? ` · next: ${workProgress.investigation.nextProbe}` : ''}
-                        </div>
-                      ) : null}
-                      {workProgress.bodyActions.length > 0 ? (
-                        <div className="zn-activity-detail">
-                          {workProgress.bodyActions.map((action, index) => (
-                            <div key={`${action.at}-${action.kind}-${index}`}>
-                              {action.kind} · {action.success ? 'ok' : 'failed'}{action.summary ? ` · ${action.summary}` : ''}
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
-                    </article>
+                      ))}
+                    </div>
                   ) : null}
-                </div>
-              ) : (
-                <div className="zn-empty-thread">
-                  <span className="zn-eyebrow">ZN</span>
-                  <h1>What should we work on?</h1>
-                  <p>Ask ZN to research, create, edit, or continue work in this workspace. Longer tasks can keep going while you close the window and come back later.</p>
-                </div>
-              )}
+
+                  {workProgress.recovery?.replayBlocked ? (
+                    <div className="zn-recovery-warning">
+                      <strong>{t('work.outsideUncertain')}</strong>
+                      <span>{t('work.noReplay')}</span>
+                      {workProgress.recovery.reason ? <span>{workProgress.recovery.reason}</span> : null}
+                    </div>
+                  ) : null}
+
+                  <details className="zn-progress-technical">
+                    <summary>{t('work.whatDoing')}</summary>
+                    {workProgress.thought ? (
+                      <div className="zn-muted zn-small">
+                        {workProgress.thought.action || workProgress.thought.focus}
+                        {workProgress.thought.reason ? ' — ' + workProgress.thought.reason : ''}
+                      </div>
+                    ) : null}
+                    {workProgress.investigation ? (
+                      <div className="zn-muted zn-small">
+                        {t('work.investigationRound', { round: workProgress.investigation.rounds, status: statusLabel(workProgress.investigation.status, t) })}
+                        {workProgress.investigation.nextProbe ? t('work.next', { next: workProgress.investigation.nextProbe }) : ''}
+                      </div>
+                    ) : null}
+                    {workProgress.bodyActions.length > 0 ? (
+                      <div className="zn-work-detail">
+                        {workProgress.bodyActions.map((action, index) => (
+                          <div key={action.at + '-' + action.kind + '-' + index}>
+                            {action.kind} · {action.success ? t('work.ok') : t('work.failed')}{action.summary ? ' · ' + action.summary : ''}
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </details>
+
+                  <div className="zn-current-work-actions">
+                    <button type="button" onClick={openDetails}>{t('work.viewDetails')}</button>
+                    <span>{t('work.updated', { time: timeLabel(workProgress.updatedAt, localeState.resolvedLocale) })}</span>
+                  </div>
+                </section>
+              ) : null}
+
+              {!showActiveWork && firstResult ? (
+                <section className="zn-result-summary">
+                  <span className="zn-result-icon"><CheckCircle size={22} weight="fill" /></span>
+                  <div className="zn-result-copy">
+                    <span className="zn-eyebrow">{t('result.title')}</span>
+                    <strong>{firstResult.name}</strong>
+                    <span>{t('result.ready', { count: activeArtifacts.length })}</span>
+                  </div>
+                  <button type="button" onClick={openDetails}>{t('result.view')}</button>
+                </section>
+              ) : null}
             </main>
+            )}
 
             <form className="zn-composer-wrap" onSubmit={submit}>
               <div className="zn-composer">
-                <textarea aria-label="Message ZN" placeholder="Ask ZN to help with anything…" rows={1} value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit() } }} />
-                <button className="zn-send" type="submit" disabled={busy || !draft.trim()}>{busy ? '…' : '↑'}</button>
+                <button
+                  className="zn-composer-tool"
+                  type="button"
+                  aria-label={activeWorkspace ? t('composer.changeAttachedFolder') : t('composer.attachFolder')}
+                  title={activeWorkspace ? t('composer.changeFolder') : t('composer.attachFolder')}
+                  disabled={workspaceBusy || busy || !activeThread}
+                  onClick={() => void attachWorkspace()}
+                >
+                  <Paperclip size={18} />
+                </button>
+                <textarea
+                  aria-label={t('composer.messageAria')}
+                  placeholder={t('composer.placeholder')}
+                  rows={1}
+                  value={draft}
+                  onChange={event => setDraft(event.target.value)}
+                  onKeyDown={event => {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                      event.preventDefault()
+                      event.currentTarget.form?.requestSubmit()
+                    }
+                  }}
+                />
+                <button className="zn-send" type="submit" aria-label={t('composer.sendAria')} disabled={busy || !draft.trim()}>
+                  {busy ? <CircleNotch className="zn-spin" size={18} /> : <ArrowUp size={19} weight="bold" />}
+                </button>
               </div>
-              <div className="zn-composer-caption">{activeWorkspace ? `${activeWorkspace.name} · ` : ''}{busy ? 'ZN can keep working in the background · ' : ''}Enter to send · Shift+Enter for newline</div>
+              <div className="zn-composer-caption">
+                {activeWorkspace ? activeWorkspace.name + ' · ' : ''}{busy ? t('composer.background') : ''}{t('composer.shortcut')}
+              </div>
             </form>
           </>
         )}
       </section>
 
+      {contextOpen ? <button className="zn-details-backdrop" type="button" aria-label={t('details.closeWorkAria')} onClick={() => setContextOpen(false)} /> : null}
+
       {contextOpen ? (
-        <aside className="zn-context-panel">
-          <div className="zn-context-header"><div><div className="zn-section-label">Context</div><strong>{selectedArtifact ? artifactKindLabel(selectedArtifact.kind) : 'Overview'}</strong></div><button type="button" aria-label="Close context panel" onClick={() => setContextOpen(false)}>×</button></div>
+        <aside className="zn-context-panel" aria-label={t('details.panelAria')}>
+          <div className="zn-context-header">
+            <div>
+              <div className="zn-section-label">{t('details.title')}</div>
+              <strong>{selectedArtifact ? artifactKindLabel(selectedArtifact.kind, t) : t('details.currentWork')}</strong>
+            </div>
+            <button type="button" aria-label={t('details.closePanelAria')} onClick={() => setContextOpen(false)}>
+              <X size={18} />
+            </button>
+          </div>
+
           <section className="zn-context-section">
-            <div className="zn-context-title">Workspace</div>
+            <div className="zn-context-title">{t('details.workspace')}</div>
             {activeWorkspace ? (
-              <><div className="zn-context-value">{activeWorkspace.name}</div><div className="zn-context-path" title={activeWorkspace.path}>{activeWorkspace.path}</div><div className="zn-inline-actions zn-context-actions"><button type="button" disabled={workspaceBusy || busy} onClick={() => void attachWorkspace()}>Change</button><button type="button" disabled={workspaceBusy || busy} onClick={() => void detachWorkspace()}>Detach</button></div></>
+              <>
+                <div className="zn-context-value"><FolderSimple size={16} />{activeWorkspace.name}</div>
+                <div className="zn-context-path" title={activeWorkspace.path}>{activeWorkspace.path}</div>
+                <div className="zn-inline-actions zn-context-actions">
+                  <button type="button" disabled={workspaceBusy || busy} onClick={() => void attachWorkspace()}>{t('details.change')}</button>
+                  <button type="button" disabled={workspaceBusy || busy} onClick={() => void detachWorkspace()}>{t('details.detach')}</button>
+                </div>
+              </>
             ) : (
-              <><p className="zn-muted zn-small">No local folder is attached to this work.</p><div className="zn-context-actions"><button type="button" disabled={workspaceBusy || busy || !activeThread} onClick={() => void attachWorkspace()}>Attach folder</button></div></>
+              <>
+                <p className="zn-muted zn-small">{t('details.noFolder')}</p>
+                <div className="zn-context-actions">
+                  <button type="button" disabled={workspaceBusy || busy || !activeThread} onClick={() => void attachWorkspace()}>{t('details.attachFolder')}</button>
+                </div>
+              </>
             )}
           </section>
+
           {activeArtifacts.length > 0 ? (
             <section className="zn-context-section zn-context-grow zn-artifact-section">
-              <div className="zn-context-title">Results</div>
-              <div className="zn-artifact-list" aria-label="Work artifacts">
-                {activeArtifacts.map(artifact => <button className={`zn-artifact-link${artifact.id === selectedArtifact?.id ? ' active' : ''}`} key={artifact.id} type="button" onClick={() => setSelectedArtifactId(artifact.id)}><span className="zn-artifact-kind">{artifactKindLabel(artifact.kind)}</span><span className="zn-artifact-name">{artifact.name}</span></button>)}
+              <div className="zn-context-title">{t('details.results')}</div>
+              <div className="zn-artifact-list" aria-label={t('details.artifactsAria')}>
+                {activeArtifacts.map(artifact => (
+                  <button className={'zn-artifact-link' + (artifact.id === selectedArtifact?.id ? ' active' : '')} key={artifact.id} type="button" onClick={() => setSelectedArtifactId(artifact.id)}>
+                    <span className="zn-artifact-icon"><FileText size={15} /></span>
+                    <span className="zn-artifact-copy">
+                      <span className="zn-artifact-kind">{artifactKindLabel(artifact.kind, t)}</span>
+                      <span className="zn-artifact-name">{artifact.name}</span>
+                    </span>
+                  </button>
+                ))}
               </div>
-              {selectedArtifact ? <div className="zn-artifact-preview"><div className="zn-artifact-preview-head"><strong>{selectedArtifact.name}</strong>{selectedArtifact.path ? <span title={selectedArtifact.path}>{selectedArtifact.path}</span> : null}</div><pre>{selectedArtifact.content || 'No textual preview available.'}</pre>{selectedArtifact.metadata?.truncated ? <div className="zn-artifact-note">Preview is bounded; content was truncated.</div> : null}</div> : null}
+              {selectedArtifact ? (
+                <div className="zn-artifact-preview">
+                  <div className="zn-artifact-preview-head">
+                    <strong>{selectedArtifact.name}</strong>
+                    {selectedArtifact.path ? <span title={selectedArtifact.path}>{selectedArtifact.path}</span> : null}
+                  </div>
+                  {selectedArtifact.kind === 'presentation' ? (
+                    <div className="zn-artifact-note">{selectedArtifact.name}</div>
+                  ) : (
+                    <pre>{selectedArtifact.content || t('details.noPreview')}</pre>
+                  )}
+                  {selectedArtifact.metadata?.truncated ? <div className="zn-artifact-note">{t('details.previewTruncated')}</div> : null}
+                </div>
+              ) : null}
             </section>
           ) : (
             <section className="zn-context-section">
-              <div className="zn-context-title">Results</div>
-              <p className="zn-muted zn-small">Relevant files, diffs and terminal output will appear here when this task produces them.</p>
+              <div className="zn-context-title">{t('details.results')}</div>
+              <p className="zn-muted zn-small">{t('details.noResults')}</p>
             </section>
           )}
-          <section className="zn-context-section"><div className="zn-context-title">Status</div><div className="zn-context-value"><span className={`zn-health-dot ${residentHealth}`} />{residentHealth === 'live' ? 'Ready' : residentHealth === 'connecting' ? 'Connecting' : 'Offline'}</div>{residentError ? <div className="zn-error-text">{residentError}</div> : null}</section>
+
           <section className="zn-context-section">
-            <div className="zn-context-header">
-              <div className="zn-context-title">Restore points</div>
+            <div className="zn-context-title">{t('details.residentStatus')}</div>
+            <div className="zn-context-value">
+              <span className={'zn-health-dot ' + residentHealth} />
+              {residentHealth === 'live' ? t('common.ready') : residentHealth === 'connecting' ? t('common.connecting') : t('common.offline')}
+            </div>
+            {residentError ? <div className="zn-error-text">{residentError}</div> : null}
+          </section>
+
+          <section className="zn-context-section">
+            <div className="zn-context-section-head">
+              <div className="zn-context-title">{t('details.restorePoints')}</div>
               <button type="button" disabled={restoreBusy || !activeThread} onClick={() => activeThread && void refreshRestorePoints(activeThread.id)}>
-                {restoreBusy ? 'Checking…' : 'Refresh'}
+                {restoreBusy ? t('common.checking') : t('common.refresh')}
               </button>
             </div>
             {activeRestorePoints === undefined ? (
-              <p className="zn-muted zn-small">Open a Work or refresh to inspect retained restore points against current file reality.</p>
+              <p className="zn-muted zn-small">{t('details.restorePrompt')}</p>
             ) : activeRestorePoints.length === 0 ? (
-              <p className="zn-muted zn-small">No retained restore points for this Work.</p>
+              <p className="zn-muted zn-small">{t('details.noRestorePoints')}</p>
             ) : (
-              <div className="zn-artifact-list" aria-label="Work restore points">
+              <div className="zn-restore-list" aria-label={t('details.restoreListAria')}>
                 {activeRestorePoints.map(point => (
-                  <div className="zn-artifact-link" key={point.id}>
-                    <span className="zn-artifact-kind">{restorePointStatusLabel(point.currentStatus)}</span>
-                    <span className="zn-artifact-name" title={point.targetPath}>{point.targetPath}</span>
-                    <span className="zn-muted zn-small">Observed {timeLabel(point.currentObservedAt)} · retained {point.sizeBytes} bytes</span>
+                  <div className="zn-restore-row" key={point.id}>
+                    <div className="zn-restore-row-head">
+                      <span>{restorePointStatusLabel(point.currentStatus, t)}</span>
+                      <span>{timeLabel(point.currentObservedAt, localeState.resolvedLocale)}</span>
+                    </div>
+                    <strong title={point.targetPath}>{point.targetPath}</strong>
+                    <span className="zn-muted zn-small">{t('details.retainedBytes', { count: point.sizeBytes })}</span>
                     {point.proposal ? (
-                      <span className="zn-muted zn-small">
-                        {restoreProposalStatusLabel(point.proposal.status)} · user approval and fresh revalidation would be required
-                      </span>
+                      <span className="zn-muted zn-small">{t('details.restoreApproval', { proposal: restoreProposalStatusLabel(point.proposal.status, t) })}</span>
                     ) : null}
                     {activeThread ? (
                       <ZnMissingRestoreControls
@@ -797,7 +1234,7 @@ export function ZnWorkbench() {
                 ))}
               </div>
             )}
-            <p className="zn-muted zn-small">Changed, unchanged and unsafe targets remain inspection-only. Missing-target restore requires explicit preparation and approval with fresh resident revalidation.</p>
+            <p className="zn-muted zn-small">{t('details.restoreSafety')}</p>
           </section>
         </aside>
       ) : null}

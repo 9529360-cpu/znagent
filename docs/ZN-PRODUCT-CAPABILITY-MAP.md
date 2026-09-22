@@ -83,9 +83,11 @@ E2E-08 明确不支持 CAPTCHA solving、WebAuthn/passkey automation、cross-ori
 | Machine/application awareness | CONNECTED + VERIFIED NARROW | 更多应用/系统语义继续扩大 |
 | Identity-bound application launch | VERIFIED NARROW | 更多 app families/edge cases |
 | Existing application activation | VERIFIED NARROW | Resident-admitted exact app/HWND/PID、fresh foreground proof 已有；任意多窗口拓扑/生命周期未闭环 |
+| Windows master-volume direct Reflex | VERIFIED NARROW / exact-head | 明确绝对音量 set + 当前音量 read 已走零模型 Resident → Action Fabric → Body → Core Audio，保留 durable replay guard 与 fresh readback；相对调节、mute、per-app audio、输出设备切换仍开放 |
 | Foreground / focused-control sensing | VERIFIED | 更复杂窗口切换和应用生命周期 |
 | Pointer / keyboard / text entry | VERIFIED NARROW | 完整真实任务继续验证 |
 | Semantic desktop target re-ground | VERIFIED NARROW | 控件变化、窗口漂移、替代入口 |
+| Windows internal-display brightness control | CONNECTED + VERIFIED NARROW / Action Fabric substrate | 唯一 active `WmiMonitorBrightness` 的整数 0–100 read/set 已走 ZN Action Fabric → Body → WMI，含 stable readback、monitor identity、durable no-blind-replay；自然语言 Reflex、外接 DDC/MCCS、多 active target 自动选择仍开放 |
 | E2E-13 current-app content cleanup | **VERIFIED NARROW / representative path closed; PR #252 merged as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`** | exact foreground non-browser HWND/PID + unique multiline ValuePattern Edit + deterministic trim/drop-blank/stable-dedupe + guarded replacement + durable restart/no-replay reconciliation + one Save + fresh same-process read-only result verification；不是 Desktop complete / arbitrary app automation / Office / general RPA |
 | E2E-15 unexpected modal recovery | VERIFIED NARROW / representative path closed | exact same-process directly owned UIA modal + one safe defer/continue action + fresh parent readiness/re-ground；任意 dialog/UAC/credentials/business decisions 不在 closure 内 |
 | Cross-app task execution | VERIFIED NARROW; E2E-24 representative path closed | bounded USER Browser -> exact File -> exact Desktop customer record 已有；更复杂联合任务仍开放 |
