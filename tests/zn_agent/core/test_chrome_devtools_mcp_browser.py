@@ -169,7 +169,7 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             )
             self.assertTrue(effect.success)
             self.assertEqual(effect.data["provider"], CHROME_DEVTOOLS_MCP_PROVIDER)
-            self.assertEqual(effect.data["provider"], "chrome-devtools-mcp")
+            self.assertEqual(effect.data["provider"], "chrome-devtools-mcp@1.9.0")
 
             textbox = browser.observe_target(
                 session.session_id,
