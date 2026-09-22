@@ -1,4 +1,4 @@
-name: ZN Managed Browser E2E
+name: ZN Managed Browser Contract
 
 on:
   pull_request:
