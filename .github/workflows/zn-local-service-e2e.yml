@@ -2,10 +2,8 @@ name: ZN Local Service Diagnosis E2E
 
 # Representative capability scenario: validate after merge or on demand.
 # PR merge gates are owned by generic subsystem contracts.
+# Representative scenario regression. Generic contracts gate PRs; run this only on demand.
 on:
-  push:
-    branches:
-      - main
   workflow_dispatch:
 
 permissions:
