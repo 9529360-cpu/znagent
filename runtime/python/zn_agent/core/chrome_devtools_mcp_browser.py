@@ -11,6 +11,7 @@ import hashlib
 import json
 import os
 import shutil
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping
@@ -36,7 +37,7 @@ from .url_safety import is_safe_url
 
 CHROME_DEVTOOLS_MCP_PACKAGE = "chrome-devtools-mcp"
 CHROME_DEVTOOLS_MCP_VERSION = "1.9.0"
-CHROME_DEVTOOLS_MCP_PROVIDER = "chrome-devtools-mcp"
+CHROME_DEVTOOLS_MCP_PROVIDER = f"chrome-devtools-mcp@{CHROME_DEVTOOLS_MCP_VERSION}"
 
 _REQUIRED_TOOLS = (
     "list_pages",
@@ -131,6 +132,61 @@ def _server_entry(root: Path) -> Path | None:
     return next((path for path in candidates if path.is_file()), None)
 
 
+def _require_pinned_server_package(entry: Path) -> Path:
+    for parent in entry.parents:
+        manifest = parent / "package.json"
+        if not manifest.is_file():
+            continue
+        try:
+            raw = json.loads(manifest.read_text(encoding="utf-8"))
+        except Exception as exc:
+            raise ChromeDevToolsMcpBrowserUnavailable(
+                f"Chrome DevTools MCP package manifest is unreadable: {manifest}"
+            ) from exc
+        if str(raw.get("name") or "").strip() != CHROME_DEVTOOLS_MCP_PACKAGE:
+            continue
+        version = str(raw.get("version") or "").strip()
+        if version != CHROME_DEVTOOLS_MCP_VERSION:
+            raise ChromeDevToolsMcpBrowserUnavailable(
+                "Chrome DevTools MCP version mismatch: "
+                f"expected {CHROME_DEVTOOLS_MCP_VERSION}, got {version or '<missing>'}"
+            )
+        return parent
+    raise ChromeDevToolsMcpBrowserUnavailable(
+        "Chrome DevTools MCP package manifest was not found beside the server entry"
+    )
+
+
+def _chrome_executable() -> Path | None:
+    explicit = str(os.getenv("ZN_BROWSER_EXECUTABLE") or "").strip()
+    if explicit:
+        candidate = Path(explicit).expanduser().resolve()
+        if not candidate.is_file():
+            raise ChromeDevToolsMcpBrowserUnavailable(
+                "ZN_BROWSER_EXECUTABLE does not identify a browser executable"
+            )
+        return candidate
+
+    candidates: list[Path] = []
+    if os.name == "nt":
+        for name in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+            root = str(os.getenv(name) or "").strip()
+            if root:
+                candidates.append(
+                    Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe"
+                )
+    elif sys.platform == "darwin":
+        candidates.append(
+            Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+        )
+    else:
+        for command in ("google-chrome", "google-chrome-stable", "chrome"):
+            found = shutil.which(command)
+            if found:
+                candidates.append(Path(found))
+    return next((path.resolve() for path in candidates if path.is_file()), None)
+
+
 def resolve_chrome_devtools_mcp_command(
     *,
     headless: bool,
@@ -146,8 +202,13 @@ def resolve_chrome_devtools_mcp_command(
         raise ChromeDevToolsMcpBrowserUnavailable(
             "pinned chrome-devtools-mcp runtime is not installed"
         )
+    _require_pinned_server_package(entry)
 
-    node = str(os.getenv("ZN_BROWSER_NODE") or "").strip() or shutil.which("node")
+    node = (
+        str(os.getenv("ZN_NODE_EXECUTABLE") or "").strip()
+        or str(os.getenv("ZN_BROWSER_NODE") or "").strip()
+        or shutil.which("node")
+    )
     env: dict[str, str] = {
         "CI": "true",
         "CHROME_DEVTOOLS_MCP_NO_USAGE_STATISTICS": "1",
@@ -169,6 +230,7 @@ def resolve_chrome_devtools_mcp_command(
         str(entry),
         "--isolated=true",
         "--page-id-routing=true",
+        "--experimental-structured-content=true",
         "--no-usage-statistics",
         "--no-performance-crux",
         "--category-performance=false",
@@ -176,15 +238,14 @@ def resolve_chrome_devtools_mcp_command(
         "--category-extensions=false",
         "--redact-network-headers=true",
     ]
+    browser_executable = _chrome_executable()
+    if browser_executable is None:
+        raise ChromeDevToolsMcpBrowserUnavailable(
+            "Google Chrome is unavailable; keep Playwright as the managed-browser fallback"
+        )
+    args.extend(("--executable-path", str(browser_executable)))
     if headless:
         args.append("--headless=true")
-    browser_executable = str(os.getenv("ZN_BROWSER_EXECUTABLE") or "").strip()
-    if browser_executable:
-        if not Path(browser_executable).is_file():
-            raise ChromeDevToolsMcpBrowserUnavailable(
-                "ZN_BROWSER_EXECUTABLE does not identify a browser executable"
-            )
-        args.extend(("--executable-path", browser_executable))
     for origin in permission.allowed_origins:
         args.append(f"--allowed-url-pattern={origin.rstrip('/')}/*")
     return StdioMcpCommand(argv=tuple(args), cwd=root, env=env)
