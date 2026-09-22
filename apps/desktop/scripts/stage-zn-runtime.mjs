@@ -13,6 +13,10 @@ const pythonInstallDir = path.join(runtimeRoot, 'python')
 const browserInstallDir = path.join(runtimeRoot, 'playwright-browsers')
 const veteranSourceRoot = path.join(repoRoot, 'vendor', 'veteran-engineer')
 const veteranRuntimeDir = path.join(runtimeRoot, 'veteran-engineer')
+const chromeDevtoolsMcpVersion = '1.9.0'
+const chromeDevtoolsMcpRuntimeDir = path.join(runtimeRoot, 'browser-runtimes', 'chrome-devtools-mcp')
+const chromeDevtoolsMcpPackageDir = path.join(chromeDevtoolsMcpRuntimeDir, 'node_modules', 'chrome-devtools-mcp')
+const chromeDevtoolsMcpEntry = path.join(chromeDevtoolsMcpPackageDir, 'build', 'src', 'bin', 'chrome-devtools-mcp.js')
 const retiredPackageName = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
 
 function run(command, args, options = {}) {
@@ -108,6 +112,36 @@ fs.cpSync(veteranSourceRoot, veteranRuntimeDir, {
   verbatimSymlinks: true
 })
 
+console.log(`[zn-runtime] installing Chrome DevTools MCP ${chromeDevtoolsMcpVersion}`)
+fs.mkdirSync(chromeDevtoolsMcpRuntimeDir, { recursive: true })
+run('npm', [
+  'install',
+  '--prefix',
+  chromeDevtoolsMcpRuntimeDir,
+  '--no-save',
+  '--omit=dev',
+  '--ignore-scripts',
+  '--no-audit',
+  '--no-fund',
+  `chrome-devtools-mcp@${chromeDevtoolsMcpVersion}`
+], {
+  env: {
+    ...process.env,
+    PUPPETEER_SKIP_DOWNLOAD: 'true'
+  }
+})
+if (!fs.existsSync(chromeDevtoolsMcpEntry)) {
+  throw new Error(`Chrome DevTools MCP entry is missing: ${chromeDevtoolsMcpEntry}`)
+}
+const chromeDevtoolsMcpPackage = JSON.parse(
+  fs.readFileSync(path.join(chromeDevtoolsMcpPackageDir, 'package.json'), 'utf8')
+)
+if (chromeDevtoolsMcpPackage.version !== chromeDevtoolsMcpVersion) {
+  throw new Error(
+    `Chrome DevTools MCP version mismatch: expected ${chromeDevtoolsMcpVersion}, got ${chromeDevtoolsMcpPackage.version}`
+  )
+}
+
 console.log('[zn-runtime] installing portable CPython 3.11')
 run('uv', ['python', 'install', '3.11', '--install-dir', pythonInstallDir, '--no-bin'])
 const pythonPath = findPortablePython(pythonInstallDir)
@@ -192,7 +226,9 @@ const manifest = {
   python: portableRelative(runtimeRoot, pythonPath),
   backend_root: portableRelative(runtimeRoot, backendRoot),
   browser_root: portableRelative(runtimeRoot, browserInstallDir),
-  veteran_runtime: portableRelative(runtimeRoot, veteranRuntimeDir)
+  veteran_runtime: portableRelative(runtimeRoot, veteranRuntimeDir),
+  chrome_devtools_mcp_runtime: portableRelative(runtimeRoot, chromeDevtoolsMcpRuntimeDir),
+  chrome_devtools_mcp_version: chromeDevtoolsMcpVersion
 }
 fs.writeFileSync(path.join(runtimeRoot, 'runtime.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 console.log(`[zn-runtime] staged ${runtimeId} at ${runtimeRoot}`)
