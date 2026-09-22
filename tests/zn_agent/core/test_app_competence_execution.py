@@ -26,6 +26,11 @@ from zn_agent.core.app_competence_execution import (
     completion_expected_matches,
 )
 from zn_agent.core.body import BodyActionResult
+from zn_agent.core.research_information_product_resident import (
+    ProductResearchInformationResidentRuntime,
+)
+from zn_agent.core.visual_action_reasoner import VisualActionDecision, VisualActionInference
+from zn_agent.core.visual_stage_bridge import VisualStageBridgeResult
 
 
 class _Clock:
@@ -263,6 +268,24 @@ def _fabric() -> ActionFabricRegistry:
     )
     registry.register(
         ActionDescriptor(
+            "windows.desktop.scene.capture",
+            "test",
+            "visual grounding substrate",
+            body_action_kind="windows_desktop_scene_capture",
+            input_schema={
+                "type": "object",
+                "required": ["application_id"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+        ),
+        availability_probe=available,
+    )
+    registry.register(
+        ActionDescriptor(
             "test.inventory",
             "test",
             "read inventory",
@@ -432,6 +455,339 @@ class AppCompetenceRecipeExecutorTests(unittest.TestCase):
         self.assertTrue(second.success, second.error)
         self.assertEqual(second.stages[0].status, "already_verified")
         self.assertEqual(runtime.stage_dispatches, 1)
+
+    def test_visual_handoff_rejects_ambiguous_or_unbounded_runtime_fields(self) -> None:
+        base = {
+            "handoff_id": "competence-visual-1234567890abcdef1234",
+            "kind": "visual_action",
+            "stage_index": 0,
+            "event_id": "evt",
+            "application_id": "app-runtime-1",
+            "grounding_action_id": "windows.desktop.scene.capture",
+            "instruction": "Click Continue",
+            "step_instruction_index": 0,
+        }
+        from zn_agent.core.app_competence_execution import AppCompetenceStageHandoff
+
+        for field, value in (
+            ("stage_index", True),
+            ("stage_index", -1),
+            ("step_instruction_index", True),
+            ("step_instruction_index", -1),
+            ("stage_end_condition", True),
+            ("stage_end_condition", -1),
+        ):
+            with self.subTest(field=field, value=value):
+                values = dict(base)
+                values[field] = value
+                with self.assertRaises(ValueError):
+                    AppCompetenceStageHandoff(**values)
+
+        values = dict(base)
+        values["instruction"] = "x" * 769
+        with self.assertRaisesRegex(ValueError, "exceeds 768"):
+            AppCompetenceStageHandoff(**values)
+
+    def test_visual_stage_returns_stable_pending_handoff_without_dispatch(self) -> None:
+        stage = AppCompetenceStage(
+            action_id="windows.desktop.scene.capture",
+            execution_mode="visual_action",
+            completion=AppCompetenceCompletion(
+                action_id="test.read",
+                expected={"state.toggle_state": "on"},
+            ),
+            timeout_ms=200,
+            metadata={
+                "instruction": "Click the visible Continue button",
+                "step_instruction_index": 2,
+                "stage_end_condition": 2,
+            },
+        )
+        registry = _registry(stage=stage)
+        fabric = _fabric()
+        runtime = _RecipeRuntime(fabric)
+        clock = _Clock()
+        executor = AppCompetenceRecipeExecutor(
+            registry,
+            runtime,
+            poll_interval_ms=50,
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+        )
+
+        first = executor.execute(
+            app="demo.app",
+            version="1.0",
+            capability="enable",
+            event_id="evt-visual",
+            application_id="app-runtime-1",
+        )
+        second = executor.execute(
+            app="demo.app",
+            version="1.0",
+            capability="enable",
+            event_id="evt-visual",
+            application_id="app-runtime-1",
+        )
+
+        self.assertFalse(first.success)
+        self.assertEqual(first.status, "pending")
+        self.assertEqual(first.stages[0].status, "pending")
+        handoff = first.stages[0].handoff
+        self.assertIsNotNone(handoff)
+        self.assertEqual(handoff.kind, "visual_action")
+        self.assertEqual(handoff.application_id, "app-runtime-1")
+        self.assertEqual(handoff.step_instruction_index, 2)
+        self.assertEqual(handoff.stage_end_condition, 2)
+        self.assertEqual(
+            handoff.instruction,
+            "Click the visible Continue button",
+        )
+        self.assertEqual(
+            handoff.handoff_id,
+            second.stages[0].handoff.handoff_id,
+        )
+        self.assertEqual(runtime.stage_dispatches, 0)
+        self.assertEqual(
+            [call.action_id for call in runtime.calls],
+            ["test.read", "test.read"],
+        )
+
+    def test_visual_stage_reentry_advances_only_from_completion_truth(self) -> None:
+        stage = AppCompetenceStage(
+            action_id="windows.desktop.scene.capture",
+            execution_mode="visual_action",
+            completion=AppCompetenceCompletion(
+                action_id="test.read",
+                expected={"state.toggle_state": "on"},
+            ),
+            timeout_ms=200,
+            metadata={
+                "instruction": "Click the visible Continue button",
+                "step_instruction_index": 0,
+            },
+        )
+        registry = _registry(stage=stage)
+        fabric = _fabric()
+        runtime = _RecipeRuntime(fabric)
+        clock = _Clock()
+        executor = AppCompetenceRecipeExecutor(
+            registry,
+            runtime,
+            poll_interval_ms=50,
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+        )
+
+        pending = executor.execute(
+            app="demo.app",
+            version="1.0",
+            capability="enable",
+            event_id="evt-visual-recover",
+            application_id="app-runtime-1",
+        )
+        self.assertEqual(pending.status, "pending")
+        self.assertEqual(runtime.stage_dispatches, 0)
+
+        runtime.state = "on"
+        recovered = executor.execute(
+            app="demo.app",
+            version="1.0",
+            capability="enable",
+            event_id="evt-visual-recover",
+            application_id="app-runtime-1",
+        )
+        self.assertTrue(recovered.success, recovered.error)
+        self.assertEqual(recovered.stages[0].status, "already_verified")
+        self.assertIsNone(recovered.stages[0].handoff)
+        self.assertEqual(runtime.stage_dispatches, 0)
+
+    def test_distinct_visual_steps_are_not_rejected_as_duplicate_side_effects(self) -> None:
+        completion = AppCompetenceCompletion(
+            action_id="test.read",
+            expected={"state.toggle_state": "on"},
+        )
+        stages = tuple(
+            AppCompetenceStage(
+                action_id="windows.desktop.scene.capture",
+                execution_mode="visual_action",
+                completion=completion,
+                timeout_ms=200,
+                metadata={
+                    "instruction": instruction,
+                    "step_instruction_index": index,
+                },
+            )
+            for index, instruction in enumerate(("Click Continue", "Click Finish"))
+        )
+        registry = AppCompetenceRegistry()
+        registry.register(
+            AppCompetencePack(
+                pack_id="visual-demo",
+                app_id="demo.app",
+                app_version="1.0",
+                bindings=(
+                    AppCompetenceBinding(
+                        capability="enable",
+                        action_id="windows.desktop.scene.capture",
+                        stages=stages,
+                    ),
+                ),
+            )
+        )
+        runtime = _RecipeRuntime(_fabric())
+        clock = _Clock()
+        result = AppCompetenceRecipeExecutor(
+            registry,
+            runtime,
+            poll_interval_ms=50,
+            sleep_fn=clock.sleep,
+            monotonic_fn=clock.monotonic,
+        ).execute(
+            app="demo.app",
+            version="1.0",
+            capability="enable",
+            event_id="evt-two-visual",
+            application_id="app-runtime-1",
+        )
+        self.assertEqual(result.status, "pending")
+        self.assertNotIn("duplicate", result.error or "")
+
+    def test_product_resident_visual_recipe_advances_one_verified_boundary_at_a_time(self) -> None:
+        stage = AppCompetenceStage(
+            action_id="windows.desktop.scene.capture",
+            execution_mode="visual_action",
+            completion=AppCompetenceCompletion(
+                action_id="test.read",
+                expected={"state.toggle_state": "on"},
+            ),
+            timeout_ms=200,
+            metadata={
+                "instruction": "Click the visible Continue button",
+                "step_instruction_index": 0,
+                "stage_end_condition": 2,
+            },
+        )
+        registry = _registry(stage=stage)
+        runtime = _RecipeRuntime(_fabric())
+        resident = object.__new__(ProductResearchInformationResidentRuntime)
+        resident.action_executor = runtime
+        resident._sync_execution_context = lambda event, state: None
+        saved = []
+        resident.store = type(
+            "Store",
+            (),
+            {"save_working_state": lambda self, state: saved.append(state)},
+        )()
+        decisions = ["TAP", "FINISH"]
+
+        def evaluate_visual_stage(**kwargs):
+            action = decisions.pop(0)
+            state = kwargs["state"]
+            if action == "TAP":
+                if kwargs.get("allow_tap", True):
+                    state.stage = "native_action"
+                    state.next_action = "move body: pointer_click"
+                return VisualStageBridgeResult(
+                    inference=VisualActionInference(
+                        decision=VisualActionDecision("TAP", 0.5, 0.5),
+                        provider="fake",
+                        model="fake",
+                    ),
+                    scene_id="desktop-scene-before",
+                    regrounded_scene_id="desktop-scene-after",
+                )
+            return VisualStageBridgeResult(
+                inference=VisualActionInference(
+                    decision=VisualActionDecision("FINISH"),
+                    provider="fake",
+                    model="fake",
+                ),
+                scene_id="desktop-scene-finish",
+                requires_completion_verification=True,
+            )
+
+        resident.evaluate_visual_stage = evaluate_visual_stage
+        event = type("Event", (), {"event_id": "evt-visual-recipe"})()
+        state = type(
+            "State",
+            (),
+            {"data": {}, "stage": "native_investigation", "next_action": ""},
+        )()
+
+        first, first_visual = resident.advance_app_competence_recipe_once(
+            registry=registry,
+            event=event,
+            state=state,
+            app="demo.app",
+            version="1.0",
+            capability="enable",
+            application_id="app-runtime-1",
+        )
+        self.assertEqual(first.status, "pending")
+        self.assertEqual(first_visual.inference.decision.action, "TAP")
+        self.assertEqual(state.stage, "native_action")
+        self.assertEqual(
+            state.data["app_competence_visual_handoff"]["observation_attempt"],
+            0,
+        )
+        self.assertEqual(
+            state.data["app_competence_visual_handoff"]["status"],
+            "pointer_active",
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "in-flight native action"):
+            resident.advance_app_competence_recipe_once(
+                registry=registry,
+                event=event,
+                state=state,
+                app="demo.app",
+                version="1.0",
+                capability="enable",
+                application_id="app-runtime-1",
+            )
+        self.assertEqual(decisions, ["FINISH"])
+
+        state.stage = "native_investigation"
+        state.data["app_competence_visual_handoff"]["status"] = "effect_verified"
+        state.data["app_competence_visual_handoff"]["tap_consumed"] = True
+        second, second_visual = resident.advance_app_competence_recipe_once(
+            registry=registry,
+            event=event,
+            state=state,
+            app="demo.app",
+            version="1.0",
+            capability="enable",
+            application_id="app-runtime-1",
+        )
+        self.assertEqual(second.status, "pending")
+        self.assertEqual(second_visual.inference.decision.action, "FINISH")
+        self.assertIn("fresh reality", state.next_action)
+        self.assertEqual(
+            state.data["app_competence_visual_handoff"]["observation_attempt"],
+            1,
+        )
+        self.assertEqual(
+            state.data["app_competence_visual_handoff"]["status"],
+            "finish_observed",
+        )
+
+        runtime.state = "on"
+        third, third_visual = resident.advance_app_competence_recipe_once(
+            registry=registry,
+            event=event,
+            state=state,
+            app="demo.app",
+            version="1.0",
+            capability="enable",
+            application_id="app-runtime-1",
+        )
+        self.assertTrue(third.success, third.error)
+        self.assertEqual(third.status, "verified")
+        self.assertIsNone(third_visual)
+        self.assertNotIn("app_competence_visual_handoff", state.data)
+        self.assertEqual(decisions, [])
+        self.assertGreaterEqual(len(saved), 3)
 
     def test_side_effect_without_completion_is_rejected_before_dispatch(self) -> None:
         stage = AppCompetenceStage(

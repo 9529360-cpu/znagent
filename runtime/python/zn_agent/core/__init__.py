@@ -31,6 +31,7 @@ from .app_competence_execution import (
     AppCompetenceRecipeExecution,
     AppCompetenceRecipeExecutor,
     AppCompetenceStageExecution,
+    AppCompetenceStageHandoff,
     completion_expected_matches,
 )
 from .body import BodyAction, BodyActionResult, NativeBody
@@ -57,6 +58,11 @@ from .desktop_scene import (
     inspect_desktop_scene_artifact,
     load_desktop_scene_artifact,
     merge_desktop_scene_targets,
+)
+from .visual_stage_bridge import (
+    DesktopVisualStageBridge,
+    VisualStageBridgeResult,
+    build_current_visual_stage_bridge,
 )
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
@@ -148,6 +154,7 @@ __all__ = [
     "AppCompetenceRecipeExecution",
     "AppCompetenceRecipeExecutor",
     "AppCompetenceStageExecution",
+    "AppCompetenceStageHandoff",
     "completion_expected_matches",
     "Assessment",
     "BodyAction",

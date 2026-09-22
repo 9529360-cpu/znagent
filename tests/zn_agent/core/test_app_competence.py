@@ -165,6 +165,64 @@ class AppCompetenceRegistryTests(unittest.TestCase):
         )
         registry.validate_action_fabric(fabric)
 
+    def test_visual_stage_accepts_only_bounded_instruction_metadata(self) -> None:
+        completion = AppCompetenceCompletion(
+            action_id="windows.ui.control.read",
+            arguments={"control_type": "button"},
+            expected={"state.enabled": True},
+        )
+        stage = AppCompetenceStage(
+            action_id="windows.desktop.scene.capture",
+            execution_mode="visual_action",
+            completion=completion,
+            metadata={
+                "instruction": "Click the visible Continue button",
+                "step_instruction_index": 1,
+                "stage_end_condition": 2,
+            },
+        )
+        self.assertEqual(stage.execution_mode, "visual_action")
+        self.assertEqual(stage.arguments, {})
+        self.assertEqual(stage.metadata["step_instruction_index"], 1)
+
+    def test_visual_stage_rejects_hidden_execution_authority(self) -> None:
+        completion = AppCompetenceCompletion(
+            action_id="windows.ui.control.read",
+            expected={"state.enabled": True},
+        )
+        with self.assertRaisesRegex(ValueError, "must bind windows.desktop.scene.capture"):
+            AppCompetenceStage(
+                action_id="windows.ui.control.invoke",
+                execution_mode="visual_action",
+                completion=completion,
+                metadata={"instruction": "Click Continue", "step_instruction_index": 0},
+            )
+        with self.assertRaisesRegex(ValueError, "cannot persist Action Fabric arguments"):
+            AppCompetenceStage(
+                action_id="windows.desktop.scene.capture",
+                arguments={"selector": "Continue"},
+                execution_mode="visual_action",
+                completion=completion,
+                metadata={"instruction": "Click Continue", "step_instruction_index": 0},
+            )
+        with self.assertRaisesRegex(ValueError, "requires a read-only completion proof"):
+            AppCompetenceStage(
+                action_id="windows.desktop.scene.capture",
+                execution_mode="visual_action",
+                metadata={"instruction": "Click Continue", "step_instruction_index": 0},
+            )
+        with self.assertRaisesRegex(ValueError, "unsupported fields"):
+            AppCompetenceStage(
+                action_id="windows.desktop.scene.capture",
+                execution_mode="visual_action",
+                completion=completion,
+                metadata={
+                    "instruction": "Click Continue",
+                    "step_instruction_index": 0,
+                    "future_plan": "then click Finish",
+                },
+            )
+
     def test_competence_stage_rejects_runtime_native_authority(self) -> None:
         for key in ("application_id", "hwnd", "pid", "runtime_id", "x", "y", "coordinates"):
             with self.subTest(key=key):
