@@ -14,6 +14,7 @@ class NeuralPredictionTests(unittest.TestCase):
                 config={"model": {}},
                 store_path=Path(tmp) / "kernel.db",
             )
+            capabilities_before = resident.capabilities.names()
             resident.perceive_world(
                 "writer lock contention appeared in an upstream report",
                 features=("writer_lock_pattern", "database", "contention"),
@@ -86,7 +87,7 @@ class NeuralPredictionTests(unittest.TestCase):
                 )
             )
             self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
-            self.assertEqual(resident.capabilities.names(), ())
+            self.assertEqual(resident.capabilities.names(), capabilities_before)
             resident.store.close()
 
 
