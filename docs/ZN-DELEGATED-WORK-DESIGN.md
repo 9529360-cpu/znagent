@@ -4,7 +4,7 @@
 >
 > Canonical branch: `main`; active development uses short-lived `work/*` branches from current `main`.
 >
-> This document preserves the delegated-work architecture/design and records what part of that design current `main` now implements. It does not claim that every target structure below is product-closed. Current implementation facts remain authoritative in `docs/ZN-IMPLEMENTATION-STATUS.md`, and real acceptance status remains authoritative in `docs/ZN-REAL-TASK-E2E-CATALOG.md`.
+> This document preserves the delegated-work architecture/design and records what part of that design current `main` now implements. It does not claim that every target structure below is product-closed. Current implementation facts remain authoritative in `docs/ZN-IMPLEMENTATION-STATUS.md`, and current capability status remains authoritative in `docs/ZN-PRODUCT-CAPABILITY-MAP.md`.
 
 ## 1. Design objective
 
@@ -65,10 +65,10 @@ Implemented and verified in the active path:
 
 Representative acceptance now closed:
 
-- E2E-29 — one real model route serving multiple isolated WorkerRuns;
-- E2E-30 / E2E-42 — route policy/privacy under current acceptance semantics, with an explicit environment waiver for the missing second real provider family;
-- E2E-28 / E2E-34 — dynamic health, stall/no-progress supervision, bounded retry/reassign and restart reconciliation;
-- E2E-27 / E2E-33 — natural-language steering and restart continuation with stale-plan/non-replay discipline.
+- one-route/multi-worker contract — one real model route serving multiple isolated WorkerRuns;
+- route/privacy contract — route policy/privacy under current acceptance semantics, with an explicit environment waiver for the missing second real provider family;
+- supervision/recovery contract — dynamic health, stall/no-progress supervision, bounded retry/reassign and restart reconciliation;
+- steering/continuation contract — natural-language steering and restart continuation with stale-plan/non-replay discipline.
 
 The accurate boundary is:
 
@@ -80,7 +80,7 @@ bounded delegated substrate implemented + representative paths verified
 != every long-horizon task product-closed
 ```
 
-Any older statement in this design that treated dynamic health routing, systematic stall supervision, restart-safe delegated reconciliation, E2E-30/42 or E2E-27/33 as wholly unimplemented is superseded by this current implementation overlay.
+Any older statement in this design that treated dynamic health routing, systematic stall supervision, restart-safe delegated reconciliation, route/privacy contract or steering/continuation contract as wholly unimplemented is superseded by this current implementation overlay.
 
 ## 3. Ownership invariants
 
@@ -270,13 +270,13 @@ No legal route means fail closed (`NoRouteAvailable`), not “pick an illegal fa
 
 The earlier design left runtime health observation unwired. That is no longer current fact.
 
-Current `ResidentHealthJournal` observations enter health-aware routing and delegated supervision. Representative E2E-28/34 verifies policy-safe fallback/reassignment under health/stall conditions.
+Current `ResidentHealthJournal` observations enter health-aware routing and delegated supervision. Representative supervision/recovery contract verifies policy-safe fallback/reassignment under health/stall conditions.
 
 This remains bounded health/supervision logic, not a promise of perfect provider outage handling across every provider and every long task.
 
 ## 9. Multi-route privacy acceptance
 
-E2E-30/42 is closed under the repository’s current acceptance policy.
+route/privacy contract is closed under the repository’s current acceptance policy.
 
 The closure proves the current policy/eligibility/provenance path and guarded multiroute acceptance semantics. It also records an **owner-approved environment waiver** because the acceptance environment did not have a second real provider family configured.
 
@@ -346,7 +346,7 @@ Current supervision includes:
 - stale-result protection;
 - no blind replay of completed historical effects.
 
-Representative E2E-28/34 closes this path.
+Representative supervision/recovery contract closes this path.
 
 Remaining product work is broader long-duration, multi-workstream and real-environment coverage, not re-adding the same supervision architecture.
 
@@ -367,7 +367,7 @@ Resident restarts
 -> use fresh current-world evidence before continuing
 ```
 
-E2E-28/34 verifies delegated restart reconciliation and E2E-27/33 verifies continuation/non-replay under steering for representative paths.
+supervision/recovery contract verifies delegated restart reconciliation and steering/continuation contract verifies continuation/non-replay under steering for representative paths.
 
 This does not mean every cross-day real-world task is already solved.
 
@@ -387,7 +387,7 @@ user updates goal/direction
 -> Resident continues the same Root Work from fresh evidence
 ```
 
-E2E-27/33 closes the representative real-model acceptance path.
+steering/continuation contract closes the representative real-model acceptance path.
 
 Remaining work is broader task classes, longer time spans and user-facing explanation of what was retained/superseded.
 
@@ -412,11 +412,11 @@ worker says "done"
 -> Root Work complete
 ```
 
-This invariant was exercised by E2E-29 and remains mandatory across all later delegated work.
+This invariant was exercised by one-route/multi-worker contract and remains mandatory across all later delegated work.
 
 ## 15. One model, many workers
 
-E2E-29 closed the architectural question of whether multiple workers require multiple model routes.
+one-route/multi-worker contract closed the architectural question of whether multiple workers require multiple model routes.
 
 They do not.
 
@@ -504,7 +504,7 @@ This design must not evolve ZN into:
 - durable WorkItem/WorkerRun facts;
 - isolated bounded worker context;
 - worker action authority revalidation;
-- one-route multi-worker (E2E-29);
+- one-route multi-worker (one-route/multi-worker contract);
 - hard policy/privacy routing;
 - dynamic health-aware routing;
 - stall/no-progress supervision;
@@ -513,7 +513,7 @@ This design must not evolve ZN into:
 - active steering / stale-plan protection / continuation;
 - delegated user progress projection;
 - bounded flat dependency/readiness;
-- E2E-30/42, 28/34, 27/33 representative acceptance closures with their documented limitations.
+- route/privacy contract, 28/34, 27/33 representative acceptance closures with their documented limitations.
 
 ### Remaining boundary
 
@@ -521,7 +521,7 @@ This design must not evolve ZN into:
 - complex multi-workstream user UX and explanation quality;
 - more cross-surface Browser/Desktop/File/Terminal/Application tasks;
 - broader real-site Browser/User Browser complexity;
-- broader Windows/application semantic capability when a real E2E requires it;
+- broader Windows/application semantic capability when a real integration evidence requires it;
 - general recursive delegation / arbitrary DAG scheduling remains intentionally unimplemented unless a future real task proves it necessary.
 
 ## 21. Product acceptance rule

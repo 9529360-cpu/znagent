@@ -2,7 +2,7 @@
 
 > Product-contract supplement: 2026-09-04
 >
-> This document defines the long-term OS/device integration direction for ZN. It does not claim that ZN currently owns Windows or has system privileges it does not actually possess. Real code, Git state, tests and E2E remain authoritative.
+> This document defines the long-term OS/device integration direction for ZN. It does not claim that ZN currently owns Windows or has system privileges it does not actually possess. Real code, Git state and contract/integration evidence remain authoritative.
 
 ## 1. Product boundary
 
@@ -313,7 +313,7 @@ A future task should be able to continue across device boundaries when current a
 
 ## 12. Windows-first implementation surfaces
 
-Possible Windows substrate work includes, only when a real E2E requires it:
+Possible Windows substrate work includes, only when real integration evidence requires it:
 
 - Win32 / COM / WinRT integration;
 - Windows UI Automation / accessibility;
@@ -338,7 +338,7 @@ Every implementation still has to answer:
 1. Which real user task currently fails?
 2. Which missing OS/context/action/cognition mechanism causes that failure?
 3. Is there already an existing ZN Body/Senses/Work mechanism that should be extended instead?
-4. Which E2E changes from failure to success after this work?
+4. Which reusable capability contract changes from failure to success after this work?
 
 If there is no direct real-task answer, keep it out of the current mainline.
 
@@ -374,4 +374,3 @@ Related documents:
 - `docs/ZN-2035-PERSONAL-ASSISTANT-BLUEPRINT.md`
 - `docs/ZN-OS-ASSISTANT-INDUSTRY-RESEARCH.md`
 - `docs/ZN-DELEGATED-WORK-DESIGN.md`
-- `docs/ZN-REAL-TASK-E2E-CATALOG.md`
