@@ -9,7 +9,7 @@ binds the script to the workspace, chooses its own interpreter, quotes argv,
 executes through the existing Terminal Body, and feeds real failures back into
 the same Root Work.
 
-E2E-23 adds one equally narrow reality-replanning rule: if cognition proposes a
+One bounded reality-replanning rule is retained: if cognition proposes a
 valid relative ``.py`` path that does not exist, ZN may search the attached
 workspace for one unique existing file with the same basename. The scan is
 bounded, does not follow directory symlinks or Windows reparse points, rejects
@@ -34,15 +34,20 @@ from .models import utc_now
 from .steerable_work import WorkItem
 from .structured_proposal import parse_exact_json_payload
 from .work import title_for_work_task
+from .veteran_candidate_projection import VeteranProjectionError
+from .veteran_engineering import VeteranSidecarError
+from .veteran_work_owner import VeteranEngineeringWorkOwner
 
 
 class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
-    """Add the smallest real Modify -> Run -> Observe -> Fix loop for E2E-26."""
+    """Add a bounded real Modify -> Run -> Observe -> Fix loop."""
 
     _MAX_PYTHON_ARGS = 24
     _MAX_ARG_CHARS = 2048
     _MAX_PATH_DISCOVERY_ENTRIES = 4096
     _MAX_PATH_DISCOVERY_DEPTH = 8
+    _VETERAN_STATE_KEY = "veteran_engineering"
+    _VETERAN_HANDOFF_KEY = "veteran_engineering_handoff_complete"
     _PATH_DISCOVERY_PRUNE = frozenset(
         {
             ".git",
@@ -58,6 +63,149 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             "dist",
         }
     )
+
+    def _deliberation_step(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        learning_evidence,
+        thought=None,
+    ):
+        if (
+            not VeteranEngineeringWorkOwner.handles(event)
+            or bool(state.data.get(self._VETERAN_HANDOFF_KEY))
+        ):
+            return super()._deliberation_step(
+                event,
+                state,
+                readiness=readiness,
+                learning_evidence=learning_evidence,
+                thought=thought,
+            )
+
+        root = self._criterion_bound_root(event)
+        workspace = str(event.payload.get("workspace_path") or "").strip()
+        if root is None or not workspace:
+            return super()._deliberation_step(
+                event,
+                state,
+                readiness=readiness,
+                learning_evidence=learning_evidence,
+                thought=thought,
+            )
+
+        policy_block = VeteranEngineeringWorkOwner.policy_block_reason(event)
+        if policy_block:
+            state.data[self._VETERAN_STATE_KEY] = {
+                "status": "blocked",
+                "reason": policy_block,
+            }
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason=policy_block,
+            )
+
+        criteria = [
+            " ".join(str(value or "").strip().split())
+            for value in root.acceptance_criteria
+            if str(value or "").strip()
+        ]
+        done_definition = "; ".join(criteria)[:6000] or root.objective[:6000]
+        raw_non_goals = event.payload.get("engineering_non_goals")
+        non_goals = (
+            tuple(
+                " ".join(str(value).strip().split())[:1000]
+                for value in raw_non_goals[:16]
+                if str(value).strip()
+            )
+            if isinstance(raw_non_goals, list)
+            else ()
+        )
+        if not non_goals:
+            non_goals = (
+                "Do not push, publish, release, deploy, or change credentials.",
+                "Do not modify files outside the admitted repository workspace.",
+            )
+        risk_envelope = str(
+            event.payload.get("engineering_risk_envelope")
+            or event.payload.get("risk_envelope")
+            or "medium"
+        ).strip().lower()
+
+        owner = VeteranEngineeringWorkOwner(ledger=self.work_ledger)
+        try:
+            progress = owner.advance(
+                root=root,
+                workspace=workspace,
+                goal=root.objective,
+                done_definition=done_definition,
+                risk_envelope=risk_envelope,
+                non_goals=non_goals,
+            )
+        except (
+            VeteranSidecarError,
+            VeteranProjectionError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ) as exc:
+            reason = f"Veteran engineering failed closed: {type(exc).__name__}: {exc}"
+            state.data[self._VETERAN_STATE_KEY] = {
+                "status": "failed",
+                "reason": reason[:3000],
+            }
+            state.data["local_failure"] = reason[:3000]
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._checkpoint_terminal_failure(event, state, reason=reason)
+
+        run = self.work_ledger.worker_run(progress.worker_run_id)
+        checkpoint = (
+            dict(run.metrics.get("veteran_engineering") or {})
+            if run is not None and isinstance(run.metrics, dict)
+            else {}
+        )
+        model_invocations = max(0, int(checkpoint.get("model_invocations") or 0))
+        state.data["broad_goal_model_invocations"] = max(
+            max(0, int(state.data.get("broad_goal_model_invocations") or 0)),
+            model_invocations,
+        )
+        state.data[self._VETERAN_STATE_KEY] = {
+            "status": progress.state,
+            "worker_run_id": progress.worker_run_id,
+            "work_item_id": progress.work_item_id,
+            "mission_id": progress.mission_id,
+            "phase": progress.phase,
+            "candidate_commit": progress.candidate_commit,
+            "projected_paths": list(progress.projected_paths),
+            "message": progress.message,
+            "model_invocations": model_invocations,
+        }
+
+        if progress.state == "blocked":
+            reason = progress.message or "Veteran engineering Work blocked"
+            state.data["local_failure"] = reason[:3000]
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._checkpoint_terminal_failure(event, state, reason=reason)
+
+        state.stage = "native_deliberation"
+        if progress.state == "projected":
+            state.data[self._VETERAN_HANDOFF_KEY] = True
+            state.data.pop("local_failure", None)
+            state.next_action = (
+                "independently verify the projected Veteran candidate against Root acceptance"
+            )
+        else:
+            state.next_action = (
+                f"resume durable Veteran engineering Mission at {progress.phase or progress.state}"
+            )
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
 
     def _build_cognition_request(self, event, impasse, required, deliberation=None):
         request = super()._build_cognition_request(

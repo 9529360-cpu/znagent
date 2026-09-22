@@ -6,7 +6,7 @@ A Resident event can finish successfully while the WorkItem it serves still has
 unmet acceptance criteria. This layer preserves the event/result as evidence but
 prevents executor/model success from becoming Work acceptance by itself.
 
-E2E-29 adds a small Work-owned WorkerRun ledger here. WorkerRun is a disposable
+A Work-owned WorkerRun ledger records disposable execution attempts. WorkerRun is a disposable
 execution attempt bound to an existing WorkItem and plan version; it is not a
 Resident, Agent identity, scheduler, provider Worker, model route, or second
 store. Provider dispatch durability remains owned by ZNKernelRuntime.
@@ -549,8 +549,8 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
             raise ValueError("WorkerRun WorkItem is not bound to the current Root")
         self.assert_dependencies_ready(item.work_item_id)
         kind = str(executor_kind or "").strip().lower()
-        if kind not in {"research", "coding", "review"}:
-            raise ValueError("WorkerRun executor_kind must be research, coding, or review")
+        if not kind:
+            raise ValueError("WorkerRun executor_kind must not be empty")
         tools = self._normalized_scope(tool_scope)
         authority = self._normalized_scope(authority_scope)
         worker_run_id = f"worker-{uuid.uuid4().hex[:16]}"
@@ -603,6 +603,59 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
                 (normalized,),
             ).fetchone()
         return self._worker_from_row(row) if row is not None else None
+
+    def update_worker_run_metrics(
+        self,
+        worker_run_id: str,
+        *,
+        metrics: dict[str, Any],
+    ) -> WorkerRun:
+        """Persist bounded execution identity while a WorkerRun is still live.
+
+        This is intentionally narrower than a generic WorkerRun update. Callers
+        may checkpoint executor-owned recovery identity (for example an external
+        Mission id) but cannot change state, scopes, WorkItem binding, provider,
+        or plan version through this path.
+        """
+
+        run = self.worker_run(worker_run_id)
+        if run is None:
+            raise ValueError("unknown WorkerRun")
+        if run.state not in {"queued", "running"}:
+            raise ValueError("WorkerRun metrics may only change while queued or running")
+        item = self._work_item_by_id(run.work_item_id)
+        if item is None or item.plan_version != run.plan_version:
+            raise RuntimeError("WorkerRun lost its immutable WorkItem binding")
+        if self.plan_version(item.work_thread_id) != run.plan_version:
+            self.mark_worker_stale(
+                worker_run_id,
+                reason="WorkerRun recovery identity belongs to a stale plan",
+            )
+            refreshed = self.worker_run(worker_run_id)
+            assert refreshed is not None
+            return refreshed
+        metric_values = dict(run.metrics)
+        metric_values.update(dict(metrics or {}))
+        with self._lock, closing(self._connect()) as conn:
+            updated = conn.execute(
+                "UPDATE worker_runs SET metrics_json=? "
+                "WHERE worker_run_id=? AND state IN ('queued','running')",
+                (
+                    json.dumps(
+                        metric_values,
+                        ensure_ascii=False,
+                        separators=(",", ":"),
+                    ),
+                    run.worker_run_id,
+                ),
+            )
+            conn.commit()
+        if updated.rowcount != 1:
+            raise RuntimeError("WorkerRun metrics update lost a concurrent state change")
+        persisted = self.worker_run(run.worker_run_id)
+        if persisted is None:
+            raise RuntimeError("WorkerRun metrics update did not persist")
+        return persisted
 
     def list_worker_runs(
         self,

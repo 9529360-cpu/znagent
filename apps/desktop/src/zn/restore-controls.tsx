@@ -1,4 +1,6 @@
+import type { TFunction } from 'i18next'
 import { useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import {
   approveZnMissingWorkRestore,
@@ -13,15 +15,16 @@ type Props = {
   onRealityChanged: () => void | Promise<void>
 }
 
-function statusLabel(application: ZnRestoreApplication): string {
-  if (application.status === 'approval_required') return 'Prepared. Explicit approval is still required.'
-  if (application.status === 'recovery_required') return 'Interrupted restore needs fresh explicit approval.'
-  if (application.status === 'completed') return 'Restore completed and exact retained bytes were verified.'
-  if (application.status === 'blocked') return application.error || 'Restore is blocked by fresh reality.'
-  return `Restore state: ${application.status}`
+function statusLabel(application: ZnRestoreApplication, t: TFunction): string {
+  if (application.status === 'approval_required') return t('restore.application.approvalRequired')
+  if (application.status === 'recovery_required') return t('restore.application.recoveryRequired')
+  if (application.status === 'completed') return t('restore.application.completed')
+  if (application.status === 'blocked') return application.error || t('restore.application.blocked')
+  return t('restore.application.state', { status: application.status })
 }
 
 export function ZnMissingRestoreControls({ threadId, point, disabled, onRealityChanged }: Props) {
+  const { t } = useTranslation()
   const [application, setApplication] = useState<ZnRestoreApplication | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -71,21 +74,21 @@ export function ZnMissingRestoreControls({ threadId, point, disabled, onRealityC
   return (
     <div className="zn-restore-controls">
       <div className="zn-muted zn-small">
-        This restores the retained exact bytes only if the target is still missing. It never overwrites a target that exists again.
+        {t('restore.controls.description')}
       </div>
       {!application ? (
         <button type="button" disabled={busy || disabled} onClick={() => void prepare()}>
-          {busy ? 'Preparing…' : 'Prepare restore'}
+          {busy ? t('restore.controls.preparing') : t('restore.controls.prepare')}
         </button>
       ) : application.requiresUserApproval ? (
         <>
-          <div className="zn-muted zn-small">{statusLabel(application)}</div>
+          <div className="zn-muted zn-small">{statusLabel(application, t)}</div>
           <button className="zn-primary" type="button" disabled={busy || disabled} onClick={() => void approve()}>
-            {busy ? 'Restoring…' : 'Approve exact restore'}
+            {busy ? t('restore.controls.restoring') : t('restore.controls.approve')}
           </button>
         </>
       ) : (
-        <div className="zn-muted zn-small">{statusLabel(application)}</div>
+        <div className="zn-muted zn-small">{statusLabel(application, t)}</div>
       )}
       {error ? <div className="zn-error-text">{error}</div> : null}
     </div>

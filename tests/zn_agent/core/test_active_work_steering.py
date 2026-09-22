@@ -138,7 +138,7 @@ class ActiveWorkSteeringTests(unittest.TestCase):
                 resident.store.close()
 
     def test_late_success_from_old_plan_is_retained_but_never_accepted(self) -> None:
-        """E2E-27 stale discipline is a commit-time version check, not a worker claim."""
+        """Stale-plan discipline is a commit-time version check, not a worker claim."""
         with tempfile.TemporaryDirectory() as tmp:
             resident = self._runtime(Path(tmp) / "kernel.db")
             try:

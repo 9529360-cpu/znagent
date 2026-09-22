@@ -19,6 +19,7 @@ import zn_agent.resident
 from zn_agent.core.browser import BrowserPermissionContext
 from zn_agent.core.managed_browser import PlaywrightManagedBrowser
 from zn_agent.core.provider_bridge import build_resident_runtime
+from zn_agent.core.veteran_engineering import vendored_veteran_root
 
 home = Path(os.environ["ZN_AGENT_HOME"])
 home.mkdir(parents=True, exist_ok=True)
@@ -31,6 +32,10 @@ try:
     assert state.external_brains == ()
 finally:
     resident.store.close()
+
+veteran_root = vendored_veteran_root()
+assert (veteran_root / "mcp" / "server.mjs").is_file()
+assert (veteran_root / "VENDOR.json").is_file()
 
 browser = PlaywrightManagedBrowser()
 session = browser.open_session(permission=BrowserPermissionContext(), headless=True)
@@ -120,10 +125,14 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
   const python = resolveInside(runtimeRoot, manifest.python, 'python')
   const backendRoot = resolveInside(runtimeRoot, manifest.backend_root, 'backend_root')
   const browserRoot = resolveInside(runtimeRoot, manifest.browser_root, 'browser_root')
+  const veteranRuntimeRoot = resolveInside(runtimeRoot, manifest.veteran_runtime, 'veteran_runtime')
   const pythonStat = await requireFile(python, 'python executable')
   if (process.platform !== 'win32' && (pythonStat.mode & 0o111) === 0) throw new Error(`packaged runtime python is not executable: ${python}`)
   await requireDirectory(backendRoot, 'backend root')
   await requireDirectory(browserRoot, 'managed browser root')
+  await requireDirectory(veteranRuntimeRoot, 'Veteran runtime root')
+  await requireFile(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), 'Veteran MCP server')
+  await requireFile(path.join(veteranRuntimeRoot, 'VENDOR.json'), 'Veteran vendor manifest')
   const browserEntries = await fs.readdir(browserRoot)
   if (browserEntries.length === 0) throw new Error(`packaged runtime managed browser root is empty: ${browserRoot}`)
   await requireFile(path.join(backendRoot, 'zn_agent', 'resident.py'), 'resident package entrypoint')
@@ -134,7 +143,7 @@ export async function verifyPackagedZnRuntime(runtimeRoot, { version, commit }) 
   } catch (error) {
     if (error instanceof Error && error.message.startsWith('packaged ZN runtime contains')) throw error
   }
-  return { runtimeRoot: path.resolve(runtimeRoot), runtimeId, python, backendRoot, browserRoot }
+  return { runtimeRoot: path.resolve(runtimeRoot), runtimeId, python, backendRoot, browserRoot, veteranRuntimeRoot }
 }
 
 export async function smokePackagedZnRuntime(runtime, { run = execFileAsync } = {}) {
@@ -149,6 +158,7 @@ export async function smokePackagedZnRuntime(runtime, { run = execFileAsync } = 
         PYTHONUNBUFFERED: '1',
         ZN_AGENT_HOME: home,
         ZN_RUNTIME_ID: runtime.runtimeId,
+        ZN_VETERAN_RUNTIME_ROOT: runtime.veteranRuntimeRoot,
         PLAYWRIGHT_BROWSERS_PATH: runtime.browserRoot
       },
       timeout: PACKAGED_RUNTIME_SMOKE_TIMEOUT_MS,

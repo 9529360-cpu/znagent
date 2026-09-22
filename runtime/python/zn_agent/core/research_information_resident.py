@@ -63,7 +63,7 @@ _QUOTED_ENTITY = re.compile(r"[\"'“”‘’`](.{2,120}?)[\"'“”‘’`]")
 
 
 class ResearchInformationResidentRuntime(MemoryLearnedBehaviorResidentRuntime):
-    """Close one bounded normal-language Research Work path inside the Resident."""
+    """Execute bounded normal-language Research Work through reusable ZN contracts."""
 
     _RESEARCH_META_KEY = "research_information_work_v1"
     _BUNDLE_ACCEPTANCE = "research_bundle:v1"

@@ -105,8 +105,8 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                     payload={},
                 )
 
-                # Policy is durable before the Resident can reach the earlier
-                # desktop semantic-understanding cognition path.
+                # Policy is durable before the Resident can construct or invoke
+                # the first external cognitive resource.
                 thread = ledger.get_thread("root-policy")
                 self.assertIsNotNone(thread)
                 assert thread is not None
@@ -138,17 +138,6 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                 self.assertEqual({call["provider"] for call in calls}, {"openai"})
                 self.assertFalse(any(call["provider"] == "anthropic" for call in calls))
 
-                # The first direct semantic cognition Goal itself inherited the
-                # event policy even though it bypasses CognitionRequest.context.
-                semantic_goal = resident.store.get_goal(
-                    f"goal-desktop-understanding-{event.event_id}"
-                )
-                self.assertIsNotNone(semantic_goal)
-                assert semantic_goal is not None
-                self.assertEqual(
-                    semantic_goal.metadata.get("route_policy"),
-                    {"denied_providers": ["anthropic"]},
-                )
             finally:
                 resident.store.close()
 
@@ -327,21 +316,11 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                     {"allowed_providers": ["openai"]},
                 )
 
-                semantic_goal = None
-                for _ in range(32):
+                for _ in range(96):
                     restarted.live_once()
-                    semantic_goal = restarted.store.get_goal(
-                        f"goal-desktop-understanding-{steered.event_id}"
-                    )
-                    if semantic_goal is not None:
+                    if calls:
                         break
 
-                self.assertIsNotNone(semantic_goal)
-                assert semantic_goal is not None
-                self.assertEqual(
-                    semantic_goal.metadata.get("route_policy"),
-                    {"allowed_providers": ["openai"]},
-                )
                 self.assertTrue(created_routes)
                 self.assertEqual(set(created_routes), {"openai-allowed"})
                 self.assertTrue(calls)
@@ -410,18 +389,6 @@ class RootRoutePolicyBeforeCognitionTests(unittest.TestCase):
                         break
 
                 self.assertEqual(created_routes, [])
-                semantic_goal = resident.store.get_goal(
-                    f"goal-desktop-understanding-{event.event_id}"
-                )
-                self.assertIsNotNone(semantic_goal)
-                assert semantic_goal is not None
-                self.assertEqual(
-                    semantic_goal.metadata.get("route_policy"),
-                    {"data_classification": "local_only"},
-                )
-                durable = semantic_goal.metadata.get("_durable_external_run")
-                self.assertIsInstance(durable, dict)
-                self.assertEqual(durable.get("attempts"), [])
             finally:
                 resident.store.close()
 

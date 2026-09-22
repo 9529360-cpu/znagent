@@ -3,6 +3,13 @@ declare module '*.css' {
   export default stylesheet
 }
 
+type ZnDesktopLocalePreference = 'system' | 'en-US' | 'zh-CN'
+type ZnDesktopLocaleState = {
+  preference: ZnDesktopLocalePreference
+  resolvedLocale: 'en-US' | 'zh-CN'
+  preferredSystemLanguages: string[]
+}
+
 type ZnDesktopPayload = Record<string, unknown>
 
 type ZnDesktopDeepLink = {
@@ -66,18 +73,34 @@ type ZnDesktopResidentBridge = {
 }
 
 declare interface Window {
-  znDesktop: {
-    resident: ZnDesktopResidentBridge
-    workspaces: {
-      attach: (threadId: string) => Promise<unknown>
-      detach: (threadId: string) => Promise<unknown>
+    znDesktop: {
+      resident: ZnDesktopResidentBridge
+      workspaces: {
+        attach: (threadId: string) => Promise<unknown>
+        detach: (threadId: string) => Promise<unknown>
+      }
+      updates: {
+        check: () => Promise<ZnDesktopUpdateStatus>
+        apply: () => Promise<ZnDesktopUpdateApplyResult>
+      }
+      shell: {
+        getLocaleState: () => Promise<ZnDesktopLocaleState>
+        setLocalePreference: (preference: ZnDesktopLocalePreference) => Promise<ZnDesktopLocaleState>
+        setWindowMode: (mode: 'compact' | 'expanded') => Promise<{ mode: 'compact' | 'expanded'; width: number; height: number }>
+        ackWindowModeTransition: (payload: {
+          transitionId: string
+          mode: 'compact' | 'expanded'
+        }) => Promise<{ accepted: boolean }>
+        onWindowModeTransition: (callback: (payload: {
+          transitionId: string
+          phase: 'prepare' | 'complete'
+          mode: 'compact' | 'expanded'
+          reason: string
+          width?: number
+          height?: number
+        }) => void) => () => void
+        onDeepLink: (callback: (payload: ZnDesktopDeepLink) => void) => () => void
+        onGlobalInvocation: (callback: () => void) => () => void
+      }
     }
-    updates: {
-      check: () => Promise<ZnDesktopUpdateStatus>
-      apply: () => Promise<ZnDesktopUpdateApplyResult>
-    }
-    shell: {
-      onDeepLink: (callback: (payload: ZnDesktopDeepLink) => void) => () => void
-    }
-  }
 }

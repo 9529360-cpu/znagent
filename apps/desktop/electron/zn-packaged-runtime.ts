@@ -16,6 +16,7 @@ type ZnRuntimeManifest = {
   python: string
   backend_root: string
   browser_root?: string
+  veteran_runtime?: string
 }
 
 type ResolvedZnRuntime = {
@@ -23,6 +24,7 @@ type ResolvedZnRuntime = {
   python: string
   backendRoot: string
   browserRoot?: string
+  veteranRuntimeRoot?: string
   manifest: ZnRuntimeManifest
 }
 
@@ -62,6 +64,9 @@ function readManifest(runtimeRoot: string): ZnRuntimeManifest {
   }
   if (manifest.browser_root !== undefined && (typeof manifest.browser_root !== 'string' || !manifest.browser_root.trim())) {
     throw new Error(`ZN runtime manifest has an invalid browser_root at ${manifestPath}`)
+  }
+  if (manifest.veteran_runtime !== undefined && (typeof manifest.veteran_runtime !== 'string' || !manifest.veteran_runtime.trim())) {
+    throw new Error(`ZN runtime manifest has an invalid veteran_runtime at ${manifestPath}`)
   }
   if (manifest.platform && manifest.platform !== process.platform) {
     throw new Error(`ZN runtime platform mismatch: expected ${process.platform}, got ${manifest.platform}`)
@@ -107,9 +112,17 @@ function resolveRuntime(runtimeRoot: string, expectedRuntimeId?: string): Resolv
   const browserRoot = manifest.browser_root
     ? resolveInside(runtimeRoot, manifest.browser_root, 'browser_root')
     : undefined
+  const veteranRuntimeRoot = manifest.veteran_runtime
+    ? resolveInside(runtimeRoot, manifest.veteran_runtime, 'veteran_runtime')
+    : undefined
   requireFile(python, 'python executable')
   requireDirectory(backendRoot, 'backend root')
   if (browserRoot) requireDirectory(browserRoot, 'managed browser root')
+  if (veteranRuntimeRoot) {
+    requireDirectory(veteranRuntimeRoot, 'Veteran runtime root')
+    requireFile(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), 'Veteran MCP server')
+    requireFile(path.join(veteranRuntimeRoot, 'VENDOR.json'), 'Veteran vendor manifest')
+  }
   requireFile(path.join(backendRoot, 'zn_agent', 'resident.py'), 'resident package entrypoint')
   requireFile(path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py'), 'resident core entrypoint')
   if (fs.existsSync(path.join(backendRoot, RETIRED_PACKAGE_NAME))) {
@@ -120,6 +133,7 @@ function resolveRuntime(runtimeRoot: string, expectedRuntimeId?: string): Resolv
     python,
     backendRoot,
     ...(browserRoot ? { browserRoot } : {}),
+    ...(veteranRuntimeRoot ? { veteranRuntimeRoot } : {}),
     manifest
   }
 }
@@ -157,11 +171,13 @@ function materializeRuntime(resourcesPath: string, znHome: string): ResolvedZnRu
 function configureZnPackagedRuntime({
   resourcesPath,
   env = process.env,
-  znHome = resolveZnHome(env)
+  znHome = resolveZnHome(env),
+  desktopExecutable = process.execPath
 }: {
   resourcesPath: string
   env?: EnvRecord
   znHome?: string
+  desktopExecutable?: string
 }): ResolvedZnRuntime {
   const resolvedHome = path.resolve(znHome)
   const runtime = materializeRuntime(resourcesPath, resolvedHome)
@@ -171,6 +187,9 @@ function configureZnPackagedRuntime({
   env.ZN_RESIDENT_PYTHON = runtime.python
   if (runtime.browserRoot) env.PLAYWRIGHT_BROWSERS_PATH = runtime.browserRoot
   else delete env.PLAYWRIGHT_BROWSERS_PATH
+  if (runtime.veteranRuntimeRoot) env.ZN_VETERAN_RUNTIME_ROOT = runtime.veteranRuntimeRoot
+  else delete env.ZN_VETERAN_RUNTIME_ROOT
+  env.ZN_DESKTOP_EXECUTABLE = path.resolve(desktopExecutable)
   env.PYTHONNOUSERSITE = '1'
   env.PYTHONUTF8 = '1'
   return runtime
