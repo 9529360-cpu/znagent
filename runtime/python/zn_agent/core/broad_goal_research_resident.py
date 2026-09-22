@@ -234,13 +234,14 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
         if child.status == "completed":
             return self._roll_forward_research_state(event, state)
 
-        browser = self.managed_browser
-        if not callable(getattr(browser, "read_page", None)):
+        try:
+            browser = self._managed_research_browser()
+        except Exception as exc:
             return self._fail_research_step(
                 event,
                 state,
                 child,
-                "readable managed Chromium adapter is unavailable",
+                f"readable managed browser adapter is unavailable: {type(exc).__name__}: {exc}",
             )
 
         url = str(raw_step.get("url") or "").strip()
