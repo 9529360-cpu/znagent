@@ -15,6 +15,7 @@ import json
 from typing import Any
 
 from .browser_named_goal import browser_named_text_request
+from .composite_work_routing import composite_work_preempts_browser_understanding
 from .desktop_task_goal import (
     DESKTOP_TASK_GOAL_KIND,
     DesktopTaskGoal,
@@ -297,6 +298,18 @@ class BrowserGoalUnderstandingResidentRuntime(ResidentGoalRuntime):
             or desktop_task_goal(event) is not None
         ):
             return super()._orient_step(event, state, readiness=readiness, thought=thought)
+
+        # A durable browser+workspace Work request is a more specific route than
+        # the generic foreground-browser language proposal. Keep routing
+        # descriptive here: ResidentGoalRuntime still owns truth, authority and
+        # all later execution/verification.
+        if composite_work_preempts_browser_understanding(event):
+            return super()._orient_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
 
         if _looks_like_foreground_browser_task(event):
             proposed = self._orient_browser_goal_from_cognition(
