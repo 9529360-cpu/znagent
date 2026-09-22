@@ -18,13 +18,13 @@ from .action import NativeActionIntent
 from .cognition import CognitiveIncrement
 from .evidence_bound_work import EvidenceBoundSteerableWorkLedger
 from .models import ExecutionPath, ResidentRunResult, utc_now
-from .natural_file_work_resident import NaturalFileWorkResidentRuntime
+from .user_browser_extension_resident import UserBrowserExtensionResidentRuntime
 from .steerable_work import WorkItem
 from .structured_proposal import parse_exact_json_payload
 from .work import title_for_work_task
 
 
-class BroadGoalWorkResidentRuntime(NaturalFileWorkResidentRuntime):
+class BroadGoalWorkResidentRuntime(UserBrowserExtensionResidentRuntime):
     """Add a bounded rolling-decomposition bridge over durable Work."""
 
     _ROLLING_STEP_KEY = "broad_goal_rolling_step"

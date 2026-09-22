@@ -6,8 +6,6 @@ from dataclasses import asdict, dataclass, is_dataclass
 from typing import Any, Callable, Literal, Mapping
 
 from .application_goal import application_open_goal
-from .desktop_task_goal import desktop_task_goal
-from .natural_file_goal import natural_workspace_text_edit_request
 from .windows_audio_intent import (
     windows_audio_volume_read_goal,
     windows_audio_volume_set_goal,
@@ -212,42 +210,6 @@ def build_resident_reflex_intents() -> ReflexIntentRegistry:
             ),
         ),
         application_open_goal,
-    )
-    registry.register(
-        ReflexIntentDescriptor(
-            intent_id="windows.workspace.text_edit",
-            description=(
-                "Edit one bounded workspace text file selected from explicit "
-                "user semantics and fresh file evidence."
-            ),
-            required_slots=(
-                "workspace_path",
-                "name_hint",
-                "old_text",
-                "new_text",
-            ),
-            priority=90,
-            tags=("windows", "file", "composite_goal"),
-        ),
-        natural_workspace_text_edit_request,
-    )
-    registry.register(
-        ReflexIntentDescriptor(
-            intent_id="windows.desktop.workspace_to_app",
-            description=(
-                "Move bounded workspace content into one foreground desktop "
-                "application goal using semantic control names."
-            ),
-            required_slots=(
-                "workspace_path",
-                "source_name_hint",
-                "input_name",
-                "button_name",
-            ),
-            priority=80,
-            tags=("windows", "desktop", "composite_goal"),
-        ),
-        desktop_task_goal,
     )
     return registry
 

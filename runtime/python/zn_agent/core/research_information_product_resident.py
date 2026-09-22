@@ -33,45 +33,6 @@ from .visual_stage_bridge import (
 )
 
 
-_RESEARCH_INTENT_MARKERS = (
-    "研究",
-    "帮我查一下",
-    "查一下最近",
-    "查一下这几个",
-    "查查",
-    "多个来源",
-    "几个来源",
-    "别只看一个来源",
-    "现在的价格",
-    "当前价格",
-    "主要区别",
-    "最近的趋势",
-    "行业的趋势",
-    "都在讨论",
-    "为什么这么多人聊",
-    "弄明白",
-    "research",
-    "multiple sources",
-    "more than one source",
-    "current price",
-    "compare prices",
-    "latest trend",
-    "recent trend",
-    "why people are talking",
-)
-
-_CONTINUATION_INTENT_MARKERS = (
-    "继续刚才那个调查",
-    "继续刚才的调查",
-    "继续刚才那个研究",
-    "继续刚才的研究",
-    "继续调查",
-    "继续研究",
-    "continue that research",
-    "continue the research",
-    "continue the investigation",
-)
-
 class ProductResearchInformationResidentRuntime(ResearchInformationResidentRuntime):
     """Final Product Resident assembled from reusable capability layers."""
 
@@ -624,16 +585,9 @@ class ProductResearchInformationResidentRuntime(ResearchInformationResidentRunti
         )
 
     def _is_research_event(self, event) -> bool:
-        # Research Work is a product Work path, not a catch-all replacement for
-        # native Resident investigation. Events without a durable Root Work
-        # remain owned by the existing native/recovery path.
+        # Product admission adds only durable Root ownership. Research-language
+        # recognition remains owned by the reusable Research capability layer.
         root = self.work_ledger.work_item_for_event(event.event_id)
         if root is None or root.parent_work_item_id is not None:
             return False
-
-        task = " ".join(str(getattr(event, "task", "") or "").split())
-        lowered = task.casefold()
-        if any(marker.casefold() in lowered for marker in _CONTINUATION_INTENT_MARKERS):
-            thread_id = str(getattr(event, "payload", {}).get("work_thread_id") or "").strip()
-            return self._latest_research_bundle(thread_id) is not None if thread_id else False
-        return any(marker.casefold() in lowered for marker in _RESEARCH_INTENT_MARKERS)
+        return super()._is_research_event(event)

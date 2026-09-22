@@ -19,8 +19,6 @@ on:
       - tests/zn_agent/integration/test_windows_interactive_user_browser_extension.py
       - tests/zn_agent/integration/test_windows_interactive_user_browser_semantic_grounding.py
       - tests/zn_agent/integration/test_windows_interactive_user_browser_task_context.py
-      - tests/zn_agent/integration/test_windows_interactive_desktop_semantic_grounding.py
-      - tests/zn_agent/integration/test_windows_interactive_desktop_semantic_reground.py
       - tests/zn_agent/integration/test_windows_interactive_machine_capability.py
       - tests/zn_agent/integration/test_windows_interactive_application_activation.py
       - runtime/python/pyproject.toml
@@ -45,17 +43,10 @@ on:
       - runtime/python/zn_agent/core/user_browser_extension_relay.py
       - runtime/python/zn_agent/core/user_browser_extension_resident.py
       - runtime/python/zn_agent/core/user_browser_resident.py
-      - runtime/python/zn_agent/core/natural_file_goal.py
-      - runtime/python/zn_agent/core/natural_file_work_resident.py
       - runtime/python/zn_agent/core/goal_resident.py
-      - runtime/python/zn_agent/core/desktop_task_goal.py
       - runtime/python/zn_agent/core/browser_goal_understanding_resident.py
       - runtime/python/zn_agent/core/automation_named_control_sense.py
       - runtime/python/zn_agent/core/modal_window_sense.py
-      - runtime/python/zn_agent/core/desktop_modal_recovery_behavior.py
-      - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
-      - tests/zn_agent/core/test_natural_named_desktop_input_work.py
-      - tests/zn_agent/core/test_desktop_modal_recovery.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
       - runtime/python/zn_agent/core/pointer_click_semantic_resident.py
@@ -89,8 +80,6 @@ on:
       - tests/zn_agent/integration/test_windows_interactive_user_browser_extension.py
       - tests/zn_agent/integration/test_windows_interactive_user_browser_semantic_grounding.py
       - tests/zn_agent/integration/test_windows_interactive_user_browser_task_context.py
-      - tests/zn_agent/integration/test_windows_interactive_desktop_semantic_grounding.py
-      - tests/zn_agent/integration/test_windows_interactive_desktop_semantic_reground.py
       - tests/zn_agent/integration/test_windows_interactive_machine_capability.py
       - tests/zn_agent/integration/test_windows_interactive_application_activation.py
       - runtime/python/pyproject.toml
@@ -115,17 +104,10 @@ on:
       - runtime/python/zn_agent/core/user_browser_extension_relay.py
       - runtime/python/zn_agent/core/user_browser_extension_resident.py
       - runtime/python/zn_agent/core/user_browser_resident.py
-      - runtime/python/zn_agent/core/natural_file_goal.py
-      - runtime/python/zn_agent/core/natural_file_work_resident.py
       - runtime/python/zn_agent/core/goal_resident.py
-      - runtime/python/zn_agent/core/desktop_task_goal.py
       - runtime/python/zn_agent/core/browser_goal_understanding_resident.py
       - runtime/python/zn_agent/core/automation_named_control_sense.py
       - runtime/python/zn_agent/core/modal_window_sense.py
-      - runtime/python/zn_agent/core/desktop_modal_recovery_behavior.py
-      - tests/zn_agent/core/test_desktop_goal_understanding_resident.py
-      - tests/zn_agent/core/test_natural_named_desktop_input_work.py
-      - tests/zn_agent/core/test_desktop_modal_recovery.py
       - runtime/python/zn_agent/core/pointer_click_resident.py
       - runtime/python/zn_agent/core/pointer_click_completion_resident.py
       - runtime/python/zn_agent/core/pointer_click_semantic_resident.py
@@ -208,8 +190,6 @@ jobs:
             'tests/zn_agent/integration/test_windows_interactive_user_browser_extension.py',
             'tests/zn_agent/integration/test_windows_interactive_user_browser_semantic_grounding.py',
             'tests/zn_agent/integration/test_windows_interactive_user_browser_task_context.py',
-            'tests/zn_agent/integration/test_windows_interactive_desktop_semantic_grounding.py',
-            'tests/zn_agent/integration/test_windows_interactive_desktop_semantic_reground.py',
             'tests/zn_agent/integration/test_windows_interactive_machine_capability.py',
             'tests/zn_agent/integration/test_windows_interactive_application_activation.py'
           )
