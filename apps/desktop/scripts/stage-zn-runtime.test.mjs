@@ -48,9 +48,11 @@ test('runtime staging transports the installed backend path as ASCII-safe JSON',
   assert.match(source, /json\.dumps\(str\(Path\(spec\.origin\)\.resolve\(\)\.parent\.parent\)\)/)
 })
 
-test('runtime staging uses the Windows npm command shim for the pinned MCP sidecar', () => {
-  assert.match(source, /const npmCommand = process\.platform === ['"]win32['"] \? ['"]npm\.cmd['"] : ['"]npm['"]/)
-  assert.match(source, /run\(npmCommand, \[/)
+test('runtime staging invokes npm CLI through the active Node executable', () => {
+  assert.match(source, /function resolveNpmCli\(\)/)
+  assert.match(source, /path\.join\(path\.dirname\(process\.execPath\), ['"]node_modules['"], ['"]npm['"], ['"]bin['"], ['"]npm-cli\.js['"]\)/)
+  assert.match(source, /run\(process\.execPath, \[\s*npmCli,/)
+  assert.doesNotMatch(source, /npm\.cmd/)
 })
 
 test('runtime staging packages exact Chrome DevTools MCP sidecar inside ZN runtime', () => {

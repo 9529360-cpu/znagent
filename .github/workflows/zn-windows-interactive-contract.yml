@@ -1,0 +1,204 @@
+name: ZN Windows Interactive Desktop Contract
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - .github/workflows/zn-windows-interactive-contract.yml
+      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
+      - .github/scripts/run-zn-interactive-python.ps1
+      - .github/scripts/zn-interactive-python-entry.py
+      - apps/desktop/browser-extension/background.js
+      - apps/desktop/browser-extension/manifest.json
+      - tests/zn_agent/integration/_run_owned_unittest_module.py
+      - tests/zn_agent/integration/test_windows_interactive_pointer_uia.py
+      - tests/zn_agent/integration/test_windows_interactive_text_entry.py
+      - tests/zn_agent/integration/test_windows_interactive_uia_text_capability.py
+      - tests/zn_agent/integration/test_windows_interactive_user_browser_bridge.py
+      - tests/zn_agent/integration/test_windows_interactive_user_browser_extension.py
+      - tests/zn_agent/integration/test_windows_interactive_user_browser_semantic_grounding.py
+      - tests/zn_agent/integration/test_windows_interactive_user_browser_task_context.py
+      - tests/zn_agent/integration/test_windows_interactive_machine_capability.py
+      - tests/zn_agent/integration/test_windows_interactive_application_activation.py
+      - runtime/python/pyproject.toml
+      - runtime/python/zn_agent/core/body.py
+      - runtime/python/zn_agent/core/office_document.py
+      - runtime/python/zn_agent/core/spreadsheet_work.py
+      - runtime/python/zn_agent/core/research_information_product_resident.py
+      - runtime/python/zn_agent/core/keyboard_text_body.py
+      - runtime/python/zn_agent/core/visual_region_sense.py
+      - runtime/python/zn_agent/core/foreground_window_sense.py
+      - runtime/python/zn_agent/core/focused_control_sense.py
+      - runtime/python/zn_agent/core/focused_text_sense.py
+      - runtime/python/zn_agent/core/automation_element_sense.py
+      - runtime/python/zn_agent/core/automation_text_state_sense.py
+      - runtime/python/zn_agent/core/browser_named_target_sense.py
+      - runtime/python/zn_agent/core/browser_named_goal.py
+      - runtime/python/zn_agent/core/browser_work_body.py
+      - runtime/python/zn_agent/core/browser_text_work_body.py
+      - runtime/python/zn_agent/core/browser_form_submit_body.py
+      - runtime/python/zn_agent/core/user_browser.py
+      - runtime/python/zn_agent/core/user_browser_extension_adapter.py
+      - runtime/python/zn_agent/core/user_browser_extension_relay.py
+      - runtime/python/zn_agent/core/user_browser_extension_resident.py
+      - runtime/python/zn_agent/core/user_browser_resident.py
+      - runtime/python/zn_agent/core/goal_resident.py
+      - runtime/python/zn_agent/core/browser_goal_understanding_resident.py
+      - runtime/python/zn_agent/core/automation_named_control_sense.py
+      - runtime/python/zn_agent/core/pointer_click_resident.py
+      - runtime/python/zn_agent/core/pointer_click_completion_resident.py
+      - runtime/python/zn_agent/core/pointer_click_semantic_resident.py
+      - runtime/python/zn_agent/core/pointer_click_focused_control_resident.py
+      - runtime/python/zn_agent/core/pointer_click_automation_focus_resident.py
+      - runtime/python/zn_agent/core/focused_text_entry_resident.py
+      - runtime/python/zn_agent/core/focused_modern_text_resident.py
+      - runtime/python/zn_agent/core/provider_bridge.py
+      - runtime/python/zn_agent/core/machine_capability.py
+      - runtime/python/zn_agent/core/device_capability_graph.py
+      - runtime/python/zn_agent/core/machine_capability_body.py
+      - runtime/python/zn_agent/core/application_resident.py
+      - tests/zn_agent/core/test_machine_capability.py
+      - tests/zn_agent/core/test_machine_capability_body.py
+      - tests/zn_agent/core/test_application_window_activation.py
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/zn-windows-interactive-contract.yml
+      - .github/scripts/test-zn-interactive-desktop-readiness.ps1
+      - .github/scripts/run-zn-interactive-python.ps1
+      - .github/scripts/zn-interactive-python-entry.py
+      - apps/desktop/browser-extension/background.js
+      - apps/desktop/browser-extension/manifest.json
+      - tests/zn_agent/integration/_run_owned_unittest_module.py
+      - tests/zn_agent/integration/test_windows_interactive_pointer_uia.py
+      - tests/zn_agent/integration/test_windows_interactive_text_entry.py
+      - tests/zn_agent/integration/test_windows_interactive_uia_text_capability.py
+      - tests/zn_agent/integration/test_windows_interactive_user_browser_bridge.py
+      - tests/zn_agent/integration/test_windows_interactive_user_browser_extension.py
+      - tests/zn_agent/integration/test_windows_interactive_user_browser_semantic_grounding.py
+      - tests/zn_agent/integration/test_windows_interactive_user_browser_task_context.py
+      - tests/zn_agent/integration/test_windows_interactive_machine_capability.py
+      - tests/zn_agent/integration/test_windows_interactive_application_activation.py
+      - runtime/python/pyproject.toml
+      - runtime/python/zn_agent/core/body.py
+      - runtime/python/zn_agent/core/office_document.py
+      - runtime/python/zn_agent/core/spreadsheet_work.py
+      - runtime/python/zn_agent/core/research_information_product_resident.py
+      - runtime/python/zn_agent/core/keyboard_text_body.py
+      - runtime/python/zn_agent/core/visual_region_sense.py
+      - runtime/python/zn_agent/core/foreground_window_sense.py
+      - runtime/python/zn_agent/core/focused_control_sense.py
+      - runtime/python/zn_agent/core/focused_text_sense.py
+      - runtime/python/zn_agent/core/automation_element_sense.py
+      - runtime/python/zn_agent/core/automation_text_state_sense.py
+      - runtime/python/zn_agent/core/browser_named_target_sense.py
+      - runtime/python/zn_agent/core/browser_named_goal.py
+      - runtime/python/zn_agent/core/browser_work_body.py
+      - runtime/python/zn_agent/core/browser_text_work_body.py
+      - runtime/python/zn_agent/core/browser_form_submit_body.py
+      - runtime/python/zn_agent/core/user_browser.py
+      - runtime/python/zn_agent/core/user_browser_extension_adapter.py
+      - runtime/python/zn_agent/core/user_browser_extension_relay.py
+      - runtime/python/zn_agent/core/user_browser_extension_resident.py
+      - runtime/python/zn_agent/core/user_browser_resident.py
+      - runtime/python/zn_agent/core/goal_resident.py
+      - runtime/python/zn_agent/core/browser_goal_understanding_resident.py
+      - runtime/python/zn_agent/core/automation_named_control_sense.py
+      - runtime/python/zn_agent/core/pointer_click_resident.py
+      - runtime/python/zn_agent/core/pointer_click_completion_resident.py
+      - runtime/python/zn_agent/core/pointer_click_semantic_resident.py
+      - runtime/python/zn_agent/core/pointer_click_focused_control_resident.py
+      - runtime/python/zn_agent/core/pointer_click_automation_focus_resident.py
+      - runtime/python/zn_agent/core/focused_text_entry_resident.py
+      - runtime/python/zn_agent/core/focused_modern_text_resident.py
+      - runtime/python/zn_agent/core/provider_bridge.py
+      - runtime/python/zn_agent/core/machine_capability.py
+      - runtime/python/zn_agent/core/device_capability_graph.py
+      - runtime/python/zn_agent/core/machine_capability_body.py
+      - runtime/python/zn_agent/core/application_resident.py
+      - tests/zn_agent/core/test_machine_capability.py
+      - tests/zn_agent/core/test_machine_capability_body.py
+      - tests/zn_agent/core/test_application_window_activation.py
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: zn-windows-interactive-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  interactive-desktop-contract:
+    name: Windows interactive capability contracts
+    runs-on: windows-latest
+    timeout-minutes: 20
+    env:
+      CI: 'true'
+      TZ: UTC
+      PYTHONUTF8: '1'
+      PYTHONUNBUFFERED: '1'
+    steps:
+      - name: Verify GitHub-hosted Windows x64 runner
+        shell: powershell
+        run: |
+          if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
+            throw "ZN interactive desktop Contract requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
+          }
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Prove interactive desktop readiness
+        shell: powershell
+        run: |
+          & "$env:GITHUB_WORKSPACE\.github\scripts\test-zn-interactive-desktop-readiness.ps1" -ExpectedRunnerName $env:RUNNER_NAME
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          version: '0.11.6'
+          enable-cache: false
+      - name: Prepare isolated runtime
+        shell: powershell
+        run: |
+          uv python install 3.12
+          Remove-Item -Recurse -Force .ci/interactive-contract-venv -ErrorAction SilentlyContinue
+          uv venv .ci/interactive-contract-venv --python 3.12
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-contract-venv\Scripts\python.exe'
+          uv pip install --python $python "runtime/python[browser]"
+          & $python -m playwright install chromium
+          if ($LASTEXITCODE -ne 0) {
+            throw 'Playwright Chromium runtime installation failed for interactive Contract'
+          }
+      - name: Run generic interactive capability contracts
+        shell: powershell
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\interactive-contract-venv\Scripts\python.exe'
+          $launcher = Join-Path $env:GITHUB_WORKSPACE '.github\scripts\run-zn-interactive-python.ps1'
+          $ownedRunner = Join-Path $env:GITHUB_WORKSPACE 'tests\zn_agent\integration\_run_owned_unittest_module.py'
+          $tests = @(
+            'tests/zn_agent/integration/test_windows_interactive_pointer_uia.py',
+            'tests/zn_agent/integration/test_windows_interactive_text_entry.py',
+            'tests/zn_agent/integration/test_windows_interactive_uia_text_capability.py',
+            'tests/zn_agent/integration/test_windows_interactive_user_browser_bridge.py',
+            'tests/zn_agent/integration/test_windows_interactive_user_browser_extension.py',
+            'tests/zn_agent/integration/test_windows_interactive_user_browser_semantic_grounding.py',
+            'tests/zn_agent/integration/test_windows_interactive_user_browser_task_context.py',
+            'tests/zn_agent/integration/test_windows_interactive_machine_capability.py',
+            'tests/zn_agent/integration/test_windows_interactive_application_activation.py'
+          )
+          foreach ($test in $tests) {
+            $path = Join-Path $env:GITHUB_WORKSPACE $test
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Generic interactive contract is missing: $test"
+            }
+            Write-Host "=== interactive contract: $test ==="
+            & $launcher -Python $python -CommandArgs @($ownedRunner, $path)
+            if ($LASTEXITCODE -ne 0) {
+              throw "Interactive capability contract failed: $test"
+            }
+          }

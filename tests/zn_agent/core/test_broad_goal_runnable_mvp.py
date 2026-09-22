@@ -32,7 +32,7 @@ class _PlanOnlyCognition:
                 "先调研个人记账产品的核心能力，再实现新增收入/支出、金额、描述和本地持久化；"
                 "实现后应启动程序并验证重启后数据仍在。"
             ),
-            provider="e2e-cognition",
+            provider="fixture-cognition",
             model="bounded-planning-fixture",
         )
 
@@ -64,7 +64,7 @@ class _OneStepCognition:
         }
         return CognitiveIncrement(
             text=json.dumps(proposal, ensure_ascii=False),
-            provider="e2e-cognition",
+            provider="fixture-cognition",
             model="bounded-step-fixture",
         )
 
@@ -75,7 +75,7 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
         resident.kernel.reconfigure_resources(
             routes=[
                 ModelRoute(
-                    route_id="e2e-26-broad-goal-cognition",
+                    route_id="broad-goal-runnable-cognition",
                     provider="fixture",
                     model=model,
                     capabilities={
@@ -95,7 +95,7 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
         )
 
     def test_model_plan_alone_cannot_accept_broad_goal_work_item(self) -> None:
-        """E2E-26 probe: cognition is not acceptance without runnable-world evidence."""
+        """Broad-goal contract probe: cognition is not acceptance without runnable-world evidence."""
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -115,8 +115,8 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
 
                 control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
                 ledger = control.ledger
-                ledger.create_thread(thread_id="e2e-26", title="Broad goal MVP")
-                ledger.attach_workspace("e2e-26", workspace, name="Ledger MVP")
+                ledger.create_thread(thread_id="broad-goal-runnable", title="Broad goal MVP")
+                ledger.attach_workspace("broad-goal-runnable", workspace, name="Ledger MVP")
                 before_files = sorted(
                     str(path.relative_to(workspace))
                     for path in workspace.rglob("*")
@@ -124,7 +124,7 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
                 )
 
                 _, event = control.start(
-                    "e2e-26",
+                    "broad-goal-runnable",
                     BROAD_GOAL,
                     payload={"model_policy": "on_demand"},
                     acceptance_criteria=[
@@ -154,7 +154,7 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
                     "plan-only cognition fixture must not fabricate product files",
                 )
 
-                progress = control.progress("e2e-26", event.event_id)
+                progress = control.progress("broad-goal-runnable", event.event_id)
                 item = ledger.work_item_for_event(event.event_id)
                 self.assertIsNotNone(item)
                 self.assertEqual(item.acceptance_criteria, [
@@ -171,7 +171,7 @@ class BroadGoalRunnableMvpTests(unittest.TestCase):
                 resident.store.close()
 
     def test_structured_cognition_step_becomes_durable_verified_body_work(self) -> None:
-        """Second E2E-26 probe: proposal -> WorkItem -> Body -> fresh verification."""
+        """Second Broad-goal contract probe: proposal -> WorkItem -> Body -> fresh verification."""
 
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

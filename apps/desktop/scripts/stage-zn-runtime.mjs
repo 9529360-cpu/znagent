@@ -16,7 +16,21 @@ const chromeDevtoolsMcpRuntimeDir = path.join(runtimeRoot, 'browser-runtimes', '
 const veteranSourceRoot = path.join(repoRoot, 'vendor', 'veteran-engineer')
 const veteranRuntimeDir = path.join(runtimeRoot, 'veteran-engineer')
 const retiredPackageName = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
-const npmCommand = process.platform === 'win32' ? 'npm.cmd' : 'npm'
+function resolveNpmCli() {
+  const candidates = [
+    String(process.env.npm_execpath || '').trim(),
+    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+  ].filter(Boolean)
+  const found = candidates.find(candidate => {
+    try { return fs.statSync(candidate).isFile() } catch { return false }
+  })
+  if (!found) {
+    throw new Error(
+      'npm-cli.js is unavailable beside the active Node runtime; install a complete Node/npm distribution before staging ZN'
+    )
+  }
+  return found
+}
 
 function run(command, args, options = {}) {
   execFileSync(command, args, {
@@ -134,7 +148,9 @@ if (fs.readdirSync(browserInstallDir).length === 0) {
 
 console.log(`[zn-runtime] installing chrome-devtools-mcp@${chromeDevtoolsMcpVersion}`)
 fs.mkdirSync(chromeDevtoolsMcpRuntimeDir, { recursive: true })
-run(npmCommand, [
+const npmCli = resolveNpmCli()
+run(process.execPath, [
+  npmCli,
   'install',
   '--prefix',
   chromeDevtoolsMcpRuntimeDir,

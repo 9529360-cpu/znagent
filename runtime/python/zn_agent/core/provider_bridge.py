@@ -274,9 +274,6 @@ def build_resident_runtime(
 ):
     """Build the normal product Resident around the ZN-owned kernel."""
     from .budget import CognitiveBudgetManager
-    from .desktop_modal_recovery_behavior import (
-        install_desktop_modal_recovery_behavior,
-    )
     from .research_information_product_resident import (
         ProductResearchInformationResidentRuntime,
     )
@@ -314,7 +311,6 @@ def build_resident_runtime(
         research_web_resource=research_web_resource,
         research_web_error=research_web_error,
     )
-    install_desktop_modal_recovery_behavior(resident)
     return resident
 
 

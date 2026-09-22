@@ -9,13 +9,19 @@ executes that movement through ZN's existing readable managed Chromium adapter.
 
 import hashlib
 import json
+from typing import Any
 from urllib.parse import urlsplit
 
 from .broad_goal_recoverable_resident import BroadGoalRecoverableCodingResidentRuntime
-from .browser import BrowserPermissionContext
+from .browser import (
+    BrowserAction,
+    BrowserActionAuthority,
+    BrowserActionKind,
+    BrowserPermissionContext,
+)
 from .cognition import CognitiveIncrement
 from .models import utc_now
-from .research_managed_browser import ResearchSemanticPlaywrightManagedBrowser
+from .browser_provider_registry import build_readable_managed_browser_adapter
 from .steerable_work import WorkItem
 from .work import title_for_work_task
 
@@ -26,6 +32,12 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
     _BROAD_RESEARCH_KEY = "broad_goal_research_step"
     _BROAD_RESEARCH_HISTORY_KEY = "broad_goal_research_history"
     _MAX_RESEARCH_EVIDENCE_TEXT = 8192
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Keep public/background research on an independent MANAGED provider even
+        # while the USER Browser bridge temporarily owns self.managed_browser.
+        self.research_browser = build_readable_managed_browser_adapter()
 
     def _criterion_bound_root(self, event) -> WorkItem | None:
         root = super()._criterion_bound_root(event)
@@ -235,8 +247,8 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
         if child.status == "completed":
             return self._roll_forward_research_state(event, state)
 
-        browser = self.managed_browser
-        if not isinstance(browser, ResearchSemanticPlaywrightManagedBrowser):
+        browser = self.research_browser
+        if not callable(getattr(browser, "read_page", None)):
             return self._fail_research_step(
                 event,
                 state,
@@ -307,6 +319,31 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
         state.data[self._BROAD_RESEARCH_HISTORY_KEY] = history[-6:]
         state.data.pop("local_failure", None)
         return self._roll_forward_research_state(event, state)
+
+    @staticmethod
+    def _navigate_and_read(
+        browser,
+        session_id: str,
+        url: str,
+        permission: BrowserPermissionContext,
+    ) -> dict[str, Any]:
+        observation = browser.observe(session_id)
+        action = BrowserAction.create(
+            session_id=session_id,
+            kind=BrowserActionKind.NAVIGATE,
+            page_id=observation.page_id,
+            args={"url": url},
+            expected={"url_equals": url},
+        )
+        authority = BrowserActionAuthority.from_observation(
+            action,
+            observation,
+            permission,
+        )
+        effect = browser.act(action, authority)
+        if not effect.success:
+            raise RuntimeError(effect.error or "managed browser navigation failed")
+        return browser.read_page(session_id, page_id=effect.page_id)
 
     def _fail_research_step(self, event, state, child: WorkItem, failure: str):
         child.status = "blocked"

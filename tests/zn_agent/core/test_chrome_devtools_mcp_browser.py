@@ -168,6 +168,7 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
                 ),
             )
             self.assertTrue(effect.success)
+            self.assertEqual(effect.postcondition, "safe_current_page_observed")
             self.assertEqual(effect.data["provider"], CHROME_DEVTOOLS_MCP_PROVIDER)
             self.assertEqual(effect.data["provider"], "chrome-devtools-mcp@1.9.0")
 

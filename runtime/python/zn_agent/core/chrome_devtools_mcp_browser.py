@@ -474,7 +474,7 @@ class ChromeDevToolsMcpManagedBrowser:
             after,
             success=success,
             url_before=before.url,
-            postcondition="url_equals" if expected else "fresh_page_observed",
+            postcondition="safe_current_page_observed" if success else "url_equals",
             error=None if success else "navigation URL postcondition was not observed",
         )
 

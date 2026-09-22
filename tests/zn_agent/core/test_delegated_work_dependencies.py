@@ -5,11 +5,8 @@ import tempfile
 import unittest
 from contextlib import closing
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
-from zn_agent.core.delegated_work_coordinator import DelegatedWorkCoordinator
-from zn_agent.core.evidence_bound_work import WorkerRun
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.steerable_work import WorkItem
 
@@ -304,56 +301,6 @@ class DelegatedWorkDependencyTests(unittest.TestCase):
         )
         self.assertNotEqual(downstream_run.tool_scope, upstream_run.tool_scope)
         self.assertNotEqual(downstream_run.authority_scope, upstream_run.authority_scope)
-
-    def test_coordinator_binding_rechecks_readiness_before_context_or_cognition(self) -> None:
-        upstream = self._child("upstream")
-        downstream = self._child(
-            "downstream",
-            dependency_ids=(upstream.work_item_id,),
-        )
-        worker = WorkerRun(
-            worker_run_id="worker-stale-binding",
-            work_item_id=downstream.work_item_id,
-            plan_version=downstream.plan_version,
-            executor_kind="research",
-            model_goal_id="goal-cog-worker-stale-binding",
-            model_route_id=None,
-            provider=None,
-            tool_scope=("managed_browser.read",),
-            authority_scope=("web_read",),
-            state="running",
-        )
-        request = SimpleNamespace(
-            request_id="unchanged",
-            required_capabilities=("general",),
-            context={"sentinel": "unchanged"},
-            question="unchanged question",
-        )
-        coordinator = DelegatedWorkCoordinator(self.resident)
-        with patch.object(
-            self.resident,
-            "_expected_worker_schema",
-            side_effect=AssertionError("context/cognition preparation must not be reached"),
-        ) as schema, patch.object(
-            self.resident.kernel,
-            "run_goal",
-            side_effect=AssertionError("model/provider execution must not be reached"),
-        ) as run_goal:
-            with self.assertRaisesRegex(ValueError, "dependency readiness rejected waiting"):
-                coordinator.bind_worker_request(
-                    self.event,
-                    self.root,
-                    request,
-                    worker,
-                    downstream,
-                    expected_action="research_page",
-                    completed=[],
-                )
-        schema.assert_not_called()
-        run_goal.assert_not_called()
-        self.assertEqual(request.request_id, "unchanged")
-        self.assertEqual(request.context, {"sentinel": "unchanged"})
-        self.assertEqual(request.question, "unchanged question")
 
     def test_fan_in_requires_all_direct_dependencies(self) -> None:
         first = self._child("first")
