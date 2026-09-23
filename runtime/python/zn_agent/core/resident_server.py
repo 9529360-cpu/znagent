@@ -23,6 +23,7 @@ from .visual_sense import NativeVisualSense, VisualCaptureFn
 
 _RESIDENT_ENDPOINT_VERSION = 2
 _RESIDENT_AUTH_SCHEME = "session-secret-v1"
+_RESIDENT_MAX_REQUEST_BYTES = 1_048_576
 
 
 def _process_runtime_id(
@@ -157,8 +158,18 @@ class _ResidentTcpHandler(socketserver.StreamRequestHandler):
         rpc = self.server.rpc  # type: ignore[attr-defined]
         authenticated = False
         while True:
-            raw = self.rfile.readline()
+            raw = self.rfile.readline(_RESIDENT_MAX_REQUEST_BYTES + 1)
             if not raw:
+                return
+            if len(raw) > _RESIDENT_MAX_REQUEST_BYTES:
+                self._write_response(
+                    self,
+                    {
+                        "id": None,
+                        "ok": False,
+                        "error": "request too large",
+                    },
+                )
                 return
             request: dict[str, Any] | None = None
             try:

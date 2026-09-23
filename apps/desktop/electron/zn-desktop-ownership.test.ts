@@ -119,6 +119,27 @@ test('ZN global invocation is Windows-only, best-effort, and reuses the resident
   assert.doesNotMatch(callback, /startZnWork|requestSubmit|submitZnWork/)
 })
 
+test('privileged desktop IPC accepts only the trusted top-level ZN renderer', () => {
+  const trust = read('electron/zn-ipc-trust.ts')
+  const main = read('electron/zn-main.ts')
+  const resident = read('electron/zn-resident-ipc.ts')
+  const workspace = read('electron/zn-workspace-ipc.ts')
+  const updater = read('electron/zn-release-updater.ts')
+
+  assert.match(main, /trustZnDesktopWebContents\(window\.webContents\)/)
+  assert.match(trust, /trustedWebContentsIds\.has\(event\.sender\.id\)/)
+  assert.match(trust, /frame !== frame\.top/)
+  assert.match(trust, /frame !== event\.sender\.mainFrame/)
+  assert.match(trust, /contents\.once\(['"]destroyed['"], revoke\)/)
+  assert.match(trust, /ipcMain\.handle\(channel, \(event, \.\.\.args\) =>/)
+  assert.doesNotMatch(resident, /ipcMain\.handle\(/)
+  assert.doesNotMatch(workspace, /ipcMain\.handle\(/)
+  assert.doesNotMatch(updater, /ipcMain\.handle\(/)
+  assert.match(resident, /handleZnDesktopIpc\(['"]zn:resident:start['"]/)
+  assert.match(workspace, /handleZnDesktopIpc\(['"]zn:workspaces:attach['"]/)
+  assert.match(updater, /handleZnDesktopIpc\(['"]zn:updates:apply['"]/)
+})
+
 test('ZN preload exposes only the ZN bridge and does not import inherited preload', () => {
   const source = read('electron/zn-preload.ts')
 

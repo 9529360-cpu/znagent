@@ -8,7 +8,9 @@ import * as https from 'node:https'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import { app, ipcMain } from 'electron'
+import { app } from 'electron'
+
+import { handleZnDesktopIpc } from './zn-ipc-trust'
 
 import { applyZnReleaseInstallerWithResidentGate } from './zn-release-application-gate'
 import {
@@ -536,6 +538,6 @@ export async function applyZnReleaseUpdate(): Promise<ZnReleaseApplyResult> {
 export function registerZnReleaseUpdaterIpc(): void {
   if (registered) return
   registered = true
-  ipcMain.handle('zn:updates:check', () => checkZnReleaseUpdate())
-  ipcMain.handle('zn:updates:apply', () => applyZnReleaseUpdate())
+  handleZnDesktopIpc('zn:updates:check', () => checkZnReleaseUpdate())
+  handleZnDesktopIpc('zn:updates:apply', () => applyZnReleaseUpdate())
 }
