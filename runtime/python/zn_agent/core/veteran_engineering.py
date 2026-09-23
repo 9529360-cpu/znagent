@@ -179,6 +179,8 @@ class VeteranMcpClient:
     def start(self) -> "VeteranMcpClient":
         if self.running:
             return self
+        # Retire pipes from an exited child before creating a fresh generation.
+        self.close()
         self.state_root.mkdir(parents=True, exist_ok=True)
         ensure_veteran_operator_policy(self.state_root)
         env = dict(os.environ)
@@ -206,23 +208,35 @@ class VeteranMcpClient:
             )
         except OSError as exc:
             raise VeteranSidecarError(f"failed to start Veteran sidecar: {exc}") from exc
-        if process.stdin is None or process.stdout is None or process.stderr is None:
-            process.kill()
-            raise VeteranSidecarError("Veteran sidecar pipes were not created")
         self._process = process
-        threading.Thread(
-            target=self._read_stdout,
-            args=(process.stdout,),
-            daemon=True,
-            name="zn-veteran-stdout",
-        ).start()
-        threading.Thread(
-            target=self._read_stderr,
-            args=(process.stderr,),
-            daemon=True,
-            name="zn-veteran-stderr",
-        ).start()
+        # Readers retain their own queue. A late EOF/response from a retired
+        # child must never be consumed by a later explicit start on this client.
+        self._stdout_queue = queue.Queue()
+        try:
+            if process.stdin is None or process.stdout is None or process.stderr is None:
+                raise VeteranSidecarError("Veteran sidecar pipes were not created")
+            threading.Thread(
+                target=self._read_stdout,
+                args=(process.stdout, self._stdout_queue),
+                daemon=True,
+                name="zn-veteran-stdout",
+            ).start()
+            threading.Thread(
+                target=self._read_stderr,
+                args=(process.stderr,),
+                daemon=True,
+                name="zn-veteran-stderr",
+            ).start()
+            self._initialize()
+        except BaseException:
+            # __exit__ is not called if __enter__/start fails. Reap the child
+            # even for cancellation; preserve the failure and never retry a
+            # handshake or replay the caller's requested tool automatically.
+            self.close()
+            raise
+        return self
 
+    def _initialize(self) -> None:
         initialized = self._request_raw("initialize", {})
         server_info = initialized.get("serverInfo")
         if (
@@ -252,7 +266,6 @@ class VeteranMcpClient:
                 + ", ".join(sorted(missing))
             )
         self._tool_names = names
-        return self
 
     def close(self) -> None:
         process = self._process
@@ -383,12 +396,12 @@ class VeteranMcpClient:
                 )
             return result
 
-    def _read_stdout(self, stream) -> None:
+    def _read_stdout(self, stream, output: queue.Queue[str | None]) -> None:
         try:
             for raw in stream:
-                self._stdout_queue.put(raw.rstrip("\r\n"))
+                output.put(raw.rstrip("\r\n"))
         finally:
-            self._stdout_queue.put(None)
+            output.put(None)
 
     def _read_stderr(self, stream) -> None:
         for raw in stream:
