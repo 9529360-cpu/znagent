@@ -1,6 +1,3 @@
-Warning: truncated output (original token count: 14579)
-Total output lines: 1419
-
 from __future__ import annotations
 
 import re
@@ -525,7 +522,432 @@ class ZNResidentRuntime:
             "knowledge_score": readiness.knowledge_score,
             "ability_score": readiness.ability_score,
             "knowledge_confidence": readiness.knowledge_confidence,
-            "ability_confidence": readiness.ability_confidenc…4579 tokens truncated…ed"] = memory_checked
+            "ability_confidence": readiness.ability_confidence,
+            "posture": readiness.posture,
+            "reason": readiness.reason,
+            "domain_states": [
+                {
+                    "domain": item.domain,
+                    "knowledge_score": item.knowledge_score,
+                    "knowledge_evidence": item.knowledge_evidence,
+                    "knowledge_confidence": item.knowledge_confidence,
+                    "ability_score": item.ability_score,
+                    "ability_evidence": item.ability_evidence,
+                    "ability_confidence": item.ability_confidence,
+                }
+                for item in readiness.domain_states
+            ],
+        }
+
+    @staticmethod
+    def _investigation_data(state) -> dict[str, Any]:
+        return {
+            "investigation_id": state.investigation_id,
+            "event_id": state.event_id,
+            "task": state.task,
+            "domains": list(state.domains),
+            "hypotheses": list(state.hypotheses),
+            "probes": list(state.probes),
+            "probe_keys": list(state.probe_keys),
+            "evidence": list(state.evidence),
+            "unresolved": state.unresolved,
+            "next_probe": state.next_probe,
+            "rounds": state.rounds,
+            "status": state.status,
+            "resolution": state.resolution,
+            "updated_at": state.updated_at,
+        }
+
+    @staticmethod
+    def _task_tokens(value: str) -> set[str]:
+        text = str(value or "").lower()
+        return {
+            token
+            for token in re.findall(r"[a-z0-9_+.-]{2,}|[\u4e00-\u9fff]{2,}", text)
+            if token
+        }
+
+    def _related_learning_evidence(
+        self,
+        event: AgentEvent,
+        readiness: TaskReadiness,
+        *,
+        limit: int = 3,
+    ) -> list[dict[str, Any]]:
+        """Recall a bounded amount of relevant experience entirely resident-side."""
+        current_tokens = self._task_tokens(event.task)
+        current_domains = set(readiness.domains)
+        ranked: list[tuple[float, Any, tuple[str, ...]]] = []
+
+        for candidate in self.life.recent_learning_candidates(64):
+            if candidate.event_id == event.event_id:
+                continue
+            candidate_domains = self.kernel.self_model.infer_domains(
+                candidate.task,
+                candidate.required_capabilities,
+            )
+            domain_overlap = current_domains.intersection(candidate_domains)
+            if not domain_overlap:
+                continue
+
+            candidate_tokens = self._task_tokens(candidate.task)
+            union = current_tokens.union(candidate_tokens)
+            lexical = (
+                len(current_tokens.intersection(candidate_tokens)) / len(union)
+                if union
+                else 0.0
+            )
+            domain_score = len(domain_overlap) / max(
+                1,
+                len(current_domains.union(candidate_domains)),
+            )
+            score = (0.65 * lexical) + (0.35 * domain_score)
+            if score < 0.12:
+                continue
+            ranked.append((score, candidate, candidate_domains))
+
+        ranked.sort(key=lambda item: item[0], reverse=True)
+        evidence: list[dict[str, Any]] = []
+        for score, candidate, candidate_domains in ranked[: max(1, int(limit))]:
+            evidence.append(
+                {
+                    "candidate_id": candidate.candidate_id,
+                    "similarity": round(score, 4),
+                    "domains": list(candidate_domains),
+                    "task": candidate.task[:240],
+                    "resolution_summary": candidate.resolution_summary[:320],
+                    "resolution_source": candidate.resolution_source,
+                }
+            )
+        return evidence
+
+    @staticmethod
+    def _enrich_thought_with_readiness(
+        thought,
+        readiness: TaskReadiness,
+        learning_evidence: list[dict[str, Any]],
+    ) -> None:
+        domain_text = ", ".join(readiness.domains)
+        readiness_text = (
+            f"task domains: {domain_text}; posture={readiness.posture}; "
+            f"knowledge={readiness.knowledge_score:.2f}; "
+            f"independent ability={readiness.ability_score:.2f}"
+        )
+        if readiness_text not in thought.known:
+            thought.known = (*thought.known, readiness_text)
+        if learning_evidence:
+            evidence_text = f"I remember {len(learning_evidence)} related prior learning record(s)"
+            if evidence_text not in thought.known:
+                thought.known = (*thought.known, evidence_text)
+
+        gap = None
+        if readiness.posture == "familiar" and readiness.ability_score < 0.6:
+            gap = (
+                "I understand relevant parts of this domain better than I can "
+                "execute this task independently"
+            )
+        elif readiness.posture == "partial":
+            gap = "my retained understanding of the relevant domain is incomplete"
+        elif readiness.posture == "novel":
+            gap = "I have little retained knowledge for the relevant domain"
+        if gap and gap not in thought.unknown:
+            thought.unknown = (*thought.unknown, gap)
+
+        thought.reason = f"{readiness.reason}; {thought.reason}"
+
+    def _enrich_thought_with_working_stage(self, thought, event: AgentEvent) -> None:
+        state = self.store.get_working_state()
+        if state.current_event_id != event.event_id:
+            return
+
+        if state.stage == "native_investigation":
+            investigation = self.investigator.current(event.event_id)
+            if investigation is None:
+                action = "begin native investigation"
+                thought.reason = f"{thought.reason}; concrete local evidence has not been collected yet"
+            else:
+                known = (
+                    f"native investigation rounds={investigation.rounds}; "
+                    f"evidence={len(investigation.evidence)}"
+                )
+                if known not in thought.known:
+                    thought.known = (*thought.known, known)
+                if investigation.unresolved and investigation.unresolved not in thought.unknown:
+                    thought.unknown = (*thought.unknown, investigation.unresolved)
+                if investigation.next_probe:
+                    action = f"run native probe: {investigation.next_probe}"
+                else:
+                    action = "evaluate accumulated native evidence"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+            thought.chosen_action = action
+            thought.action_kind = "investigate"
+            thought.action_target = event.event_id
+            thought.reason = f"{thought.reason}; continue evidence-driven native investigation"
+            return
+
+        if state.stage == "native_deliberation":
+            action = "integrate native evidence and identify the remaining gap"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+            thought.chosen_action = action
+            thought.action_kind = "deliberate"
+            thought.action_target = event.event_id
+            thought.reason = f"{thought.reason}; native probes are exhausted for the current hypothesis set"
+            return
+
+        if state.stage == "external_cognition":
+            cognition = state.data.get("cognition_request")
+            question = cognition.get("question") if isinstance(cognition, dict) else None
+            if question and str(question) not in thought.unknown:
+                thought.unknown = (*thought.unknown, str(question))
+            action = "consult an external cognitive resource for the isolated gap"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+            thought.chosen_action = action
+            thought.action_kind = "external_cognition"
+            thought.action_target = event.event_id
+            thought.reason = f"{thought.reason}; native cognition isolated a specific unresolved gap"
+
+    def _persist_enriched_thought(self, thought) -> None:
+        state = self.life.snapshot()
+        state.current_thought = thought
+        state.attention = None if thought.focus == "environment" else thought.focus
+        state.intention = thought.chosen_action
+        self.life._save_state(state)
+        self.life._append_thought(thought)
+        self.life._state = state
+
+    @staticmethod
+    def _merge_investigation_into_thought(
+        thought,
+        investigation: InvestigationResult,
+    ) -> None:
+        if thought is None:
+            return
+        count = len(investigation.state.evidence)
+        if count:
+            known = f"native investigation collected {count} concrete observation(s)"
+            if known not in thought.known:
+                thought.known = (*thought.known, known)
+        if investigation.performed_probe:
+            known = f"completed native probe: {investigation.performed_probe}"
+            if known not in thought.known:
+                thought.known = (*thought.known, known)
+        for hypothesis in investigation.state.hypotheses[-3:]:
+            action = f"test hypothesis: {hypothesis}"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+        if investigation.state.unresolved and investigation.state.unresolved not in thought.unknown:
+            thought.unknown = (*thought.unknown, investigation.state.unresolved)
+        if investigation.can_continue and investigation.state.next_probe:
+            next_action = f"run native probe: {investigation.state.next_probe}"
+            if next_action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, next_action)
+        thought.reason = f"{thought.reason}; concrete evidence updated the current investigation"
+
+    @staticmethod
+    def _merge_deliberation_into_thought(
+        thought,
+        deliberation: dict[str, Any],
+    ) -> None:
+        if thought is None:
+            return
+        unknown = str(deliberation.get("unknown") or "").strip()
+        if unknown and unknown not in thought.unknown:
+            thought.unknown = (*thought.unknown, unknown)
+        if deliberation.get("related_learning_count"):
+            action = "compare current problem with related internal experience"
+            if action not in thought.possible_actions:
+                thought.possible_actions = (*thought.possible_actions, action)
+        thought.reason = (
+            f"{thought.reason}; native checks completed before any external cognition"
+        )
+
+    @staticmethod
+    def _native_deliberation(
+        event: AgentEvent,
+        readiness: TaskReadiness,
+        *,
+        memory_checked: bool,
+        local_capability_checked: bool,
+        local_failure: str | None,
+        learning_evidence: list[dict[str, Any]],
+        investigation: InvestigationResult,
+    ) -> dict[str, Any]:
+        checks: list[str] = []
+        if memory_checked:
+            checks.append("structured memory did not directly answer the task")
+        if local_failure:
+            checks.append(f"local execution failed: {local_failure}")
+        elif local_capability_checked:
+            checks.append("no compiled local capability matched the task")
+        if learning_evidence:
+            checks.append(
+                f"reviewed {len(learning_evidence)} related resident-side learning record(s)"
+            )
+        if investigation.state.probes:
+            checks.append(
+                f"ran {investigation.state.rounds} native investigation round(s)"
+            )
+
+        explicit = str(
+            event.payload.get("cognition_question")
+            or event.payload.get("unknown")
+            or ""
+        ).strip()
+        if explicit:
+            unknown = explicit
+        elif local_failure:
+            unknown = (
+                "I inspected local state and need the smallest missing explanation or "
+                f"procedure that resolves this specific failure: {local_failure}"
+            )
+        elif investigation.state.unresolved:
+            unknown = investigation.state.unresolved
+        elif readiness.posture == "familiar":
+            unknown = (
+                "I know the relevant domain and inspected concrete local state, but I "
+                "do not yet have a verified native procedure for this case; identify "
+                "the smallest missing step"
+            )
+        elif learning_evidence and readiness.posture == "partial":
+            unknown = (
+                "I remember related prior resolutions and inspected current local state, "
+                "but I still need the smallest missing concept or procedure for this case"
+            )
+        elif readiness.posture == "partial":
+            unknown = (
+                "I recognize parts of the relevant domain, but I need the smallest "
+                "missing concept or procedure required to make progress"
+            )
+        else:
+            unknown = (
+                "I have little retained knowledge for this domain; identify the first "
+                "minimal concept or procedure needed to make progress"
+            )
+
+        return {
+            "domains": list(readiness.domains),
+            "posture": readiness.posture,
+            "knowledge_score": readiness.knowledge_score,
+            "ability_score": readiness.ability_score,
+            "checks": checks,
+            "related_learning_count": len(learning_evidence),
+            "related_learning": learning_evidence,
+            "investigation_id": investigation.state.investigation_id,
+            "investigation_rounds": investigation.state.rounds,
+            "investigation_evidence_count": len(investigation.state.evidence),
+            "bounded_native_evidence": NativeInvestigator.bounded_evidence(investigation),
+            "unknown": unknown,
+            "next": "resolve the remaining gap and continue native action",
+        }
+
+    @staticmethod
+    def _build_cognition_request(
+        event: AgentEvent,
+        impasse,
+        required: tuple[str, ...],
+        deliberation: dict[str, Any] | None = None,
+    ) -> CognitionRequest:
+        explicit = str(
+            event.payload.get("cognition_question")
+            or event.payload.get("unknown")
+            or ""
+        ).strip()
+        context: dict[str, Any] = {"event_kind": event.kind}
+        deliberation = dict(deliberation or {})
+
+        if explicit:
+            question = explicit
+        elif deliberation.get("unknown"):
+            question = str(deliberation["unknown"])
+            checks = [str(item) for item in deliberation.get("checks") or () if str(item)]
+            if checks:
+                context["native_checks"] = checks[:6]
+            native_evidence = [
+                str(item)
+                for item in deliberation.get("bounded_native_evidence") or ()
+                if str(item).strip()
+            ]
+            if native_evidence:
+                context["native_evidence"] = native_evidence[:6]
+            context["task_excerpt"] = event.task[:500]
+        elif impasse.local_failure:
+            question = (
+                "Explain how to resolve this specific failure: "
+                f"{impasse.local_failure}"
+            )
+            context["task_excerpt"] = event.task[:500]
+        else:
+            question = event.task
+
+        return CognitionRequest(
+            request_id=f"cog-{uuid.uuid4().hex[:12]}",
+            impasse_id=impasse.impasse_id,
+            event_id=event.event_id,
+            question=question,
+            required_capabilities=required,
+            context=context,
+        )
+
+    def _advance_event_step(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        *,
+        readiness: TaskReadiness,
+        learning_evidence: list[dict[str, Any]],
+        thought=None,
+    ) -> ResidentRunResult | None:
+        if state.stage == "orient":
+            return self._orient_step(
+                event,
+                state,
+                readiness=readiness,
+                thought=thought,
+            )
+        if state.stage == "resident_completion":
+            return self._resume_resident_completion(event, state)
+        if state.stage == "native_investigation":
+            return self._investigation_step(
+                event,
+                state,
+                readiness=readiness,
+                learning_evidence=learning_evidence,
+                thought=thought,
+            )
+        if state.stage == "investigation_completion":
+            return self._resume_investigation_completion(event, state)
+        if state.stage == "native_deliberation":
+            return self._deliberation_step(
+                event,
+                state,
+                readiness=readiness,
+                learning_evidence=learning_evidence,
+                thought=thought,
+            )
+        if state.stage == "external_cognition":
+            return self._external_cognition_step(event, state)
+        if state.stage == "terminal_failure":
+            return self._resume_terminal_failure(event, state)
+
+        state.stage = "orient"
+        state.next_action = "orient to current event"
+        self.store.save_working_state(state)
+        return None
+
+    def _orient_step(
+        self,
+        event: AgentEvent,
+        state: WorkingState,
+        *,
+        readiness: TaskReadiness,
+        thought=None,
+    ) -> ResidentRunResult | None:
+        required = self._required_capabilities(event)
+        memory_checked = bool(event.payload.get("allow_memory", True))
+        state.data["memory_checked"] = memory_checked
         memory_match = self.memory.recall(event.task) if memory_checked else None
         if memory_match is not None:
             response = self._render_memory_value(memory_match.value)
@@ -994,4 +1416,3 @@ class ZNResidentRuntime:
                 except (TypeError, ValueError, AttributeError):
                     continue
         return prompt, completion
-
