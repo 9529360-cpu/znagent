@@ -14,7 +14,7 @@ const script = path.join(here, 'sign-zn-update-channel.mjs')
 function canonicalize(value) {
   if (value === null || typeof value !== 'object') return JSON.stringify(value)
   if (Array.isArray(value)) return `[${value.map(item => canonicalize(item)).join(',')}]`
-  const entries = Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+  const entries = Object.entries(value).sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
   return `{${entries.map(([key, item]) => `${JSON.stringify(key)}:${canonicalize(item)}`).join(',')}}`
 }
 
