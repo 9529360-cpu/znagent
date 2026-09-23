@@ -351,11 +351,12 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
 
     def test_select_label_mapping_requires_one_unique_fresh_option(self):
         browser = self._browser()
-        node = {
-            "children": [
-                {"role": "option", "name": "Duplicate", "value": "first"},
-                {"role": "option", "name": "Duplicate", "value": "second"},
-            ]
+        state = {
+            "options_truncated": False,
+            "options": [
+                {"label": "Duplicate", "value": "first"},
+                {"label": "Duplicate", "value": "second"},
+            ],
         }
         with self.assertRaisesRegex(
             Exception,
