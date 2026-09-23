@@ -7,6 +7,10 @@
     "apps/desktop"
   ],
   "scripts": {
+    "setup": "node scripts/zn-dev.mjs setup",
+    "doctor": "node scripts/zn-dev.mjs doctor",
+    "dev": "node scripts/zn-dev.mjs dev",
+    "test:dev-bootstrap": "node --test scripts/zn-dev.test.mjs",
     "build": "npm run build --workspace apps/desktop",
     "typecheck": "npm run typecheck --workspace apps/desktop",
     "test": "npm run test --workspace apps/desktop"
