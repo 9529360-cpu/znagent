@@ -219,6 +219,7 @@ class ResidentChannelSupervisor:
                 started = time.monotonic()
                 checkpoint_before_poll: dict[str, Any] | None = None
                 polled = False
+                checkpoint_committed = False
                 try:
                     delivered_before = self._deliver_ready(name, adapter)
                     # stop() may arrive while an outbound provider send is
@@ -240,10 +241,15 @@ class ResidentChannelSupervisor:
                     # failure before here replays the update rather than advancing
                     # the provider cursor past a message ZN never made durable.
                     self._save_adapter_checkpoint(name, adapter)
+                    checkpoint_committed = True
                     delivered_after = self._deliver_ready(name, adapter)
                     delivered = delivered_before + delivered_after
                 except Exception as exc:
-                    if polled and checkpoint_before_poll is not None:
+                    if (
+                        polled
+                        and not checkpoint_committed
+                        and checkpoint_before_poll is not None
+                    ):
                         try:
                             self._restore_adapter_checkpoint_value(
                                 adapter, checkpoint_before_poll
