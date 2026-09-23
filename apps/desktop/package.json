@@ -14,6 +14,7 @@
   "scripts": {
     "build": "node scripts/bundle-electron-main.mjs --release",
     "bundle:dev": "node scripts/bundle-electron-main.mjs --dev",
+    "pretypecheck": "node ../../scripts/zn-dev.test.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "test": "vitest run --config vitest.config.ts",
     "prebuilder": "node scripts/patch-electron-builder-mac-binary.mjs",
