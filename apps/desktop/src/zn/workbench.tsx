@@ -2,6 +2,7 @@ import type { TFunction } from 'i18next'
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
+  ArrowLeft,
   ArrowUp,
   ArrowsInSimple,
   ArrowsOutSimple,
@@ -42,6 +43,7 @@ import {
   type ZnWorkProgress
 } from './resident-client'
 import { describeZnProviderReadiness } from './provider-readiness'
+import { isZnResidentConnectionError } from './resident-error'
 import {
   getZnDesktopLocaleState,
   setZnDesktopLocalePreference
@@ -235,6 +237,7 @@ export function ZnWorkbench() {
   })
   const [activeThreadId, setActiveThreadId] = useState(() => threads[0]?.id || '')
   const [selectedArtifactId, setSelectedArtifactId] = useState('')
+  const [dismissedWorkstationArtifactId, setDismissedWorkstationArtifactId] = useState('')
   const [view, setView] = useState<MainView>('work')
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
@@ -265,23 +268,26 @@ export function ZnWorkbench() {
   )
   const activeWorkspace = activeThread?.workspace || null
   const activeArtifacts = useMemo(() => activeThread?.artifacts || [], [activeThread])
-  const activeWorkstationArtifact = useMemo(
-    () => activeArtifacts.find(
-      artifact => artifact.kind === 'presentation' || artifact.kind === 'document'
-    ) || null,
-    [activeArtifacts]
+  const activeRestorePoints = activeThread?.restorePoints
+  const selectedArtifact = useMemo(
+    () => activeArtifacts.find(artifact => artifact.id === selectedArtifactId) || activeArtifacts[0] || null,
+    [activeArtifacts, selectedArtifactId]
   )
+  const workstationArtifact = useMemo(
+    () => selectedArtifact && (selectedArtifact.kind === 'presentation' || selectedArtifact.kind === 'document')
+      ? selectedArtifact
+      : activeArtifacts.find(artifact => artifact.kind === 'presentation' || artifact.kind === 'document') || null,
+    [activeArtifacts, selectedArtifact]
+  )
+  const activeWorkstationArtifact = workstationArtifact?.id === dismissedWorkstationArtifactId
+    ? null
+    : workstationArtifact
   const activePresentation = activeWorkstationArtifact?.kind === 'presentation'
     ? activeWorkstationArtifact
     : null
   const activeDocument = activeWorkstationArtifact?.kind === 'document'
     ? activeWorkstationArtifact
     : null
-  const activeRestorePoints = activeThread?.restorePoints
-  const selectedArtifact = useMemo(
-    () => activeArtifacts.find(artifact => artifact.id === selectedArtifactId) || activeArtifacts[0] || null,
-    [activeArtifacts, selectedArtifactId]
-  )
   const recentThreads = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     return [...threads]
@@ -567,11 +573,17 @@ export function ZnWorkbench() {
         void loadZnResidentSnapshot().then(setResidentSnapshot).catch(() => undefined)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
+        const connectionUnavailable = !residentAccepted && isZnResidentConnectionError(error)
         if (!residentAccepted) {
           setThreads(current =>
             current.map(thread =>
               thread.id === threadId
-                ? addZnThreadMessage(thread, 'zn', message, { failed: true })
+                ? addZnThreadMessage(
+                    thread,
+                    'zn',
+                    connectionUnavailable ? t('error.residentUnavailable') : t('error.workStartFailed'),
+                    { failed: true, technicalMessage: message }
+                  )
                 : thread
             )
           )
@@ -583,7 +595,8 @@ export function ZnWorkbench() {
             ? t('error.desktopReconnect', { message })
             : message
         )
-        setResidentHealth(residentAccepted ? 'connecting' : 'offline')
+        if (connectionUnavailable) setResidentHealth('offline')
+        else if (residentAccepted) setResidentHealth('connecting')
       } finally {
         setBusy(false)
       }
@@ -813,6 +826,29 @@ export function ZnWorkbench() {
             >
               {windowMode === 'compact' ? <ArrowsOutSimple size={17} /> : <ArrowsInSimple size={17} />}
             </button>
+            {activeWorkstationArtifact ? (
+              <button
+                className="zn-workstation-return"
+                type="button"
+                aria-label={t('workstation.returnToConversation')}
+                title={t('workstation.returnToConversation')}
+                onClick={() => setDismissedWorkstationArtifactId(activeWorkstationArtifact.id)}
+              >
+                <ArrowLeft size={15} />
+                <span>{t('workstation.chatLabel')}</span>
+              </button>
+            ) : workstationArtifact ? (
+              <button
+                className="zn-workstation-return"
+                type="button"
+                aria-label={t('workstation.openArtifact')}
+                title={t('workstation.openArtifact')}
+                onClick={() => setDismissedWorkstationArtifactId('')}
+              >
+                <FileText size={15} />
+                <span>{t('workstation.openArtifact')}</span>
+              </button>
+            ) : null}
           </div>
         </header>
 
@@ -852,7 +888,12 @@ export function ZnWorkbench() {
                 <h2>{t('settings.background.title')}</h2>
                 <p className="zn-muted">{t('settings.background.description')}</p>
                 <button type="button" onClick={() => void refreshResident()}>{t('settings.background.refresh')}</button>
-                {residentError ? <div className="zn-error-text">{residentError}</div> : null}
+                {residentError ? (
+                  <details className="zn-progress-technical">
+                    <summary>{t('message.technical')}</summary>
+                    <pre className="zn-activity-detail">{residentError}</pre>
+                  </details>
+                ) : null}
                 <details>
                   <summary className="zn-muted zn-small">{t('settings.background.technical')}</summary>
                   <pre className="zn-compact-pre">{residentSnapshot ? renderUnknown(residentSnapshot) : t('settings.background.waiting')}</pre>
@@ -919,6 +960,16 @@ export function ZnWorkbench() {
               <ZnSlidesWorkstation artifact={activePresentation} artifacts={activeArtifacts} />
             ) : (
             <main className="zn-thread-surface">
+              {residentHealth === 'offline' ? (
+                <div className="zn-connection-recovery" role="alert" aria-live="polite">
+                  <div className="zn-connection-recovery-copy">
+                    <strong>{t('error.residentUnavailableTitle')}</strong>
+                    <span>{t('error.residentUnavailableHint')}</span>
+                  </div>
+                  <button type="button" onClick={() => void refreshResident()}>{t('error.reconnect')}</button>
+                </div>
+              ) : null}
+
               {deepLinkNotice ? (
                 <div className="zn-notice">
                   <strong>{t('deepLink.received')}</strong> {t('deepLink.safe')}
@@ -984,6 +1035,11 @@ export function ZnWorkbench() {
                             <details className="zn-activity-technical">
                               <summary>{t('message.technical')}</summary>
                               <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
+                            </details>
+                          ) : message.detail?.failed && typeof message.detail.technicalMessage === 'string' ? (
+                            <details className="zn-progress-technical">
+                              <summary>{t('message.technical')}</summary>
+                              <pre className="zn-activity-detail">{message.detail.technicalMessage}</pre>
                             </details>
                           ) : <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
                         ) : null}
@@ -1075,7 +1131,7 @@ export function ZnWorkbench() {
                     <strong>{firstResult.name}</strong>
                     <span>{t('result.ready', { count: activeArtifacts.length })}</span>
                   </div>
-                  <button type="button" onClick={openDetails}>{t('result.view')}</button>
+                  <button type="button" onClick={() => workstationArtifact ? setDismissedWorkstationArtifactId('') : openDetails()}>{t('result.view')}</button>
                 </section>
               ) : null}
             </main>
@@ -1195,7 +1251,12 @@ export function ZnWorkbench() {
               <span className={'zn-health-dot ' + residentHealth} />
               {residentHealth === 'live' ? t('common.ready') : residentHealth === 'connecting' ? t('common.connecting') : t('common.offline')}
             </div>
-            {residentError ? <div className="zn-error-text">{residentError}</div> : null}
+            {residentError ? (
+              <details className="zn-progress-technical">
+                <summary>{t('message.technical')}</summary>
+                <pre className="zn-activity-detail">{residentError}</pre>
+              </details>
+            ) : null}
           </section>
 
           <section className="zn-context-section">
