@@ -19,6 +19,8 @@ from .browser import (
     BrowserTargetKind,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserTargetRegroundDisposition,
+    BrowserTargetRegrounding,
 )
 from .models import utc_now
 from .user_browser_extension_relay import (
@@ -373,6 +375,45 @@ class AuthorizedExtensionUserBrowser:
         )
         session.last_observation[resolved_page] = observation
         return observation
+
+    def reground_target(
+        self,
+        session_id: str,
+        query: BrowserTargetQuery,
+        previous_target: BrowserTarget,
+        *,
+        page_id: str = "",
+    ) -> BrowserTargetRegrounding:
+        session = self._session(session_id)
+        resolved_page_id = page_id or previous_target.page_id
+        if previous_target.session_id != session.identity.session_id:
+            raise ExtensionUserBrowserError(
+                "browser target regrounding cannot use a target from another session"
+            )
+        if previous_target.page_id != resolved_page_id:
+            raise ExtensionUserBrowserError(
+                "browser target regrounding cannot transfer authority across pages"
+            )
+        observation = self.observe_target(
+            session_id,
+            query,
+            page_id=resolved_page_id,
+        )
+        current = observation.target
+        if current is None:
+            raise ExtensionUserBrowserError(
+                "fresh semantic regrounding returned no target"
+            )
+        return BrowserTargetRegrounding(
+            query=query,
+            previous_target=previous_target,
+            observation=observation,
+            disposition=(
+                BrowserTargetRegroundDisposition.SAME_EXACT_TARGET
+                if current.target_id == previous_target.target_id
+                else BrowserTargetRegroundDisposition.REBOUND_TARGET
+            ),
+        )
 
     def observe_named_text_state(
         self,
