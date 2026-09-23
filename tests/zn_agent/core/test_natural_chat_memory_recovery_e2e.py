@@ -138,6 +138,7 @@ class NaturalChatMemoryRecoveryE2ETests(unittest.TestCase):
             metadata={
                 "update_id": update_id,
                 "update_type": "message",
+                "chat_type": "private",
                 "chat_title": "Long lived chat",
             },
         )

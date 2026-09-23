@@ -247,6 +247,18 @@ class RecoveryBoundedWorkLedger(ResidentWorkLedger):
             return
         if str(payload.get("cognition_question") or payload.get("unknown") or "").strip():
             return
+        channel = str(payload.get("channel") or "").strip().lower()
+        if channel:
+            metadata = payload.get("channel_metadata")
+            chat_type = (
+                str(metadata.get("chat_type") or "").strip().lower()
+                if isinstance(metadata, dict)
+                else ""
+            )
+            if channel != "telegram" or chat_type != "private":
+                # A group/unknown remote sender must not rewrite the Resident
+                # owner's global preferences merely by participating in chat.
+                return
         capture = getattr(getattr(self.resident, "memory", None), "capture_explicit_user_preferences", None)
         if not callable(capture):
             return
