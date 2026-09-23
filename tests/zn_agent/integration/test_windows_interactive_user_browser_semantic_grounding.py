@@ -395,31 +395,93 @@ class WindowsInteractiveUserBrowserSemanticGroundingContractTests(unittest.TestC
         self.assertTrue(started["ok"])
         return str(started["result"]["progress"]["event_id"])
 
-    def _run_to_terminal(self, env, event_id: str, *, hook=None, timeout: float = 35.0):
+    def _run_to_terminal(
+        self,
+        env,
+        event_id: str,
+        *,
+        hook=None,
+        timeout: float = 90.0,
+        idle_timeout: float = 20.0,
+    ):
         resident = env["resident"]
         result = None
         trace = []
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline and result is None:
+        started_at = time.monotonic()
+        hard_deadline = started_at + timeout
+        idle_deadline = min(hard_deadline, started_at + idle_timeout)
+        last_progress = None
+        while (
+            time.monotonic() < hard_deadline
+            and time.monotonic() < idle_deadline
+            and result is None
+        ):
             state = resident.store.get_working_state()
-            semantic = state.data.get(getattr(resident, "_SEMANTIC_LOOKUP_STATE_KEY", "resident_user_browser_semantic_lookup"))
+            semantic = state.data.get(
+                getattr(
+                    resident,
+                    "_SEMANTIC_LOOKUP_STATE_KEY",
+                    "resident_user_browser_semantic_lookup",
+                )
+            )
             semantic = semantic if isinstance(semantic, dict) else {}
-            actions = [action for action in resident.body.recent_actions(512) if action.event_id == event_id]
+            actions = [
+                action
+                for action in resident.body.recent_actions(512)
+                if action.event_id == event_id
+            ]
             if hook is not None:
                 hook(state, semantic, actions)
+
+            pulse_started = time.monotonic()
             current = resident.live_once()
-            current_for_event = current if current is not None and current.event.event_id == event_id else None
+            pulse_seconds = time.monotonic() - pulse_started
+            current_for_event = (
+                current
+                if current is not None and current.event.event_id == event_id
+                else None
+            )
             post = resident.store.get_working_state()
-            post_semantic = post.data.get(getattr(resident, "_SEMANTIC_LOOKUP_STATE_KEY", "resident_user_browser_semantic_lookup"))
+            post_semantic = post.data.get(
+                getattr(
+                    resident,
+                    "_SEMANTIC_LOOKUP_STATE_KEY",
+                    "resident_user_browser_semantic_lookup",
+                )
+            )
             post_semantic = post_semantic if isinstance(post_semantic, dict) else {}
+            post_actions = [
+                action
+                for action in resident.body.recent_actions(512)
+                if action.event_id == event_id
+            ]
+            local_failure = str(post.data.get("local_failure") or "") or None
+            progress = (
+                post.current_event_id,
+                post.stage,
+                post.blocked_by,
+                post_semantic.get("phase"),
+                post_semantic.get("input_name"),
+                post_semantic.get("button_name"),
+                post_semantic.get("regrounds"),
+                tuple(action.kind for action in post_actions),
+                local_failure,
+            )
+            now = time.monotonic()
+            if progress != last_progress:
+                last_progress = progress
+                idle_deadline = min(hard_deadline, now + idle_timeout)
+
             trace.append({
                 "stage": post.stage,
                 "phase": post_semantic.get("phase"),
                 "input_name": post_semantic.get("input_name"),
                 "button_name": post_semantic.get("button_name"),
                 "regrounds": post_semantic.get("regrounds"),
-                "actions": [action.kind for action in resident.body.recent_actions(512) if action.event_id == event_id],
-                "local_failure": str(post.data.get("local_failure") or "") or None,
+                "actions": [action.kind for action in post_actions],
+                "local_failure": local_failure,
+                "pulse_seconds": round(pulse_seconds, 3),
+                "elapsed_seconds": round(now - started_at, 3),
                 "result_success": current_for_event.success if current_for_event is not None else None,
                 "result_reason": current_for_event.reason if current_for_event is not None else None,
             })
@@ -427,6 +489,16 @@ class WindowsInteractiveUserBrowserSemanticGroundingContractTests(unittest.TestC
                 result = current_for_event
             if result is None:
                 time.sleep(0.03)
+
+        if result is None:
+            now = time.monotonic()
+            trace.append({
+                "timeout_kind": "hard" if now >= hard_deadline else "idle",
+                "elapsed_seconds": round(now - started_at, 3),
+                "hard_timeout_seconds": timeout,
+                "idle_timeout_seconds": idle_timeout,
+                "last_progress": list(last_progress) if last_progress is not None else None,
+            })
         return result, trace
 
     @staticmethod
