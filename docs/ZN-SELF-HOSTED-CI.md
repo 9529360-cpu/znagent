@@ -75,6 +75,16 @@ Credential-backed model acceptance remains a separate authorization boundary. Cr
 
 Formal release and candidate workflows are separate from ordinary development CI. For example, `.github/workflows/zn-release.yml` currently packages Windows on the specialized `zn-interactive` runner for a formal `zn-v*` tag or an explicitly dispatched package run.
 
+The ordinary builder baseline and hosted Clean Install continue to produce unsigned Windows development candidates. ZN does not require a paid Authenticode certificate for the current product release path. Windows may therefore show normal unsigned-publisher/SmartScreen warnings; that operating-system reputation layer is separate from ZN's own update trust.
+
+Formal ZN updates use a repository-owned Ed25519 trust root instead. The production Electron bundle embeds `ZN_UPDATE_SIGNING_PUBLIC_KEYS` (one or more base64 DER/SPKI Ed25519 public keys). The corresponding private key is stored only in GitHub secret `ZN_UPDATE_SIGNING_PRIVATE_KEY`. During formal publication, `stable.json` is signed after all version, URL, size and SHA-256 metadata is finalized. The packaged updater verifies that signature before it trusts release metadata or starts any download; a packaged build with no trusted public key, an unsigned channel, tampered metadata, or a signature from an unknown key fails closed.
+
+Generate the key pair locally with `node apps/desktop/scripts/generate-zn-update-signing-key.mjs`. Keep the generated private PEM out of the repository and place it in the GitHub secret. Put only the generated public base64 value in repository variable `ZN_UPDATE_SIGNING_PUBLIC_KEYS`. This key pair is free and is not a Windows code-signing certificate.
+
+Key rotation uses an overlap window. First build and ship a release whose embedded public-key list contains both the current and next public keys while the channel is still signed by the current key. After that bridge release is deployed, switch the release signing private key to the new key; keep both public keys embedded until the supported installed population no longer depends on the old key.
+
+HTTPS and the signed channel establish origin/metadata trust; target size and SHA-256 bind the downloaded installer bytes named by that signed metadata. Windows Authenticode can be added later as an optional OS-level reputation/publisher enhancement without becoming a prerequisite for ZN's own update authenticity.
+
 Release signing, publishing, stable update-channel mutation, production installer replacement and related trust changes remain high-risk operations. Green ordinary CI or a green clean-install run does not authorize those effects.
 
 If release packaging later becomes reproducible on disposable hosted Windows without weakening its trust boundary, migrate it deliberately and update this document from the real workflow rather than assuming the topology has changed.

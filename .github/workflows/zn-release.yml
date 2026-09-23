@@ -22,6 +22,7 @@ env:
   CI: 'true'
   NODE_OPTIONS: --max-old-space-size=4096
   ZN_DESKTOP_UPDATE_CHANNEL_URL: ${{ vars.ZN_UPDATE_CHANNEL_URL }}
+  ZN_UPDATE_SIGNING_PUBLIC_KEYS: ${{ vars.ZN_UPDATE_SIGNING_PUBLIC_KEYS }}
 
 concurrency:
   group: zn-release-${{ github.ref }}
@@ -96,7 +97,7 @@ jobs:
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: Require public update channel for formal tags
+      - name: Require formal update trust configuration
         if: ${{ github.ref_type == 'tag' }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:ZN_DESKTOP_UPDATE_CHANNEL_URL)) {
@@ -104,6 +105,9 @@ jobs:
           }
           node -e "const raw=process.env.ZN_DESKTOP_UPDATE_CHANNEL_URL; const url=new URL(raw); if(url.protocol!=='https:' || !url.pathname.endsWith('/stable.json')) throw new Error('ZN_UPDATE_CHANNEL_URL must be an HTTPS URL ending in /stable.json')"
           if ($LASTEXITCODE -ne 0) { throw 'invalid ZN update channel URL' }
+          if ([string]::IsNullOrWhiteSpace($env:ZN_UPDATE_SIGNING_PUBLIC_KEYS)) {
+            throw 'Set repository variable ZN_UPDATE_SIGNING_PUBLIC_KEYS before publishing a formal tag.'
+          }
 
       - name: Stage ZN-owned packaged runtime
         env:
@@ -306,12 +310,19 @@ jobs:
           name: zn-desktop-windows
           path: dist
 
-      - name: Prepare public update-channel bundle
+      - name: Prepare and sign public update-channel bundle
         env:
           ZN_PUBLIC_RELEASE_URL: ${{ vars.ZN_PUBLIC_RELEASE_URL }}
+          ZN_UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.ZN_UPDATE_SIGNING_PRIVATE_KEY }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:ZN_UPDATE_SIGNING_PRIVATE_KEY)) {
+            throw 'Configure secret ZN_UPDATE_SIGNING_PRIVATE_KEY before publishing a formal release.'
+          }
           $version = $env:GITHUB_REF_NAME -replace '^zn-v', ''
           node apps/desktop/scripts/prepare-zn-public-channel.mjs dist $version public-channel
+          if ($LASTEXITCODE -ne 0) { throw "public update-channel preparation failed with exit code $LASTEXITCODE" }
+          node apps/desktop/scripts/sign-zn-update-channel.mjs public-channel/stable.json
+          if ($LASTEXITCODE -ne 0) { throw "update-channel signing failed with exit code $LASTEXITCODE" }
 
       - name: Upload public-channel audit artifact
         uses: actions/upload-artifact@v4
