@@ -110,3 +110,26 @@ No unresolved P0, P1, or P2 visual mismatch remains in the resident-shell scope.
 - P3: intentional palette/content differences only.
 
 result: passed
+
+
+## Codex-inspired workbench follow-up — 2026-09-23
+
+The prior R4 pass above covers the resident shell and is historical; it does not establish fidelity to the selected Codex-style conversation/workbench reference.
+
+### Corrected Leopard capture
+
+- Captured the actual ZN Electron window on Leopard from the isolated `ZNagent-workbench-preview` checkout, at 2560×1600 with the window maximized.
+- The isolated profile is a clean first-run state: it contains no conversation messages and no document/presentation artifact. Therefore this capture does not exercise or prove the side-by-side artifact workbench.
+- The first screenshot was not a valid reference comparison. It included the non-maximized ZN window and unrelated Windows notification cards; the earlier mistaken Chrome/Hermes identification is withdrawn.
+
+### Confirmed implementation mismatches and fixes
+
+- The light ZN surface still used dark native window controls. `zn-main.ts` now aligns the native title-bar overlay and initial window background with the light UI.
+- The composer wrapper still painted a dark full-width strip. `styles.css` now uses a light fade under the floating composer and readable caption text.
+- After a clean source-app restart, the title bar and composer region render light. The isolated first-run home still differs substantially from the selected active-conversation reference, and no artifact side-by-side screenshot has been captured.
+
+### Remaining review boundary
+
+A real conversation with a document or slide artifact is required to compare the selected behavior: persistent chat at left and a usable workbench preview at right. Do not report the Codex-inspired design as visually passed until that state is captured and reviewed.
+
+result: blocked (artifact-bearing conversation unavailable in the isolated profile)

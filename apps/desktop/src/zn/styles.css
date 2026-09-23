@@ -2406,6 +2406,10 @@ body::after { display: none; }
   box-shadow: 0 2px 10px rgba(20, 25, 40, .035);
 }
 
+.zn-composer-wrap {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), #fff 24%);
+}
+
 .zn-composer {
   color: #353740;
   background: #fff;
@@ -2413,6 +2417,7 @@ body::after { display: none; }
   box-shadow: 0 8px 28px rgba(22, 27, 42, .07);
 }
 
+.zn-composer-caption { color: #777b85; }
 .zn-composer textarea { color: #30323a; }
 .zn-composer textarea::placeholder { color: #a3a5ad; }
 

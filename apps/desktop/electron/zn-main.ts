@@ -190,12 +190,12 @@ export function createZnDesktopWindow(): BrowserWindow {
     minWidth: 420,
     minHeight: 480,
     show: false,
-    backgroundColor: '#0f1115',
+    backgroundColor: '#ffffff',
     backgroundMaterial: 'mica',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#0a1323',
-      symbolColor: '#b7c4d9',
+      color: '#ffffff',
+      symbolColor: '#747780',
       height: 62
     },
     roundedCorners: true,
