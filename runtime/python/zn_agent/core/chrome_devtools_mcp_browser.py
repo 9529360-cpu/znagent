@@ -574,7 +574,9 @@ class ChromeDevToolsMcpManagedBrowser:
                 raise ChromeDevToolsMcpBrowserError(str(exc)) from exc
             self._require_safe_select_target(state_before)
             choice = self._select_option_choice(
-                state_before,
+                session,
+                page_id,
+                target.target_id,
                 mode=request.mode,
                 requested=request.requested,
             )
@@ -914,14 +916,6 @@ class ChromeDevToolsMcpManagedBrowser:
               const selectedValue = selectedOption
                 ? String(selectedOption.value || '')
                 : '';
-              const rawOptions = tag === 'select'
-                ? Array.from(el.options || [])
-                : [];
-              const optionsTruncated = rawOptions.length > 256;
-              const options = rawOptions.slice(0, 256).map((option) => ({
-                value: String(option.value || '').slice(0, 1024),
-                label: String(option.label || '').slice(0, 1024),
-              }));
               return {
                 connected: Boolean(el.isConnected),
                 sensitive,
@@ -934,8 +928,6 @@ class ChromeDevToolsMcpManagedBrowser:
                 multiple: Boolean(el.multiple),
                 selected_value: selectedValue,
                 selected_text: selectedText,
-                options_truncated: optionsTruncated,
-                options,
               };
             }""",
         )
@@ -1077,48 +1069,108 @@ class ChromeDevToolsMcpManagedBrowser:
             )
         return action.target
 
-    @staticmethod
     def _select_option_choice(
-        state: Mapping[str, Any],
+        self,
+        session: _Session,
+        page_id: str,
+        uid: str,
         *,
         mode: str,
         requested: str,
     ) -> dict[str, str]:
-        if state.get("options_truncated") is True:
-            raise ChromeDevToolsMcpBrowserError(
-                "select_option refuses a truncated native option inventory"
-            )
-        raw_options = state.get("options")
-        if not isinstance(raw_options, list):
-            raise ChromeDevToolsMcpBrowserError(
-                "select_option could not read the native option inventory"
-            )
-        rows: list[dict[str, str]] = []
-        for item in raw_options:
-            if not isinstance(item, Mapping):
-                raise ChromeDevToolsMcpBrowserError(
-                    "select_option provider returned invalid native option evidence"
-                )
-            label = str(item.get("label") or "")
-            value = str(item.get("value") or "")
-            if not label or len(label) > 1024 or len(value) > 1024:
-                raise ChromeDevToolsMcpBrowserError(
-                    "select_option native option evidence is outside the bounded contract"
-                )
-            rows.append({"label": label, "value": value})
+        function = """(el) => {
+          const requested = %s;
+          const mode = %s;
+          const connected = Boolean(el && el.isConnected);
+          const tag = String(el && el.tagName || '').toLowerCase();
+          const supported = tag === 'select';
+          const disabled = Boolean(el && el.disabled);
+          const multiple = Boolean(el && el.multiple);
+          if (!connected || !supported || disabled || multiple) {
+            return {
+              connected,
+              supported,
+              disabled,
+              multiple,
+              matching_count: 0,
+              same_label_count: 0,
+              label: '',
+              value: '',
+            };
+          }
+          const options = Array.from(el.options || []);
+          const field = (option) => mode === 'value'
+            ? String(option.value || '')
+            : String(option.label || '');
+          const matches = options.filter((option) => field(option) === requested);
+          if (matches.length !== 1) {
+            return {
+              connected,
+              supported,
+              disabled,
+              multiple,
+              matching_count: matches.length,
+              same_label_count: 0,
+              label: '',
+              value: '',
+            };
+          }
+          const choice = matches[0];
+          const label = String(choice.label || '');
+          const value = String(choice.value || '');
+          const sameLabelCount = options.filter(
+            (option) => String(option.label || '') === label
+          ).length;
+          return {
+            connected,
+            supported,
+            disabled,
+            multiple,
+            matching_count: 1,
+            same_label_count: sameLabelCount,
+            label: label.slice(0, 1025),
+            value: value.slice(0, 1025),
+          };
+        }""" % (
+            json.dumps(requested, ensure_ascii=False),
+            json.dumps(mode),
+        )
+        raw = self._evaluate_uid(session, page_id, uid, function)
+        return self._select_option_choice_from_evidence(raw)
 
-        matches = [row for row in rows if row[mode] == requested]
-        if len(matches) != 1:
+    @staticmethod
+    def _select_option_choice_from_evidence(raw: Any) -> dict[str, str]:
+        if not isinstance(raw, Mapping):
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option provider returned invalid native option evidence"
+            )
+        if not bool(raw.get("connected")):
+            raise ChromeDevToolsMcpBrowserError("select_option target is detached")
+        if not bool(raw.get("supported")):
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option currently requires a native select/combobox target"
+            )
+        if bool(raw.get("disabled")):
+            raise ChromeDevToolsMcpBrowserError("select_option target is disabled")
+        if bool(raw.get("multiple")):
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option first slice refuses multi-select targets"
+            )
+        if int(raw.get("matching_count") or 0) != 1:
             raise ChromeDevToolsMcpBrowserError(
                 "select_option must resolve to exactly one fresh native option"
             )
-        choice = matches[0]
-        same_label = [row for row in rows if row["label"] == choice["label"]]
-        if len(same_label) != 1:
+        if int(raw.get("same_label_count") or 0) != 1:
             raise ChromeDevToolsMcpBrowserError(
                 "select_option target maps to an ambiguous visible option label"
             )
-        return choice
+        label = str(raw.get("label") or "")
+        value = str(raw.get("value") or "")
+        if not label or len(label) > 1024 or len(value) > 1024:
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option native option evidence is outside the bounded contract"
+            )
+        return {"label": label, "value": value}
 
     @staticmethod
     def _require_safe_select_target(state: Mapping[str, Any]) -> None:
