@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { ZnArtifact } from './state'
 
@@ -148,12 +149,12 @@ function diagramPoints(nodes: DiagramNode[]): Map<string, Point> {
   return result
 }
 
-function ArchitectureDiagram({ slide }: { slide: ZnPresentationSlide }) {
+function ArchitectureDiagram({ slide, label }: { slide: ZnPresentationSlide; label: string }) {
   const nodes = slide.diagram?.nodes || []
   const edges = slide.diagram?.edges || []
   const points = useMemo(() => diagramPoints(nodes), [nodes])
   return (
-    <div className="zn-slide-diagram" aria-label="Architecture diagram">
+    <div className="zn-slide-diagram" aria-label={label}>
       <svg aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none">
         {edges.map((edge, index) => {
           const from = points.get(edge.from)
@@ -210,11 +211,17 @@ function SlidePage({
   slide,
   theme,
   imageArtifact,
+  imageLabel,
+  unavailableImageHint,
+  architectureLabel,
   thumbnail = false
 }: {
   slide: ZnPresentationSlide
   theme: ZnPresentationSpec['theme']
   imageArtifact?: ZnArtifact
+  imageLabel: string
+  unavailableImageHint: string
+  architectureLabel: string
   thumbnail?: boolean
 }) {
   const imageSrc = referencedImage(imageArtifact)
@@ -233,7 +240,7 @@ function SlidePage({
             <span />
           </header>
           {slide.layout === 'architecture' ? (
-            <ArchitectureDiagram slide={slide} />
+            <ArchitectureDiagram slide={slide} label={architectureLabel} />
           ) : slide.layout === 'image-right' ? (
             <div className="zn-slide-split">
               <SlideCopy slide={slide} />
@@ -242,9 +249,9 @@ function SlidePage({
                   <img src={imageSrc} alt="" />
                 ) : (
                   <>
-                    <span>Current Work image</span>
+                    <span>{imageLabel}</span>
                     <strong>{imageArtifact?.name || slide.imageArtifactId}</strong>
-                    <small>Referenced image is not available as a renderer-safe preview.</small>
+                    <small>{unavailableImageHint}</small>
                   </>
                 )}
               </div>
@@ -265,6 +272,7 @@ export function ZnSlidesWorkstation({
   artifact: ZnArtifact
   artifacts: ZnArtifact[]
 }) {
+  const { t } = useTranslation()
   const spec = useMemo(() => parsePresentationArtifact(artifact), [artifact])
   const [selectedSlideId, setSelectedSlideId] = useState('')
 
@@ -292,18 +300,18 @@ export function ZnSlidesWorkstation({
     return (
       <main className="zn-slides-workstation">
         <div className="zn-slides-invalid">
-          <strong>Slides preview unavailable</strong>
-          <span>The current PresentationSpec failed bounded renderer validation.</span>
+          <strong>{t('workstation.slidesUnavailable')}</strong>
+          <span>{t('workstation.slidesInvalid')}</span>
         </div>
       </main>
     )
   }
 
   return (
-    <main className="zn-slides-workstation" aria-label="Slides workstation">
-      <aside className="zn-slides-rail" aria-label="Slides">
+    <main className="zn-slides-workstation" aria-label={t('workstation.slidesWorkspace')}>
+      <aside className="zn-slides-rail" aria-label={t('workstation.slides')}>
         <div className="zn-slides-rail-title">
-          <strong>Slides</strong>
+            <strong>{t('workstation.slides')}</strong>
           <span>{spec.slides.length}</span>
         </div>
         <div className="zn-slides-thumbnails">
@@ -313,13 +321,16 @@ export function ZnSlidesWorkstation({
               className={`zn-slide-thumbnail${slide.id === selectedSlide.id ? ' active' : ''}`}
               key={slide.id}
               onClick={() => setSelectedSlideId(slide.id)}
-              aria-label={`Slide ${index + 1}: ${slide.title}`}
+              aria-label={t('workstation.slideLabel', { index: index + 1, title: slide.title })}
             >
               <span className="zn-slide-number">{index + 1}</span>
               <SlidePage
                 slide={slide}
                 theme={spec.theme}
                 imageArtifact={artifactById.get(slide.imageArtifactId)}
+                imageLabel={t('workstation.currentWorkImage')}
+                unavailableImageHint={t('workstation.imageUnavailable')}
+                architectureLabel={t('workstation.architectureDiagram')}
                 thumbnail
               />
             </button>
@@ -340,6 +351,9 @@ export function ZnSlidesWorkstation({
             slide={selectedSlide}
             theme={spec.theme}
             imageArtifact={artifactById.get(selectedSlide.imageArtifactId)}
+            imageLabel={t('workstation.currentWorkImage')}
+            unavailableImageHint={t('workstation.imageUnavailable')}
+            architectureLabel={t('workstation.architectureDiagram')}
           />
         </div>
       </section>

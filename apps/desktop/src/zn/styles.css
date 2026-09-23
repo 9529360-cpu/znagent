@@ -593,6 +593,47 @@ button, input, textarea { -webkit-tap-highlight-color: transparent; }
 .zn-context-section p { margin: 0; }
 .zn-error-text { margin-top: 9px; color: #f09aa2; font-size: 11px; line-height: 1.45; }
 
+.zn-connection-recovery {
+  width: min(780px, 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 auto 20px;
+  padding: 14px 16px;
+  border: 1px solid rgba(245, 178, 109, .25);
+  border-radius: 14px;
+  background: rgba(94, 62, 31, .2);
+  color: #ead5b5;
+}
+.zn-connection-recovery-copy { display: grid; gap: 4px; min-width: 0; }
+.zn-connection-recovery-copy strong { font-size: 12px; font-weight: 680; }
+.zn-connection-recovery-copy span { color: #b8a88f; font-size: 11px; line-height: 1.45; }
+.zn-connection-recovery > button {
+  flex: 0 0 auto;
+  border: 1px solid rgba(245, 198, 140, .28);
+  border-radius: 9px;
+  padding: 8px 11px;
+  color: #f1d5a8;
+  background: rgba(137, 91, 42, .2);
+  font-size: 11px;
+}
+.zn-connection-recovery > button:hover { background: rgba(137, 91, 42, .36); }
+.zn-topbar-actions .zn-workstation-return {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: auto;
+  padding: 0 9px;
+  color: #c7d5ef !important;
+  background: rgba(51, 76, 118, .24) !important;
+  border-color: rgba(157, 188, 240, .16) !important;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.zn-topbar-actions .zn-workstation-return:hover { background: rgba(65, 93, 143, .4) !important; }
+
 .zn-artifact-section { gap: 10px; }
 .zn-artifact-list { display: grid; gap: 5px; max-height: 166px; overflow: auto; flex: 0 0 auto; }
 .zn-artifact-link {

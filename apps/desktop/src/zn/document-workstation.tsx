@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import type { ZnArtifact } from './state'
 
@@ -76,6 +77,7 @@ type Props = {
 }
 
 export function ZnDocumentWorkstation({ artifact }: Props) {
+  const { t } = useTranslation()
   const spec = useMemo(() => parseDocumentArtifact(artifact), [artifact.content, artifact.id])
   const selectedFromArtifact = typeof artifact.metadata?.selected_section_id === 'string'
     ? artifact.metadata.selected_section_id
@@ -94,8 +96,8 @@ export function ZnDocumentWorkstation({ artifact }: Props) {
   if (!spec) {
     return (
       <main className="zn-document-workstation zn-document-invalid">
-        <strong>Document unavailable</strong>
-        <span>The current DocumentSpec cannot be rendered safely.</span>
+        <strong>{t('workstation.documentUnavailable')}</strong>
+        <span>{t('workstation.documentInvalid')}</span>
       </main>
     )
   }
@@ -115,12 +117,12 @@ export function ZnDocumentWorkstation({ artifact }: Props) {
   }
 
   return (
-    <main className="zn-document-workstation" aria-label="Document workspace">
-      <aside className="zn-document-outline" aria-label="Document outline">
+    <main className="zn-document-workstation" aria-label={t('workstation.documentWorkspace')}>
+      <aside className="zn-document-outline" aria-label={t('workstation.documentOutline')}>
         <div className="zn-document-outline-head">
-          <span>Document</span>
+          <span>{t('workstation.document')}</span>
           <strong title={spec.title}>{spec.title}</strong>
-          <small>{spec.sections.length} sections</small>
+          <small>{t('workstation.sectionCount', { count: spec.sections.length })}</small>
         </div>
         <div className="zn-document-outline-list">
           {spec.sections.map((section, index) => (
@@ -128,7 +130,7 @@ export function ZnDocumentWorkstation({ artifact }: Props) {
               type="button"
               key={section.id}
               className={'zn-document-outline-item' + (section.id === selectedSectionId ? ' active' : '')}
-              aria-label={`Section ${index + 1}: ${section.heading}`}
+              aria-label={t('workstation.sectionLabel', { index: index + 1, heading: section.heading })}
               onClick={() => selectSection(section.id)}
             >
               <span>{index + 1}</span>
@@ -141,10 +143,10 @@ export function ZnDocumentWorkstation({ artifact }: Props) {
       <section className="zn-document-stage">
         <header className="zn-document-stage-head">
           <div>
-            <span>Native Document</span>
+            <span>{t('workstation.nativeDocument')}</span>
             <strong>{spec.sections[selectedIndex]?.heading || spec.title}</strong>
           </div>
-          <small>DocumentSpec v1</small>
+          <small>{t('workstation.documentVersion')}</small>
         </header>
         <div className="zn-document-canvas-wrap">
           <article className="zn-document-paper" ref={paperRef}>

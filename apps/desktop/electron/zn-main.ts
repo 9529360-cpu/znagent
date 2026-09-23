@@ -1,7 +1,7 @@
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, screen, shell, Tray } from 'electron'
 
 import {
   isZnLocalePreference,
@@ -18,6 +18,7 @@ import { registerZnReleaseUpdaterIpc } from './zn-release-updater'
 import { registerZnResidentIpc, startZnResidentOnDesktopReady } from './zn-resident-ipc'
 import { ZnWindowsResidentSurface, znWindowsTrayIconPath } from './zn-windows-resident-surface'
 import { registerZnWorkspaceIpc } from './zn-workspace-ipc'
+import { fitZnWindowToWorkArea } from './zn-window-bounds'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 const preloadPath = path.join(moduleDir, 'electron-preload.js')
@@ -185,6 +186,8 @@ export function createZnDesktopWindow(): BrowserWindow {
       sandbox: true
     }
   })
+  window.center()
+  window.setBounds(fitZnWindowToWorkArea(window.getBounds(), screen.getDisplayMatching(window.getBounds()).workArea))
   window.setMenu(null)
 
   window.once('ready-to-show', () => window.show())
@@ -222,7 +225,9 @@ function ensurePrimaryWindow(): BrowserWindow {
 function setZnWindowMode(window: BrowserWindow, mode: ZnWindowMode): void {
   const bounds = ZN_WINDOW_BOUNDS[mode]
   if (window.isMaximized()) window.unmaximize()
-  window.setSize(bounds.width, bounds.height, true)
+  const current = window.getBounds()
+  const workArea = screen.getDisplayMatching(current).workArea
+  window.setBounds(fitZnWindowToWorkArea({ ...current, ...bounds }, workArea), true)
 }
 
 async function prepareZnWindowTransition(
