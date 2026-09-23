@@ -10,7 +10,9 @@ on:
   workflow_dispatch:
 
 permissions:
+  actions: read
   contents: read
+  pull-requests: read
   statuses: write
 
 env:
@@ -156,8 +158,26 @@ jobs:
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
           & .\.ci\runtime-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
 
+  product-gate:
+    name: ZN Product Contracts / gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22.22.0'
+      - name: Test product gate ownership and path matching
+        run: node --test .github/scripts/zn-product-required-gate.test.mjs
+      - name: Wait for required product contracts
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: node .github/scripts/zn-product-required-gate.mjs
+
   desktop:
-    name: Electron / TypeScript / Windows
+    name: Electron / TypeScript / Windows / tests
     runs-on: windows-latest
     timeout-minutes: 30
     env:
@@ -211,10 +231,32 @@ jobs:
       - name: Test release-channel, runtime staging and packaged-artifact verifiers
         run: node --test apps/desktop/scripts/electron-version-authority.test.mjs apps/desktop/scripts/prepare-zn-public-channel.test.mjs apps/desktop/scripts/sign-zn-update-channel.test.mjs apps/desktop/scripts/stage-zn-runtime.test.mjs apps/desktop/scripts/verify-zn-packaged-runtime.test.mjs apps/desktop/scripts/verify-zn-windows-clean-install.test.mjs
 
+  desktop-required:
+    name: Electron / TypeScript / Windows
+    if: ${{ always() }}
+    needs: [desktop, product-gate]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require desktop tests and applicable product contracts
+        env:
+          DESKTOP_RESULT: ${{ needs.desktop.result }}
+          PRODUCT_GATE_RESULT: ${{ needs.product-gate.result }}
+        run: |
+          if [ "$DESKTOP_RESULT" != "success" ]; then
+            echo "Desktop test job result: $DESKTOP_RESULT"
+            exit 1
+          fi
+          if [ "$PRODUCT_GATE_RESULT" != "success" ]; then
+            echo "Product contract gate result: $PRODUCT_GATE_RESULT"
+            exit 1
+          fi
+          echo "Desktop tests and applicable product contracts passed."
+
   publish-status-primary:
     name: Publish Windows CI statuses / primary
     if: ${{ always() }}
-    needs: [source-boundary, kernel, desktop]
+    needs: [source-boundary, kernel, desktop-required]
     runs-on: ubuntu-latest
     continue-on-error: true
     timeout-minutes: 10
@@ -235,8 +277,8 @@ jobs:
               ['ZN Source Boundary / Windows', '${{ needs.source-boundary.result }}'],
               ['ZN Kernel / Python', '${{ needs.kernel.result }}'],
               ['ZN Kernel / Python / Windows', '${{ needs.kernel.result }}'],
-              ['Electron / TypeScript', '${{ needs.desktop.result }}'],
-              ['Electron / TypeScript / Windows', '${{ needs.desktop.result }}'],
+              ['Electron / TypeScript', '${{ needs.desktop-required.result }}'],
+              ['Electron / TypeScript / Windows', '${{ needs.desktop-required.result }}'],
             ]
             for (const sha of statusShas) {
               for (const [statusContext, result] of rows) {
@@ -255,7 +297,7 @@ jobs:
   publish-status-fallback:
     name: Publish Windows CI statuses / fallback
     if: ${{ always() }}
-    needs: [source-boundary, kernel, desktop]
+    needs: [source-boundary, kernel, desktop-required]
     runs-on: windows-latest
     continue-on-error: true
     timeout-minutes: 10
@@ -276,8 +318,8 @@ jobs:
               ['ZN Source Boundary / Windows', '${{ needs.source-boundary.result }}'],
               ['ZN Kernel / Python', '${{ needs.kernel.result }}'],
               ['ZN Kernel / Python / Windows', '${{ needs.kernel.result }}'],
-              ['Electron / TypeScript', '${{ needs.desktop.result }}'],
-              ['Electron / TypeScript / Windows', '${{ needs.desktop.result }}'],
+              ['Electron / TypeScript', '${{ needs.desktop-required.result }}'],
+              ['Electron / TypeScript / Windows', '${{ needs.desktop-required.result }}'],
             ]
             for (const sha of statusShas) {
               for (const [statusContext, result] of rows) {
