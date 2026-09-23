@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from .channel_runtime import ResidentChannelSupervisor, build_zn_channel_adapters
+from .error_safety import public_exception_text
 from .models import utc_now
 from .visual_region_sense import NativeVisualRegionSense, VisualRegionProbeFn
 from .visual_sense import NativeVisualSense, VisualCaptureFn
@@ -229,7 +230,7 @@ class _ResidentTcpHandler(socketserver.StreamRequestHandler):
                 response = {
                     "id": request_id,
                     "ok": False,
-                    "error": f"{type(exc).__name__}: {exc}",
+                    "error": public_exception_text(exc),
                 }
             self._write_response(self, response)
             if getattr(rpc, "_shutdown", False):

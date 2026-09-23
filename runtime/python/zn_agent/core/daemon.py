@@ -7,6 +7,7 @@ import time
 from dataclasses import asdict
 from typing import Any, TextIO
 
+from .error_safety import public_exception_text
 from .outcome_aware_work_control import OutcomeAwareRestoreWorkControl
 from .provider_bridge import build_resident_runtime_from_existing_stack
 from .provider_settings import ProviderSettingsService
@@ -71,7 +72,7 @@ class ResidentRpcServer:
                     response = {
                         "id": request_id,
                         "ok": False,
-                        "error": f"{type(exc).__name__}: {exc}",
+                        "error": public_exception_text(exc),
                     }
                 self._write(response)
         finally:
