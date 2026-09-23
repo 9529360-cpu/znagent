@@ -325,6 +325,42 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             browser.close()
         self.assertEqual(browser._sessions, {})
 
+    def test_select_value_mapping_refuses_ambiguous_visible_provider_label(self):
+        browser = self._browser()
+        node = {
+            "children": [
+                {"role": "option", "name": "Duplicate", "value": "first"},
+                {"role": "option", "name": "Duplicate", "value": "second"},
+            ]
+        }
+        with self.assertRaisesRegex(
+            Exception,
+            "ambiguous visible option label",
+        ):
+            browser._select_option_choice(
+                node,
+                mode="value",
+                requested="second",
+            )
+
+    def test_select_label_mapping_requires_one_unique_fresh_option(self):
+        browser = self._browser()
+        node = {
+            "children": [
+                {"role": "option", "name": "Duplicate", "value": "first"},
+                {"role": "option", "name": "Duplicate", "value": "second"},
+            ]
+        }
+        with self.assertRaisesRegex(
+            Exception,
+            "exactly one fresh native option",
+        ):
+            browser._select_option_choice(
+                node,
+                mode="label",
+                requested="Duplicate",
+            )
+
     def test_command_uses_pinned_runtime_real_chrome_and_privacy_flags(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
