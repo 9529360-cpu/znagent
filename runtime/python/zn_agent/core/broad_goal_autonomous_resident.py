@@ -21,6 +21,7 @@ from .structured_proposal import (
     normalize_exact_json_payload,
     parse_exact_json_payload,
 )
+from .work_conversation_context import bind_work_conversation_context
 
 
 class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
@@ -155,6 +156,7 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
     def _build_cognition_request(self, event, impasse, required, deliberation=None):
         request = super()._build_cognition_request(event, impasse, required, deliberation)
         request = self._bind_work_route_policy(event, request)
+        request = bind_work_conversation_context(self.work_ledger, event, request)
         root = self._autonomous_root_candidate(event)
         if root is None:
             return request
