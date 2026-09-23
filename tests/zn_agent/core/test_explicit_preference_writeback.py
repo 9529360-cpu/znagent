@@ -76,7 +76,7 @@ class ExplicitPreferenceWritebackTests(unittest.TestCase):
         self.assertEqual(writes[0]["action"], "updated")
         self.assertEqual(
             self.memory.recall("response verbosity").value,
-            "detailed",
+            "concise",
         )
 
     def test_repeat_does_not_rewrite_or_duplicate_memory(self):
