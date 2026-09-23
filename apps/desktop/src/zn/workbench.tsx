@@ -42,6 +42,7 @@ import {
   type ZnWorkProgress
 } from './resident-client'
 import { describeZnProviderReadiness } from './provider-readiness'
+import { useZnWorkReconnection } from './use-work-reconnection'
 import {
   getZnDesktopLocaleState,
   setZnDesktopLocalePreference
@@ -238,7 +239,7 @@ export function ZnWorkbench() {
   const [view, setView] = useState<MainView>('work')
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
-  const [busy, setBusy] = useState(false)
+  const [submissionBusy, setBusy] = useState(false)
   const [workProgress, setWorkProgress] = useState<ZnWorkProgress | null>(null)
   const [cancelBusy, setCancelBusy] = useState(false)
   const [workspaceBusy, setWorkspaceBusy] = useState(false)
@@ -330,6 +331,17 @@ export function ZnWorkbench() {
         .sort((left, right) => right.updatedAt - left.updatedAt)
     )
   }, [])
+
+  const busy = useZnWorkReconnection({
+    thread: activeThread,
+    submissionBusy,
+    progress: workProgress,
+    onProgress: setWorkProgress,
+    onThread: replaceThread,
+    onError: setResidentError,
+    onHealth: setResidentHealth,
+    t
+  })
 
   const refreshResident = useCallback(async () => {
     setResidentHealth(previous => (previous === 'live' ? previous : 'connecting'))
