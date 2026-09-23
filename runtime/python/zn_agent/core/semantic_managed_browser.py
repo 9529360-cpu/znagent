@@ -128,6 +128,33 @@ _SEMANTIC_TEXTBOX_EVIDENCE_SCRIPT = r"""
 }
 """
 
+_SEMANTIC_COMBOBOX_EVIDENCE_SCRIPT = r"""
+(element) => {
+  const connected = Boolean(element && element.isConnected);
+  const style = connected ? window.getComputedStyle(element) : null;
+  const rect = connected ? element.getBoundingClientRect() : null;
+  const visible = Boolean(
+    connected &&
+    !element.hidden &&
+    style &&
+    style.display !== "none" &&
+    style.visibility !== "hidden" &&
+    rect &&
+    rect.width > 0 &&
+    rect.height > 0
+  );
+  const tag = String(element && element.tagName || "").toLowerCase().slice(0, 32);
+  return {
+    connected,
+    visible,
+    tag,
+    native_combobox: tag === "select",
+    disabled: Boolean(element && element.disabled),
+    multiple: Boolean(element && element.multiple),
+  };
+}
+"""
+
 _EXACT_NODE_EQUAL_SCRIPT = r"""
 (element, other) => Boolean(element && other && element === other)
 """
@@ -151,6 +178,7 @@ class SemanticPlaywrightManagedBrowser(
             BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
             BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
             BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
+            BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME,
         }
     )
 
@@ -365,6 +393,8 @@ class SemanticPlaywrightManagedBrowser(
             return "button", _SEMANTIC_BUTTON_EVIDENCE_SCRIPT, "button"
         if kind is BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME:
             return "textbox", _SEMANTIC_TEXTBOX_EVIDENCE_SCRIPT, "textbox"
+        if kind is BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME:
+            return "combobox", _SEMANTIC_COMBOBOX_EVIDENCE_SCRIPT, "combobox"
         raise ManagedBrowserError(f"unsupported semantic target query: {kind.value}")
 
     @staticmethod
@@ -403,6 +433,18 @@ class SemanticPlaywrightManagedBrowser(
             if bool(raw.get("read_only")):
                 raise ManagedBrowserError("managed browser semantic textbox target is read-only")
             return
+        if kind is BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME:
+            if not bool(raw.get("native_combobox")):
+                raise ManagedBrowserError(
+                    "managed browser semantic combobox Work currently supports only native select targets"
+                )
+            if bool(raw.get("disabled")):
+                raise ManagedBrowserError("managed browser semantic combobox target is disabled")
+            if bool(raw.get("multiple")):
+                raise ManagedBrowserError(
+                    "managed browser semantic combobox Work refuses multi-select targets"
+                )
+            return
         raise ManagedBrowserError(f"unsupported semantic target query: {kind.value}")
 
     @staticmethod
@@ -426,6 +468,9 @@ class SemanticPlaywrightManagedBrowser(
         elif query.kind is BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME:
             role = "textbox"
             selector_hint = "accessible_textbox_name:exact"
+        elif query.kind is BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME:
+            role = "combobox"
+            selector_hint = "accessible_combobox_name:exact"
         else:
             raise ManagedBrowserError(
                 f"unsupported semantic target query: {query.kind.value}"
