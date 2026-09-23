@@ -45,6 +45,20 @@ _CLICK_CUES = (
 _CHECK_CUES_ZH = ("勾选", "选中")
 _UNCHECK_CUES_ZH = ("取消勾选", "取消选中")
 _CLICK_CUES_ZH = ("点击", "按下")
+_EN_SELECT_OPTION_RE = re.compile(
+    r'\b(?:select|choose)\s+(?:option\s+)?["“]([^"”\r\n]{1,256})["”]\s+'
+    r'(?:from|in)\s+(?:the\s+)?(?:combobox|select|dropdown)\s+'
+    r'["“]([^"”\r\n]{1,160})["”]',
+    re.IGNORECASE,
+)
+_ZH_SELECT_OPTION_RE = re.compile(
+    r'(?:在)?(?:下拉框|选择框)\s*["“]([^"”\r\n]{1,160})["”]\s*'
+    r'(?:中|里|内)?\s*(?:选择|选中)\s*["“]([^"”\r\n]{1,256})["”]'
+)
+_ZH_SELECT_OPTION_RE_REVERSED = re.compile(
+    r'(?:选择|选中)\s*["“]([^"”\r\n]{1,256})["”]\s*'
+    r'(?:到|至|在)?\s*(?:下拉框|选择框)\s*["“]([^"”\r\n]{1,160})["”]'
+)
 _URL_TRAILING_PUNCTUATION = ".,;:!?)]}，。！？；：）】》"
 
 
@@ -139,6 +153,22 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         return bool(has_target_marker and cls._button_click_requested(remainder))
 
     @classmethod
+    def _looks_like_select_interaction(cls, task: str) -> bool:
+        remainder = str(task or "")
+        for url in cls._explicit_urls(remainder):
+            remainder = remainder.replace(url, " ")
+        lowered = remainder.lower()
+        has_target_marker = any(
+            marker in lowered for marker in ("combobox", "dropdown", "select")
+        ) or any(marker in remainder for marker in ("下拉框", "选择框"))
+        has_selection_cue = bool(
+            re.search(r"\b(?:select|choose)\b", lowered)
+            or "选择" in remainder
+            or "选中" in remainder
+        )
+        return bool(has_target_marker and has_selection_cue)
+
+    @classmethod
     def _natural_navigation_url(cls, event) -> str | None:
         payload = event.payload or {}
         if payload.get("body_action") or payload.get("native_action"):
@@ -151,11 +181,54 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         # A malformed/ambiguous mutation must fail closed rather than silently
         # degrading into a partial navigation-only action. Ordinary phrases such
         # as "open this page to check status" remain navigation.
-        if cls._looks_like_checkbox_interaction(task) or cls._looks_like_button_interaction(task):
+        if (
+            cls._looks_like_checkbox_interaction(task)
+            or cls._looks_like_button_interaction(task)
+            or cls._looks_like_select_interaction(task)
+        ):
             return None
 
         matches = cls._explicit_urls(task)
         return matches[0] if len(matches) == 1 else None
+
+    @classmethod
+    def _natural_named_select_request(cls, event) -> tuple[str, str, str] | None:
+        payload = event.payload or {}
+        if payload.get("body_action") or payload.get("native_action"):
+            return None
+
+        task = str(event.task or "").strip()
+        urls = cls._explicit_urls(task)
+        if len(urls) != 1:
+            return None
+        url = urls[0]
+        remainder = task.replace(url, " ")
+        quoted = [
+            match.group(1).strip()
+            for match in _QUOTED_NAME_RE.finditer(remainder)
+            if match.group(1).strip()
+        ]
+        if len(quoted) != 2:
+            return None
+
+        match = _EN_SELECT_OPTION_RE.search(remainder)
+        if match is not None:
+            option_label = match.group(1).strip()
+            target_name = match.group(2).strip()
+            return url, target_name, option_label
+
+        match = _ZH_SELECT_OPTION_RE.search(remainder)
+        if match is not None:
+            target_name = match.group(1).strip()
+            option_label = match.group(2).strip()
+            return url, target_name, option_label
+
+        match = _ZH_SELECT_OPTION_RE_REVERSED.search(remainder)
+        if match is not None:
+            option_label = match.group(1).strip()
+            target_name = match.group(2).strip()
+            return url, target_name, option_label
+        return None
 
     @classmethod
     def _natural_named_button_request(cls, event) -> tuple[str, str, str] | None:
@@ -248,6 +321,7 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         explicit = event.payload.get("required_capabilities")
         if explicit is None and (
             cls._natural_named_button_request(event) is not None
+            or cls._natural_named_select_request(event) is not None
             or cls._natural_named_checkbox_request(event) is not None
             or cls._natural_checkbox_request(event) is not None
             or cls._natural_navigation_url(event) is not None
@@ -264,6 +338,38 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
         learning_evidence,
         thought=None,
     ):
+        named_select = self._natural_named_select_request(event)
+        if named_select is not None:
+            url, target_name, option_label = named_select
+            intent = NativeActionIntent(
+                intent_id=f"browser-named-select-{event.event_id}",
+                event_id=event.event_id,
+                kind="browser_select_named_option",
+                args={
+                    "url": url,
+                    "target_name": target_name,
+                    "option_label": option_label,
+                },
+                reason=(
+                    "the current user Work supplies the exact browser URL, exact quoted "
+                    "accessible combobox name and explicit quoted option label"
+                ),
+                source="native_deliberation",
+            )
+            if not self._action_blocked_by_current_evidence(event, state, intent):
+                self._begin_native_action_cycle(event, state, intent)
+                self.store.save_working_state(state)
+                if thought is not None:
+                    action = "perform body action: browser_select_named_option"
+                    if action not in thought.possible_actions:
+                        thought.possible_actions = (*thought.possible_actions, action)
+                    thought.reason = (
+                        f"{thought.reason}; the user supplied exact combobox and option "
+                        "semantics so ZN does not need a model to invent browser authority"
+                    )
+                    self._persist_enriched_thought(thought)
+                return None
+
         named_button = self._natural_named_button_request(event)
         if named_button is not None:
             url, target_name, expected_url = named_button
@@ -394,6 +500,7 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
             "browser_navigate",
             "browser_set_checkbox",
             "browser_set_named_checkbox",
+            "browser_select_named_option",
             "browser_click_named_button_to_url",
         }:
             return True
