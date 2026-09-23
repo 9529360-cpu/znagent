@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from .action import NativeActionIntent
 from .browser_work_body import BrowserSideEffectAwareBody
 from .recovery_bounded_resident import RecoveryBoundedResidentRuntime
-from .semantic_managed_browser import SemanticPlaywrightManagedBrowser
+from .browser_provider_registry import build_managed_browser_adapter
 
 
 _URL_RE = re.compile(r"https?://[^\s<>{}\[\]\"']+", re.IGNORECASE)
@@ -68,8 +68,8 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
     """
 
     def _new_managed_browser_adapter(self):
-        """Create the idle MANAGED adapter owned by this Resident capability stack."""
-        return SemanticPlaywrightManagedBrowser()
+        """Create the capability-routed MANAGED browser owner for this Resident."""
+        return build_managed_browser_adapter()
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)

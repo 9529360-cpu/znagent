@@ -92,6 +92,23 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 )
         return browser.open_session(permission=permission, headless=headless)
 
+    @staticmethod
+    def _open_session_for_target_query(
+        browser,
+        permission: BrowserPermissionContext,
+        query_kind: BrowserTargetQueryKind,
+        *,
+        headless: bool,
+    ):
+        opener = getattr(browser, "open_session_for_requirements", None)
+        if callable(opener):
+            return opener(
+                permission=permission,
+                headless=headless,
+                required_target_queries=(query_kind,),
+            )
+        return browser.open_session(permission=permission, headless=headless)
+
     def _browser_navigate(self, action: BodyAction, started: str) -> BodyActionResult:
         browser = self._browser()
         url = str(action.args.get("url") or "").strip()
@@ -231,7 +248,12 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
         session = None
         closed = False
         try:
-            session = browser.open_session(permission=permission, headless=True)
+            session = self._open_session_for_target_query(
+                browser,
+                permission,
+                query.kind,
+                headless=True,
+            )
             initial = browser.observe(session.session_id)
             navigate = BrowserAction.create(
                 session_id=session.session_id,

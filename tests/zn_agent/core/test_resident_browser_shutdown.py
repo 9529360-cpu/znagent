@@ -59,7 +59,9 @@ class ResidentBrowserShutdownTests(unittest.TestCase):
                 store_path=root / "kernel.db",
             )
             browser = _ClosableBrowser()
+            research_browser = _ClosableBrowser()
             resident.managed_browser = browser
+            resident.research_browser = research_browser
             rpc = ResidentRpcServer(resident=resident, life_interval=0.1)
             endpoint_path = root / "resident-endpoint.json"
             service = ResidentSocketService(rpc, endpoint_path=endpoint_path)
@@ -83,6 +85,7 @@ class ResidentBrowserShutdownTests(unittest.TestCase):
             thread.join(timeout=5.0)
             self.assertFalse(thread.is_alive())
             self.assertTrue(browser.closed.is_set())
+            self.assertTrue(research_browser.closed.is_set())
             self.assertFalse(endpoint_path.exists())
 
 

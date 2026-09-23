@@ -22,10 +22,12 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
   const pythonRelative = process.platform === 'win32' ? 'python/python.exe' : 'python/bin/python3'
   const backendRelative = 'python/site-packages'
   const browserRelative = 'playwright-browsers'
+  const chromeDevtoolsMcpRelative = 'browser-runtimes/chrome-devtools-mcp'
   const veteranRelative = 'veteran-engineer'
   const python = path.join(runtimeRoot, ...pythonRelative.split('/'))
   const backendRoot = path.join(runtimeRoot, ...backendRelative.split('/'))
   const browserRoot = path.join(runtimeRoot, browserRelative)
+  const chromeDevtoolsMcpRoot = path.join(runtimeRoot, ...chromeDevtoolsMcpRelative.split('/'))
   const veteranRuntimeRoot = path.join(runtimeRoot, veteranRelative)
   fs.mkdirSync(path.dirname(python), { recursive: true })
   fs.writeFileSync(python, 'portable-python')
@@ -34,6 +36,10 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
   fs.writeFileSync(path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py'), '# resident core\n')
   fs.mkdirSync(path.join(browserRoot, 'chromium-fixture'), { recursive: true })
   fs.writeFileSync(path.join(browserRoot, 'chromium-fixture', 'marker'), 'managed chromium')
+  const chromeDevtoolsMcpPackageRoot = path.join(chromeDevtoolsMcpRoot, 'node_modules', 'chrome-devtools-mcp')
+  fs.mkdirSync(path.join(chromeDevtoolsMcpPackageRoot, 'build', 'src', 'bin'), { recursive: true })
+  fs.writeFileSync(path.join(chromeDevtoolsMcpPackageRoot, 'package.json'), JSON.stringify({ name: 'chrome-devtools-mcp', version: '1.9.0' }))
+  fs.writeFileSync(path.join(chromeDevtoolsMcpPackageRoot, 'build', 'src', 'bin', 'chrome-devtools-mcp.js'), '// chrome devtools mcp fixture\n')
   fs.mkdirSync(path.join(veteranRuntimeRoot, 'mcp'), { recursive: true })
   fs.writeFileSync(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), '// veteran fixture\n')
   fs.writeFileSync(path.join(veteranRuntimeRoot, 'VENDOR.json'), '{}\n')
@@ -48,9 +54,11 @@ function writeBundledRuntime(resourcesPath: string, runtimeId = 'abcdef123456789
     python: pythonRelative,
     backend_root: backendRelative,
     browser_root: browserRelative,
+    chrome_devtools_mcp_runtime: chromeDevtoolsMcpRelative,
+    chrome_devtools_mcp_version: '1.9.0',
     veteran_runtime: veteranRelative
   }, null, 2)}\n`)
-  return { runtimeRoot, runtimeId, backendRoot, browserRoot, veteranRuntimeRoot }
+  return { runtimeRoot, runtimeId, backendRoot, browserRoot, chromeDevtoolsMcpRoot, veteranRuntimeRoot }
 }
 
 test('packaged runtime materializes under ZN home and uses only ZN runtime entrypoints', () => {
@@ -67,6 +75,8 @@ test('packaged runtime materializes under ZN home and uses only ZN runtime entry
     assert.equal(env.ZN_RESIDENT_PYTHON, runtime.python)
     assert.equal(runtime.browserRoot, path.join(expectedRoot, 'playwright-browsers'))
     assert.equal(env.PLAYWRIGHT_BROWSERS_PATH, runtime.browserRoot)
+    assert.equal(runtime.chromeDevtoolsMcpRoot, path.join(expectedRoot, 'browser-runtimes', 'chrome-devtools-mcp'))
+    assert.equal(env.ZN_CHROME_DEVTOOLS_MCP_ROOT, runtime.chromeDevtoolsMcpRoot)
     assert.equal(runtime.veteranRuntimeRoot, path.join(expectedRoot, 'veteran-engineer'))
     assert.equal(env.ZN_VETERAN_RUNTIME_ROOT, runtime.veteranRuntimeRoot)
     assert.equal(env.ZN_DESKTOP_EXECUTABLE, path.resolve(process.execPath))
@@ -263,4 +273,23 @@ test('formal desktop package and builder expose only ZN product identity', () =>
     'scripts/notarize.mjs'
   ].map(relative => fs.readFileSync(path.join(desktopRoot, relative), 'utf8')).join('\n')
   assert.doesNotMatch(activeHooks, new RegExp(`${retiredProduct}|${retiredBrand}|install\\.ps1|${retiredPackage}`, 'i'))
+})
+
+test('packaged runtime rejects Chrome DevTools MCP path escape and version drift', () => {
+  const root = mkTmpRoot()
+  const resourcesPath = path.join(root, 'resources')
+  try {
+    const { runtimeRoot } = writeBundledRuntime(resourcesPath)
+    const manifestPath = path.join(runtimeRoot, 'runtime.json')
+    const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+    manifest.chrome_devtools_mcp_runtime = '../outside-browser-runtime'
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`)
+    assert.throws(() => resolveRuntime(runtimeRoot), /chrome_devtools_mcp_runtime escapes its payload root/)
+    manifest.chrome_devtools_mcp_runtime = 'browser-runtimes/chrome-devtools-mcp'
+    manifest.chrome_devtools_mcp_version = '1.9.1'
+    fs.writeFileSync(manifestPath, `${JSON.stringify(manifest)}\n`)
+    assert.throws(() => resolveRuntime(runtimeRoot), /unsupported Chrome DevTools MCP version/)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
 })
