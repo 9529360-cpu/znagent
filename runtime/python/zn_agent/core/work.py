@@ -769,8 +769,20 @@ class ResidentWorkLedger:
     def _active_run_for_thread(self, thread_id: str) -> WorkRun | None:
         with self._lock, closing(self._connect()) as conn:
             row = conn.execute(
-                "SELECT * FROM work_runs WHERE thread_id=? AND ledger_state='active' "
-                "ORDER BY created_at DESC LIMIT 1",
+                """
+                SELECT work_runs.*
+                FROM work_runs
+                JOIN events ON events.event_id=work_runs.event_id
+                WHERE work_runs.thread_id=? AND work_runs.ledger_state='active'
+                ORDER BY
+                    CASE events.status
+                        WHEN 'processing' THEN 0
+                        WHEN 'pending' THEN 1
+                        ELSE 2
+                    END,
+                    work_runs.created_at ASC
+                LIMIT 1
+                """,
                 (thread_id,),
             ).fetchone()
         return self._run_from_row(row) if row else None

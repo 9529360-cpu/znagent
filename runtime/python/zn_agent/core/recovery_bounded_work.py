@@ -14,6 +14,7 @@ from .work import (
     ResidentWorkLedger,
     WorkMessage,
     WorkRun,
+    _event_message_id,
     title_for_work_task,
 )
 
@@ -237,6 +238,121 @@ class RecoveryBoundedWorkLedger(ResidentWorkLedger):
             repaired += 1
         return repaired
 
+    def _capture_explicit_preferences(
+        self,
+        task: str,
+        payload: dict[str, Any],
+    ) -> None:
+        if payload.get("allow_memory", True) is not True:
+            return
+        if str(payload.get("cognition_question") or payload.get("unknown") or "").strip():
+            return
+        capture = getattr(getattr(self.resident, "memory", None), "capture_explicit_user_preferences", None)
+        if not callable(capture):
+            return
+        try:
+            capture(task)
+        except Exception:
+            # Work ingress is already durable. Memory enrichment is secondary and
+            # must never make a user message disappear or become replayable.
+            return
+
+    def start_external(
+        self,
+        thread_id: str,
+        task: str,
+        *,
+        event_id: str,
+        kind: str = "channel_message",
+        priority: int = 0,
+        payload: dict[str, Any] | None = None,
+        title: str | None = None,
+        metadata: dict[str, Any] | None = None,
+    ):
+        """Idempotently bind one external percept to canonical Resident Work.
+
+        External transport identity supplies only a stable event id. Work still
+        owns the user message, route policy, conversation history and completion.
+        Replaying the same percept after a crash repairs linkage without creating
+        a second message, event, memory write or model invocation.
+        """
+        normalized_task = str(task or "").strip()
+        normalized_event = str(event_id or "").strip()
+        if not normalized_task:
+            raise ValueError("external Work start requires task")
+        if not normalized_event:
+            raise ValueError("external Work start requires event_id")
+        normalized_kind = str(kind or "channel_message").strip() or "channel_message"
+        normalized_priority = int(priority)
+        thread = self.create_thread(
+            thread_id=thread_id,
+            title=str(title or title_for_work_task(normalized_task)),
+            metadata=metadata,
+        )
+        self.reconcile_ingress_checkpoints(thread_id=thread.thread_id)
+        self._finalize_completed_runs(thread_id=thread.thread_id)
+
+        message_id = _event_message_id(normalized_event, "user")
+        event_payload = dict(payload or {})
+        event_payload["work_thread_id"] = thread.thread_id
+        event_payload["work_message_id"] = message_id
+        workspace = self.workspace_for(thread)
+        if workspace is not None:
+            event_payload["workspace_path"] = workspace.path
+            event_payload["workdir"] = workspace.path
+            event_payload["workspace_name"] = workspace.name
+        thread = self.get_thread(thread.thread_id) or thread
+        bind_work_event_route_policy(
+            self,
+            thread,
+            task=normalized_task,
+            event_payload=event_payload,
+        )
+
+        existing_event = self.resident.store.get_event(normalized_event)
+        existing_run = self.get_run(normalized_event)
+        existing_message = self._message_row(message_id)
+        if existing_event is not None or existing_run is not None or existing_message is not None:
+            if existing_event is None or existing_run is None or existing_message is None:
+                raise RuntimeError("external Work identity is only partially durable")
+            if (
+                existing_event.task != normalized_task
+                or existing_event.kind != normalized_kind
+                or int(existing_event.priority) != normalized_priority
+                or existing_event.payload != event_payload
+                or existing_run.thread_id != thread.thread_id
+                or existing_run.message_id != message_id
+                or existing_run.task != normalized_task
+                or str(existing_message["thread_id"]) != thread.thread_id
+                or str(existing_message["role"]) != "user"
+                or str(existing_message["text"]) != normalized_task
+            ):
+                raise RuntimeError("external Work identity conflicts with durable Resident truth")
+            self._capture_explicit_preferences(normalized_task, event_payload)
+            return self._snapshot_without_finalize(thread.thread_id), existing_event
+
+        message_created_at = utc_now()
+        event_created_at = utc_now()
+        self._save_ingress_checkpoint(
+            event_id=normalized_event,
+            thread_id=thread.thread_id,
+            message_id=message_id,
+            task=normalized_task,
+            kind=normalized_kind,
+            priority=normalized_priority,
+            payload=event_payload,
+            message_created_at=message_created_at,
+            event_created_at=event_created_at,
+        )
+        self.reconcile_ingress_checkpoints(thread_id=thread.thread_id)
+        event = self.resident.store.get_event(normalized_event)
+        run = self.get_run(normalized_event)
+        message = self._message_row(message_id)
+        if event is None or run is None or message is None:
+            raise RuntimeError("external Work ingress did not become durable")
+        self._capture_explicit_preferences(normalized_task, event_payload)
+        return self._snapshot_without_finalize(thread.thread_id), event
+
     def start(
         self,
         thread_id: str,
@@ -371,6 +487,7 @@ class RecoveryBoundedWorkLedger(ResidentWorkLedger):
             # leftover checkpoint is redundant and will be removed idempotently
             # by the next ledger construction/reconciliation.
             pass
+        self._capture_explicit_preferences(normalized_task, event_payload)
         return self._snapshot_without_finalize(thread.thread_id), event
 
     def submit(
