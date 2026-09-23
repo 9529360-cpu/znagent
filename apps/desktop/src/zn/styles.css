@@ -1706,16 +1706,41 @@ body {
   .zn-spin { animation: none; }
 }
 
-/* Native Slides workstation: one PresentationSpec drives rail and preview. */
-.zn-app.slides-open,
-.zn-app.slides-open.context-closed {
+/* Keep the conversation mounted while document and slide work opens beside it. */
+.zn-work-content {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
   grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
 }
 
-.zn-app.slides-open .zn-sidebar {
-  display: none;
+.zn-main-column.has-workbench-preview .zn-work-content {
+  grid-template-columns: minmax(320px, 1fr) minmax(390px, 44%);
 }
 
+.zn-workbench-preview {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--zn-v2-line);
+  background: #0c1422;
+}
+
+.zn-workbench-preview > .zn-document-workstation,
+.zn-workbench-preview > .zn-slides-workstation {
+  width: 100%;
+  height: 100%;
+  grid-template-columns: minmax(112px, 28%) minmax(0, 1fr);
+}
+
+@media (max-width: 1080px) and (min-width: 721px) {
+  .zn-main-column.has-workbench-preview .zn-work-content {
+    grid-template-columns: minmax(280px, 1fr) minmax(330px, 44%);
+  }
+}
+
+/* Native Slides workstation: one PresentationSpec drives rail and preview. */
 .zn-slides-workstation {
   min-width: 0;
   min-height: 0;
@@ -2060,15 +2085,6 @@ body {
 }
 
 /* Native Document workstation: one DocumentSpec drives outline and paper preview. */
-.zn-app.document-open,
-.zn-app.document-open.context-closed {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.zn-app.document-open .zn-sidebar {
-  display: none;
-}
-
 .zn-document-workstation {
   min-width: 0;
   min-height: 0;
@@ -2303,3 +2319,118 @@ body {
     padding: 46px 42px 64px;
   }
 }
+
+@media (max-width: 720px) {
+  .zn-main-column.has-workbench-preview .zn-work-content {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .zn-main-column.has-workbench-preview .zn-workbench-preview {
+    position: absolute;
+    z-index: 4;
+    inset: 0;
+    border-left: 0;
+  }
+
+  .zn-workbench-preview > .zn-document-workstation,
+  .zn-workbench-preview > .zn-slides-workstation {
+    grid-template-columns: minmax(86px, 25%) minmax(0, 1fr);
+  }
+}
+
+/* Selected light workbench direction: neutral surfaces keep long work readable. */
+body::before,
+body::after { display: none; }
+
+.zn-app {
+  color: #262831;
+  background: #fff;
+}
+
+.zn-sidebar {
+  background: #f3f4f6;
+  border-color: #e4e5e8;
+}
+
+.zn-sidebar .zn-brand,
+.zn-sidebar .zn-thread-link,
+.zn-sidebar .zn-workspace-card,
+.zn-sidebar .zn-sidebar-footer button { color: #383a42 !important; }
+
+.zn-sidebar .zn-muted,
+.zn-sidebar .zn-section-label,
+.zn-sidebar .zn-thread-time { color: #858790 !important; }
+
+.zn-sidebar .zn-thread-link.active,
+.zn-sidebar .zn-thread-link:hover { color: #282a31 !important; background: #e6e7eb !important; }
+
+.zn-main-column {
+  background: #fff;
+  border-color: #e7e8ec;
+}
+
+.zn-main-column::before { display: none; }
+
+.zn-topbar {
+  color: #272932;
+  background: #fff;
+  border-color: #e8e9ed;
+  box-shadow: none;
+}
+
+.zn-topbar-title,
+.zn-topbar-brand .zn-brand { color: #292b33; }
+
+.zn-thread-surface { background: #fff; }
+
+.zn-message-body,
+.zn-message.user .zn-message-body { color: #343640; }
+
+.zn-message.user {
+  background: #f0eafe;
+  border-color: #ebe4fb;
+}
+
+.zn-home h1,
+.zn-home-card strong { color: #292b33; }
+
+.zn-home p,
+.zn-home-card > span:last-child { color: #737680; }
+
+.zn-home-quick-starts button,
+.zn-home-card {
+  color: #41434b;
+  background: #fff;
+  border-color: #e6e7eb;
+  box-shadow: 0 2px 10px rgba(20, 25, 40, .035);
+}
+
+.zn-composer {
+  color: #353740;
+  background: #fff;
+  border-color: #e5e6ea;
+  box-shadow: 0 8px 28px rgba(22, 27, 42, .07);
+}
+
+.zn-composer textarea { color: #30323a; }
+.zn-composer textarea::placeholder { color: #a3a5ad; }
+
+.zn-workbench-preview {
+  background: #f8f9fb;
+  border-color: #e4e5e9;
+}
+
+.zn-context-panel {
+  color: #343640;
+  background: #fafbfc;
+  border-color: #e5e6ea;
+}
+
+.zn-context-section { background: #fff; border-color: #e8e9ed; }
+.zn-context-header strong,
+.zn-context-value,
+.zn-artifact-preview-head strong { color: #33353d; }
+.zn-context-title,
+.zn-context-path,
+.zn-artifact-preview-head span { color: #7d8089; }

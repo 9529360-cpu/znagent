@@ -4,6 +4,8 @@
 
 **passed**
 
+> This earlier result documents the R4 resident-shell validation below. It does not certify the newer three-column workbench changes.
+
 The resident shell now matches the intended product pattern from the YOYO black-box reference: compact-first invocation, a calm assistant surface, and progressive expansion into work/history/details instead of a permanent three-column admin console.
 
 ## Source of visual truth
@@ -37,6 +39,16 @@ The R4 comparison board was reviewed with the YOYO source and both real Electron
 - assistant identity/readiness is visible without exposing model/runtime internals as the main hierarchy;
 - technical work evidence, restore points, and artifacts are available through progressive disclosure rather than permanent panels;
 - native Windows controls and ZN controls have separate safe areas.
+
+## Three-column workbench follow-up
+
+### Result
+
+**final result: blocked**
+
+The selected light three-column concept was assembled and visually inspected in [Figma](https://www.figma.com/design/3EYdorATddYYe21JiCDuF6?node-id=1-2). It shows the conversation remaining visible while the artifact preview opens to the right. The source changes also pass the desktop TypeScript check.
+
+The running Electron implementation could not be captured for visual comparison. The repository's `npm run dev` setup reinstalled the locked workspace dependencies, then failed its Electron/esbuild readiness check after npm blocked their lifecycle scripts. No Electron screenshot was produced, so the live desktop layout, small-window drawer, and visual fit remain unverified.
 
 The source uses a light/pale system palette while ZN intentionally keeps its dark navy/Mica visual language. This is a brand/token deviation, not a structural mismatch. Copy and icons are also ZN-native rather than cloned from YOYO.
 

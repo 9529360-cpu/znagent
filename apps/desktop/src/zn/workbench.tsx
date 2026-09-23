@@ -685,10 +685,6 @@ export function ZnWorkbench() {
     })
   }, [])
 
-  useEffect(() => {
-    if (activeWorkstationArtifact && view === 'work') requestWindowMode('expanded')
-  }, [activeWorkstationArtifact?.id, activeThreadId, requestWindowMode, view])
-
   const openSettings = useCallback(() => {
     setView('settings')
     requestWindowMode('expanded')
@@ -790,7 +786,7 @@ export function ZnWorkbench() {
         </div>
       </aside>
 
-      <section className="zn-main-column">
+      <section className={'zn-main-column' + (activeWorkstationArtifact && view === 'work' ? ' has-workbench-preview' : '')}>
         <header className="zn-topbar">
           <div className="zn-topbar-brand">
             <div className="zn-mark zn-mark-small" aria-hidden="true">ZN</div>
@@ -804,7 +800,7 @@ export function ZnWorkbench() {
           </div>
 
           <div className="zn-topbar-copy">
-            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeWorkstationArtifact ? activeWorkstationArtifact.name : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
+            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
             <div className="zn-muted zn-small">{view === 'settings' ? `ZN · ${t('topbar.thisComputer')}` : activeWorkspace?.name || t('topbar.thisComputer')}</div>
           </div>
 
@@ -954,11 +950,7 @@ export function ZnWorkbench() {
           </main>
         ) : (
           <>
-            {activeDocument ? (
-              <ZnDocumentWorkstation artifact={activeDocument} />
-            ) : activePresentation ? (
-              <ZnSlidesWorkstation artifact={activePresentation} artifacts={activeArtifacts} />
-            ) : (
+            <div className="zn-work-content">
             <main className="zn-thread-surface">
               {residentHealth === 'offline' ? (
                 <div className="zn-connection-recovery" role="alert" aria-live="polite">
@@ -1135,7 +1127,8 @@ export function ZnWorkbench() {
                 </section>
               ) : null}
             </main>
-            )}
+            {activeDocument ? <div className="zn-workbench-preview"><ZnDocumentWorkstation artifact={activeDocument} /></div> : activePresentation ? <div className="zn-workbench-preview"><ZnSlidesWorkstation artifact={activePresentation} artifacts={activeArtifacts} /></div> : null}
+            </div>
 
             <form className="zn-composer-wrap" onSubmit={submit}>
               <div className="zn-composer">
