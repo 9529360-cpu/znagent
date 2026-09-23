@@ -2439,3 +2439,80 @@ body::after { display: none; }
 .zn-context-title,
 .zn-context-path,
 .zn-artifact-preview-head span { color: #7d8089; }
+
+
+/* The expanded desktop keeps conversation and task context visible like the selected Codex reference. */
+.zn-app.details-open {
+  grid-template-columns: minmax(220px, 252px) minmax(0, 1fr) minmax(320px, 370px);
+}
+
+.zn-app.details-open .zn-sidebar {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.zn-app.details-open .zn-main-column {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.zn-app.details-open .zn-details-backdrop {
+  display: none;
+}
+
+.zn-app.details-open .zn-context-panel {
+  position: relative;
+  inset: auto;
+  grid-column: 3;
+  grid-row: 1;
+  width: auto;
+  height: 100vh;
+  border-left: 1px solid #e5e7eb;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.zn-app.details-open .zn-context-header {
+  background: #fff;
+  border-color: #e8e9ed;
+}
+
+.zn-app.details-open .zn-context-section-head button,
+.zn-app.details-open .zn-context-actions button {
+  color: #555965;
+  border-color: #e2e4e8;
+  background: #fff;
+}
+
+@media (min-width: 721px) and (max-width: 1080px) {
+  .zn-app.details-open {
+    grid-template-columns: minmax(196px, 220px) minmax(0, 1fr) minmax(300px, 330px);
+  }
+}
+
+@media (min-width: 721px) and (max-width: 900px) {
+  .zn-app.details-open .zn-context-panel {
+    position: fixed;
+    inset: 62px 0 0 auto;
+    z-index: 21;
+    width: min(360px, calc(100vw - 196px));
+    box-shadow: -16px 0 40px rgba(20, 24, 35, .14);
+  }
+
+  .zn-app.details-open .zn-details-backdrop {
+    display: block;
+    position: fixed;
+    inset: 62px 0 0;
+    z-index: 20;
+    background: transparent;
+    backdrop-filter: none;
+  }
+}
+
+
+.zn-app.details-open .zn-context-header strong { font-size: 14px; }
+.zn-app.details-open .zn-context-title { color: #6f737d; font-size: 10px; }
+.zn-app.details-open .zn-context-value { color: #434650; font-size: 12px; line-height: 1.45; }
+.zn-app.details-open .zn-context-path,
+.zn-app.details-open .zn-context-section p { color: #6b707a; font-size: 11px; line-height: 1.5; }

@@ -133,3 +133,13 @@ The prior R4 pass above covers the resident shell and is historical; it does not
 A real conversation with a document or slide artifact is required to compare the selected behavior: persistent chat at left and a usable workbench preview at right. Do not report the Codex-inspired design as visually passed until that state is captured and reviewed.
 
 result: blocked (artifact-bearing conversation unavailable in the isolated profile)
+
+
+### Expanded Codex-style layout iteration
+
+- Expanded ZN now uses a real three-column grid: conversation navigation, active work, and a persistent task-context pane. The right pane no longer dims or overlays the conversation.
+- The task-context pane opens for expanded work, closes for compact mode/settings, and yields the right side to an active document or presentation preview.
+- Verified the maximized 2560×1600 Leopard source window after a clean restart. Its chrome and composer now use the selected light surface; the right pane is legible and occupies a stable column.
+- The captured state is still an empty first-run task. A populated conversation and artifact preview have not been available in the isolated profile, so reference-state fidelity remains unverified.
+
+result: blocked (the selected active-conversation and artifact-preview state is not present in the isolated profile)

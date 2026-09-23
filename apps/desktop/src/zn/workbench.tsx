@@ -246,7 +246,7 @@ export function ZnWorkbench() {
   const [cancelBusy, setCancelBusy] = useState(false)
   const [workspaceBusy, setWorkspaceBusy] = useState(false)
   const [restoreBusy, setRestoreBusy] = useState(false)
-  const [contextOpen, setContextOpen] = useState(false)
+  const [contextOpen, setContextOpen] = useState(() => window.innerWidth > 720)
   const [windowMode, setWindowMode] = useState<WindowMode>(() => window.innerWidth <= 720 ? 'compact' : 'expanded')
   const [residentHealth, setResidentHealth] = useState<ResidentHealth>('connecting')
   const [residentSnapshot, setResidentSnapshot] = useState<ZnResidentSnapshot | null>(null)
@@ -288,6 +288,15 @@ export function ZnWorkbench() {
   const activeDocument = activeWorkstationArtifact?.kind === 'document'
     ? activeWorkstationArtifact
     : null
+
+  useEffect(() => {
+    if (windowMode === 'compact' || view !== 'work' || activeWorkstationArtifact) {
+      setContextOpen(false)
+      return
+    }
+    setContextOpen(true)
+  }, [activeWorkstationArtifact, view, windowMode])
+
   const recentThreads = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     return [...threads]
@@ -746,7 +755,7 @@ export function ZnWorkbench() {
                 onClick={() => {
                   setActiveThreadId(thread.id)
                   setView('work')
-                  setContextOpen(false)
+                  setContextOpen(windowMode === 'expanded')
                   void refreshRestorePoints(thread.id)
                 }}
               >
