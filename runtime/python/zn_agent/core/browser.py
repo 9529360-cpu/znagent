@@ -57,6 +57,11 @@ class BrowserTargetQueryKind(str, Enum):
     ACCESSIBLE_TEXTBOX_NAME = "accessible_textbox_name"
 
 
+class BrowserTargetRegroundDisposition(str, Enum):
+    SAME_EXACT_TARGET = "same_exact_target"
+    REBOUND_TARGET = "rebound_target"
+
+
 _NAVIGATION_ACTIONS = frozenset(
     {
         BrowserActionKind.NAVIGATE,
@@ -250,6 +255,40 @@ class BrowserObservation:
 
 
 @dataclass(frozen=True, slots=True)
+class BrowserTargetRegrounding:
+    """Fresh semantic resolution relative to one previously observed target.
+
+    Providers, not callers, decide exact-node continuity. This is intentional:
+    provider target_id values are not required to share one physical-node identity
+    scheme across Playwright, MCP, and the user's existing browser.
+    """
+
+    query: BrowserTargetQuery
+    previous_target: BrowserTarget
+    observation: BrowserObservation
+    disposition: BrowserTargetRegroundDisposition
+
+    def __post_init__(self) -> None:
+        current = self.observation.target
+        if current is None:
+            raise ValueError("browser target regrounding requires a fresh target observation")
+        if self.previous_target.session_id != self.observation.session.session_id:
+            raise ValueError("browser target regrounding cannot cross browser sessions")
+        if self.previous_target.page_id != self.observation.page_id:
+            raise ValueError("browser target regrounding cannot cross browser pages")
+        if current.session_id != self.previous_target.session_id:
+            raise ValueError("fresh browser target belongs to a different session")
+        if current.page_id != self.previous_target.page_id:
+            raise ValueError("fresh browser target belongs to a different page")
+        if current.frame_id != self.query.frame_id:
+            raise ValueError("fresh browser target does not match the reground query frame")
+
+    @property
+    def exact_node_continuity(self) -> bool:
+        return self.disposition is BrowserTargetRegroundDisposition.SAME_EXACT_TARGET
+
+
+@dataclass(frozen=True, slots=True)
 class BrowserAction:
     action_id: str
     session_id: str
@@ -398,6 +437,15 @@ class BrowserAdapter(Protocol):
         *,
         page_id: str = "",
     ) -> BrowserObservation: ...
+
+    def reground_target(
+        self,
+        session_id: str,
+        query: BrowserTargetQuery,
+        previous_target: BrowserTarget,
+        *,
+        page_id: str = "",
+    ) -> BrowserTargetRegrounding: ...
 
     def act(
         self,
