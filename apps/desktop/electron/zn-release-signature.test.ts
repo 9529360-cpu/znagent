@@ -88,3 +88,8 @@ test('explicit development mode may permit an unsigned channel without keys', ()
     verifyZnReleaseChannelSignature(fixture(), '', { required: false })
   )
 })
+
+test('release signature payload uses locale-independent key ordering', () => {
+  const payload = canonicalZnReleasePayload({ z: 1, A: 2, 'ä': 3 }).toString('utf8')
+  assert.equal(payload, '{"A":2,"z":1,"ä":3}')
+})
