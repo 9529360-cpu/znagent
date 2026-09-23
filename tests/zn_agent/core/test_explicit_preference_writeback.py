@@ -63,7 +63,15 @@ class ExplicitPreferenceWritebackTests(unittest.TestCase):
             "concise",
         )
         writes = self.memory.capture_explicit_user_preferences(
-            "回复风格改成详细一点。"
+            "以后回答不要简洁，请详细一点。"
+        )
+        self.assertEqual(writes[0]["action"], "updated")
+        self.assertEqual(
+            self.memory.recall("response verbosity").value,
+            "detailed",
+        )
+        writes = self.memory.capture_explicit_user_preferences(
+            "回复风格改成简洁一点。"
         )
         self.assertEqual(writes[0]["action"], "updated")
         self.assertEqual(
