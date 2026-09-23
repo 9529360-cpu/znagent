@@ -218,6 +218,31 @@ class ResidentSocketServiceTests(unittest.TestCase):
                 self.assertFalse(endpoint_path.exists())
                 resident.store.close()
 
+    def test_oversized_request_is_rejected_before_auth_and_service_remains_healthy(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, _, _, thread, endpoint_path, endpoint = self._start_threaded_service(Path(tmp))
+            try:
+                with socket.create_connection(
+                    (str(endpoint["host"]), int(endpoint["port"])),
+                    timeout=3.0,
+                ) as client:
+                    client.settimeout(3.0)
+                    client.sendall(b"x" * 1_048_577)
+                    raw = client.makefile("rb").readline()
+                    self.assertTrue(raw)
+                    rejected = json.loads(raw.decode("utf-8"))
+                    self.assertFalse(rejected["ok"])
+                    self.assertEqual(rejected["error"], "request too large")
+
+                ping = self._request(endpoint, "ping")
+                self.assertTrue(ping["ok"])
+                self.assertTrue(thread.is_alive())
+            finally:
+                self._request(endpoint, "shutdown")
+                thread.join(timeout=5.0)
+                self.assertFalse(endpoint_path.exists())
+                resident.store.close()
+
     def test_unauthenticated_side_effect_rpcs_never_reach_resident(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident, _, _, thread, endpoint_path, endpoint = self._start_threaded_service(Path(tmp))
