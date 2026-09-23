@@ -339,10 +339,6 @@ class ResidentSocketService:
     def serve_forever(self) -> int:
         try:
             self.rpc.service.acquire()
-            self.rpc.resident.live_once()
-            self.rpc._start_life_loop()
-            self._start_visual_loop()
-            self.channels.start()
             with _ResidentTcpServer(
                 (self.host, self.port),
                 _ResidentTcpHandler,
@@ -351,7 +347,17 @@ class ResidentSocketService:
             ) as server:
                 self._server = server
                 host, port = server.server_address[:2]
+                # Establish real life readiness without dispatching saved Work.
+                # A published endpoint must not report an uninitialized subject.
+                self.rpc.resident.pulse()
                 self._write_endpoint(str(host), int(port))
+                # Restored Work may immediately enter slow cognition or Body IO.
+                # Only the existing life thread drives it, after transport bind
+                # and endpoint publication succeed. Reconnection must not wait
+                # for the first recovered task step to finish.
+                self.rpc._start_life_loop()
+                self._start_visual_loop()
+                self.channels.start()
                 server.serve_forever(poll_interval=0.25)
         finally:
             self._server = None
