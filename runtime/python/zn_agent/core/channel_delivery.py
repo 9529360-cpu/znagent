@@ -30,6 +30,7 @@ class ChannelRoute:
     event_id: str
     channel: str
     conversation_id: str
+    work_thread_id: str | None = None
     thread_id: str | None = None
     reply_to_message_id: str | None = None
     status: str = "pending"
@@ -91,7 +92,13 @@ class ChannelDeliveryLedger:
             ).fetchone()
         return self._from_row(row) if row else None
 
-    def remember(self, event: ChannelEvent, event_id: str) -> ChannelRoute:
+    def remember(
+        self,
+        event: ChannelEvent,
+        event_id: str,
+        *,
+        work_thread_id: str | None = None,
+    ) -> ChannelRoute:
         source_key = self.source_key(event)
         existing = self.route_for_source(source_key)
         if existing is not None:
@@ -102,6 +109,7 @@ class ChannelDeliveryLedger:
             event_id=str(event_id),
             channel=str(event.channel or "").strip().lower(),
             conversation_id=str(event.conversation_id or "").strip(),
+            work_thread_id=(str(work_thread_id).strip() if work_thread_id else None),
             thread_id=(str(event.thread_id).strip() if event.thread_id is not None else None),
             reply_to_message_id=(
                 str(event.message_id).strip() if event.message_id is not None else None

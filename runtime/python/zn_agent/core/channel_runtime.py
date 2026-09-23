@@ -13,10 +13,11 @@ import time
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable, Mapping
 
-from .channel import ChannelAdapter, ChannelEvent, ChannelMessage
+from .channel import ChannelAdapter, ChannelEvent, ChannelMessage, channel_work_thread_id
 from .channel_delivery import ChannelDeliveryLedger, ChannelMediaNomination
 from .config import load_zn_config
-from .event_ingress import enqueue_event_once, stable_external_event_id
+from .event_ingress import stable_external_event_id
+from .recovery_bounded_work import RecoveryBoundedWorkLedger
 from .health_observation import ResidentHealthJournal
 from .models import utc_now
 
@@ -59,7 +60,7 @@ class ResidentChannelSupervisor:
         poll_timeout: float = 10.0,
         min_backoff: float = 0.5,
         max_backoff: float = 30.0,
-        reply_failures: bool = False,
+        reply_failures: bool = True,
     ):
         self.resident = resident
         self.poll_timeout = max(0.0, float(poll_timeout))
@@ -67,6 +68,11 @@ class ResidentChannelSupervisor:
         self.max_backoff = max(self.min_backoff, float(max_backoff))
         self.reply_failures = bool(reply_failures)
         self.ledger = ChannelDeliveryLedger(self.resident.store.path)
+        self.work = getattr(self.resident, "work_ledger", None)
+        if self.work is None:
+            # Minimal/test residents still use the same Work schema; the product
+            # Resident supplies its richer existing EvidenceBound ledger here.
+            self.work = RecoveryBoundedWorkLedger(self.resident)
         self.health = ResidentHealthJournal(self.resident.store)
         self._adapters: dict[str, ChannelAdapter] = {}
         self._states: dict[str, ChannelLoopState] = {}
@@ -309,20 +315,38 @@ class ResidentChannelSupervisor:
                 "channel_metadata": dict(event.metadata),
             }
             event_id = stable_external_event_id("channel", source_key)
-            ingress = enqueue_event_once(
-                self.resident,
+            work_thread_id = channel_work_thread_id(
+                event.channel,
+                event.conversation_id,
+                event.thread_id,
+            )
+            existed = self.resident.store.get_event(event_id) is not None
+            _, work_event = self.work.start_external(
+                work_thread_id,
+                event.text,
                 event_id=event_id,
-                task=event.text,
                 kind="channel_message",
                 payload=payload,
+                title=(
+                    str(event.metadata.get("chat_title") or "").strip()
+                    or f"{str(event.channel).strip().title()} conversation"
+                ),
+                metadata={"conversation_surface": "channel"},
             )
-            remembered = self.ledger.remember(event, ingress.event.event_id)
-            if ingress.created and remembered.event_id == ingress.event.event_id:
+            remembered = self.ledger.remember(
+                event,
+                work_event.event_id,
+                work_thread_id=work_thread_id,
+            )
+            if (
+                not existed
+                and remembered.event_id == work_event.event_id
+                and remembered.work_thread_id == work_thread_id
+            ):
                 enqueued += 1
             else:
-                # Recovery case: the same deterministic resident event already
-                # existed (for example a crash after enqueue but before route
-                # insert), or another worker already recorded the source route.
+                # Recovery case: deterministic Work/event identity already
+                # existed after a crash, or another worker recorded the route.
                 duplicates += 1
         return enqueued, duplicates
 
@@ -332,9 +356,16 @@ class ResidentChannelSupervisor:
             result = self.resident.result_for(route.event_id)
             if result is None:
                 continue
-            response = str(result.response or "").strip()
-            if not response and self.reply_failures and not result.success:
-                response = str(result.reason or "ZN could not complete this request.").strip()
+            event = self.resident.store.get_event(route.event_id)
+            if route.work_thread_id and event is not None and str(event.status.value) in {"completed", "failed"}:
+                # Persist the same reply/activity that Desktop reads before the
+                # external channel is allowed to publish the outcome.
+                self.work.progress(route.work_thread_id, route.event_id)
+            response = (
+                str(result.response or "").strip()
+                if result.success
+                else (self._failure_response(result) if self.reply_failures else "")
+            )
             attachments = self.ledger.media_for_event(route.event_id)
             if not response and not attachments:
                 self.ledger.mark_delivered(route.event_id)
@@ -358,6 +389,23 @@ class ResidentChannelSupervisor:
             self.ledger.mark_delivered(route.event_id)
             delivered += 1
         return delivered
+
+    @staticmethod
+    def _failure_response(result) -> str:
+        reason = str(getattr(result, "reason", "") or "").casefold()
+        if (
+            "no system 2 model is configured" in reason
+            or "no cognitive model is configured" in reason
+            or "cognitive resource is not installed" in reason
+        ):
+            return (
+                "ZN is running, but no cognitive model is configured or available for this request. "
+                "Configure a provider/model and try again."
+            )
+        return (
+            "ZN could not complete this request with the configured cognitive resource. "
+            "The conversation and Work state were kept; resolve the provider/model problem and try again."
+        )
 
     def _restore_adapter_checkpoint(self, name: str, adapter: ChannelAdapter) -> None:
         restore = getattr(adapter, "restore_checkpoint", None)
