@@ -302,7 +302,6 @@ class RecoveryBoundedWorkLedger(ResidentWorkLedger):
             metadata=metadata,
         )
         self.reconcile_ingress_checkpoints(thread_id=thread.thread_id)
-        self._finalize_completed_runs(thread_id=thread.thread_id)
 
         message_id = _event_message_id(normalized_event, "user")
         event_payload = dict(payload or {})
@@ -342,6 +341,12 @@ class RecoveryBoundedWorkLedger(ResidentWorkLedger):
                 raise RuntimeError("external Work identity conflicts with durable Resident truth")
             self._capture_explicit_preferences(normalized_task, event_payload)
             return self._snapshot_without_finalize(thread.thread_id), existing_event
+
+        # A genuinely new external turn must see any completed predecessor as
+        # durable conversation history before its user-message row is appended.
+        # Exact replay of the same external identity returns above without
+        # touching completion, which also keeps route-repair idempotent.
+        self._finalize_completed_runs(thread_id=thread.thread_id)
 
         message_created_at = utc_now()
         event_created_at = utc_now()

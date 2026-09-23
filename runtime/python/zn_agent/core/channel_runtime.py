@@ -212,14 +212,12 @@ class ResidentChannelSupervisor:
 
     def _run_channel(self, name: str, adapter: ChannelAdapter) -> None:
         backoff = self.min_backoff
+        pending_events: tuple[ChannelEvent, ...] = ()
         with self._lock:
             self._states[name].running = True
         try:
             while not self._stop.is_set():
                 started = time.monotonic()
-                checkpoint_before_poll: dict[str, Any] | None = None
-                polled = False
-                checkpoint_committed = False
                 try:
                     delivered_before = self._deliver_ready(name, adapter)
                     # stop() may arrive while an outbound provider send is
@@ -227,38 +225,25 @@ class ResidentChannelSupervisor:
                     # teardown has already revoked further channel work.
                     if self._stop.is_set():
                         break
-                    checkpoint_before_poll = self._adapter_checkpoint(adapter)
-                    polled = True
-                    events = adapter.poll(timeout=self.poll_timeout)
-                    # A stop can arrive while a long poll is blocked. Once the
-                    # poll returns, do not enqueue, checkpoint or deliver anything
-                    # else: resident teardown may already be closing durable state.
-                    if self._stop.is_set():
-                        break
+                    if not pending_events:
+                        pending_events = tuple(adapter.poll(timeout=self.poll_timeout))
+                        # A stop can arrive while a long poll is blocked. Once the
+                        # poll returns, do not enqueue, checkpoint or deliver anything
+                        # else: resident teardown may already be closing durable state.
+                        if self._stop.is_set():
+                            break
+                    events = pending_events
                     enqueued, duplicates = self._ingest_events(events)
-                    # Persist transport cursor only after every percept returned by
-                    # this poll has a durable Work route. A crash or ingestion
-                    # failure before here replays the update rather than advancing
-                    # the provider cursor past a message ZN never made durable.
+                    # Commit the provider cursor only after the complete polled
+                    # batch has durable Work routes. If ingestion or route insert
+                    # fails, retain this exact batch in memory and retry it
+                    # idempotently before polling again. A process crash still
+                    # restores the last durable checkpoint and provider replay.
                     self._save_adapter_checkpoint(name, adapter)
-                    checkpoint_committed = True
+                    pending_events = ()
                     delivered_after = self._deliver_ready(name, adapter)
                     delivered = delivered_before + delivered_after
                 except Exception as exc:
-                    if (
-                        polled
-                        and not checkpoint_committed
-                        and checkpoint_before_poll is not None
-                    ):
-                        try:
-                            self._restore_adapter_checkpoint_value(
-                                adapter, checkpoint_before_poll
-                            )
-                        except Exception:
-                            # Preserve the original ingestion/provider failure.
-                            # A later process restart still restores the last
-                            # durable checkpoint from ChannelDeliveryLedger.
-                            pass
                     with self._lock:
                         state = self._states[name]
                         state.total_failures += 1

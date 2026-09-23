@@ -186,7 +186,7 @@ class ResidentChannelSupervisorTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
-    def test_ingress_failure_restores_poll_cursor_and_replays_without_loss(self):
+    def test_ingress_failure_retries_same_polled_batch_without_loss(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident = _Resident(Path(tmp) / "kernel.db")
             try:
@@ -213,8 +213,8 @@ class ResidentChannelSupervisorTests(unittest.TestCase):
                 self.assertTrue(adapter.delivered.wait(1.0))
                 supervisor.stop()
 
-                self.assertGreaterEqual(adapter.polls, 2)
-                self.assertIn({"offset": 0}, adapter.restored)
+                self.assertGreaterEqual(adapter.polls, 1)
+                self.assertEqual(adapter.restored, [])
                 self.assertEqual(
                     supervisor.ledger.load_checkpoint("telegram"),
                     {"offset": 43},
@@ -274,7 +274,7 @@ class ResidentChannelSupervisorTests(unittest.TestCase):
                     1,
                 )
                 self.assertGreaterEqual(attempts, 2)
-                self.assertIn({"offset": 0}, adapter.restored)
+                self.assertEqual(adapter.restored, [])
                 self.assertEqual(len(adapter.sent), 1)
             finally:
                 resident.store.close()
