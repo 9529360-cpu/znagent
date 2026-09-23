@@ -11,9 +11,11 @@ A resource answers one bounded cognition request. It does not own ZN's
 identity, memory, tools, session, planning loop or final decision.
 """
 
+import logging
 import os
+from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping, Protocol
+from typing import Any, Callable, Iterator, Mapping, Protocol
 from urllib.parse import urlparse
 
 from .models import Goal, ModelRoute, WorkerResult
@@ -38,6 +40,30 @@ class CognitiveResource(Protocol):
 ClientBuilder = Callable[..., Any]
 ResourceBuilder = Callable[[ModelRoute], CognitiveResource]
 ResourceHealthObserver = Callable[[ModelRoute, BaseException | None], None]
+
+
+_LOG = logging.getLogger(__name__)
+
+
+@contextmanager
+def _owned_cognitive_client(client: Any) -> Iterator[Any]:
+    """Close the per-invocation SDK client without changing provider outcome.
+
+    The response is non-streaming and detached from its transport. Cleanup must
+    also run for transport failure or cancellation, but an ordinary close error
+    must not turn an already-returned answer into a retryable provider failure.
+    Builder-supplied lightweight clients may omit close; actual SDK clients own
+    their HTTP pool. Never log credential-bearing exception text from cleanup.
+    """
+    try:
+        yield client
+    finally:
+        close = getattr(client, "close", None)
+        if callable(close):
+            try:
+                close()
+            except Exception as exc:
+                _LOG.warning("Cognitive client cleanup failed (%s)", type(exc).__name__)
 
 
 # Defaults are intentionally only wire endpoints/credential names. Product
@@ -234,6 +260,8 @@ class OpenAICompatibleCognitiveResource:
         kwargs: dict[str, Any] = {
             "api_key": self.route.metadata["api_key"],
             "base_url": self.route.metadata["base_url"],
+            # Kernel owns explicit attempts and their durable accounting.
+            "max_retries": 0,
         }
         timeout = self.route.metadata.get("timeout")
         if timeout is not None:
@@ -261,7 +289,8 @@ class OpenAICompatibleCognitiveResource:
         if isinstance(self.route.metadata.get("extra_body"), dict):
             request["extra_body"] = dict(self.route.metadata["extra_body"])
 
-        response = self._client().chat.completions.create(**request)
+        with _owned_cognitive_client(self._client()) as client:
+            response = client.chat.completions.create(**request)
         choices = getattr(response, "choices", None) or []
         if not choices:
             raise RuntimeError("cognitive resource returned no choices")
