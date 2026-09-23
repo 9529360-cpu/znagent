@@ -18,6 +18,20 @@ export function hasZnUnfinishedWork(thread: ZnThread | null, progress: ZnWorkPro
   return !current?.terminal && !current?.finalized && current?.stage !== 'inspection_complete'
 }
 
+/** Retire a progress card when a newer Resident snapshot retires its event. */
+export function shouldDiscardZnWorkProgress(
+  thread: ZnThread | null,
+  progress: ZnWorkProgress | null,
+  submissionBusy: boolean
+): boolean {
+  if (
+    submissionBusy || !thread || !progress || progress.threadId !== thread.id ||
+    progress.stage === 'inspection_complete'
+  ) return false
+  const run = thread.activeRun
+  return !run || run.threadId !== thread.id || run.eventId !== progress.eventId
+}
+
 /** Follow one Resident-owned event. This observer has no submission/replay path. */
 export function observeZnWorkProgress(
   run: ZnActiveWorkRun,

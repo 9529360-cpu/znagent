@@ -106,6 +106,7 @@ type ProgressResult = { progress: Progress; thread?: Thread }
 type ReconnectionModules = {
   normalizeZnActiveWorkRun: (value: unknown, threadId: string) => ActiveRun | undefined
   hasZnUnfinishedWork: (thread: Thread | null, progress: Progress | null) => boolean
+  shouldDiscardZnWorkProgress: (thread: Thread | null, progress: Progress | null, submissionBusy: boolean) => boolean
   observeZnWorkProgress: (
     run: ActiveRun,
     read: (threadId: string, eventId: string) => Promise<ProgressResult>,
@@ -180,6 +181,21 @@ test('reconnected Work locks duplicate submission until exact-event inspection o
   assert.equal(hasZnUnfinishedWork(thread, progressResult({ stage: 'inspection_complete' }).progress), false)
   assert.equal(hasZnUnfinishedWork(thread, progressResult({ finalized: true }).progress), false)
   assert.equal(hasZnUnfinishedWork({ ...thread, activeRun: undefined }, null), false)
+})
+
+test('authoritative completion or replacement retires a stale card without disrupting submission or inspection', async () => {
+  const { shouldDiscardZnWorkProgress } = await loadReconnectionModules()
+  const progress = progressResult().progress
+  const completed = { ...threadWithRun(), activeRun: undefined }
+  assert.equal(shouldDiscardZnWorkProgress(completed, progress, false), true)
+  assert.equal(shouldDiscardZnWorkProgress(threadWithRun(), progress, false), false)
+  assert.equal(shouldDiscardZnWorkProgress({ ...threadWithRun(), activeRun: { ...activeRun, eventId: 'next-event' } }, progress, false), true)
+  assert.equal(shouldDiscardZnWorkProgress(completed, progress, true), false)
+  assert.equal(shouldDiscardZnWorkProgress(completed, progressResult({ stage: 'inspection_complete' }).progress, false), false)
+  assert.equal(shouldDiscardZnWorkProgress({ ...completed, id: 'another-thread' }, progress, false), false)
+  assert.equal(progress.terminal, false)
+  assert.equal(progress.finalized, false)
+  assert.match(read('src/zn/use-work-reconnection.ts'), /if \(shouldDiscardZnWorkProgress\(thread, progress, submissionBusy\)\) onProgress\(null\)/)
 })
 
 test('read-only reconnect survives disconnect and delivers completion without resubmitting', async () => {

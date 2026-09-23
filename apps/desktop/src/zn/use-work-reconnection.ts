@@ -2,7 +2,7 @@ import type { TFunction } from 'i18next'
 import { useEffect } from 'react'
 import { loadZnWorkProgress, type ZnWorkProgress } from './resident-client'
 import type { ZnThread } from './state'
-import { hasZnUnfinishedWork, observeZnWorkProgress } from './work-reconnection'
+import { hasZnUnfinishedWork, observeZnWorkProgress, shouldDiscardZnWorkProgress } from './work-reconnection'
 
 type WorkReconnection = {
   thread: ZnThread | null
@@ -21,6 +21,12 @@ export function useZnWorkReconnection({
 }: WorkReconnection): boolean {
   const threadId = thread?.id
   const eventId = thread?.activeRun?.eventId
+  useEffect(() => {
+    // work_list can observe completion before an outstanding progress read.
+    // Its authoritative snapshot retires the old card; it does not complete Work.
+    if (shouldDiscardZnWorkProgress(thread, progress, submissionBusy)) onProgress(null)
+  }, [onProgress, progress, submissionBusy, thread])
+
   useEffect(() => {
     // The submit handler already follows its accepted event. There must not be
     // a second observer until it releases control (including on disconnect).
