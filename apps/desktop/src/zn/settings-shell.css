@@ -15,6 +15,8 @@
 }
 .zn-settings-layout {
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
   height: 100%;
   min-height: 0;
   display: grid;
@@ -47,14 +49,46 @@
 .zn-settings-nav button:hover,
 .zn-settings-nav button.active { color: #202126; background: #e9e9ed; }
 .zn-settings-nav-group { display: grid; gap: 3px; }
+.zn-settings-nav-group-spaced { margin-top: 24px; }
 .zn-settings-nav-label { padding: 0 10px 8px; color: #92949c; font-size: 10px; font-weight: 650; }
 .zn-settings-nav button svg { flex: 0 0 auto; color: #777a83; }
-.zn-settings-content { min-width: 0; overflow-y: auto; padding: 42px clamp(24px, 5vw, 72px) 56px; }
-.zn-settings-content > * { width: min(900px, 100%); margin-left: auto; margin-right: auto; }
-.zn-settings-content .zn-page-intro { margin-bottom: 28px; }
+.zn-settings-content { display: flex; flex-direction: column; align-items: flex-start; box-sizing: border-box; width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden; overflow-y: auto; padding: 42px clamp(24px, 2vw, 32px) 56px; }
+.zn-settings-content > * { box-sizing: border-box; width: min(600px, 100%) !important; max-width: 600px !important; min-width: 0; flex: 0 0 auto; }
+.zn-settings-content .zn-page-intro { margin-bottom: 28px; text-align: left; }
 .zn-settings-content .zn-page-intro h1 { font-size: 28px; }
-.zn-settings-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
-.zn-settings-grid .zn-card { scroll-margin-top: 20px; }
+.zn-settings-grid { width: 100%; max-width: 100%; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 14px; }
+.zn-settings-grid .zn-card { width: 100%; max-width: 100%; min-width: 0; scroll-margin-top: 20px; }
+.zn-settings-grid[data-active-section="language"] > #zn-settings-background,
+.zn-settings-grid[data-active-section="language"] > #zn-settings-models,
+.zn-settings-grid[data-active-section="language"] > #zn-settings-updates,
+.zn-settings-grid[data-active-section="models"] > #zn-settings-language,
+.zn-settings-grid[data-active-section="models"] > #zn-settings-background,
+.zn-settings-grid[data-active-section="models"] > #zn-settings-updates,
+.zn-settings-grid[data-active-section="background"] > #zn-settings-language,
+.zn-settings-grid[data-active-section="background"] > #zn-settings-models,
+.zn-settings-grid[data-active-section="background"] > #zn-settings-updates,
+.zn-settings-grid[data-active-section="updates"] > #zn-settings-language,
+.zn-settings-grid[data-active-section="updates"] > #zn-settings-models,
+.zn-settings-grid[data-active-section="updates"] > #zn-settings-background { display: none; }
+.zn-api-connection-state {
+  display: grid; grid-template-columns: 9px auto minmax(0, 1fr); align-items: center; gap: 8px;
+  margin: 18px 0 22px; padding: 13px 14px; color: #41434a;
+  border: 1px solid #e7e7eb; border-radius: 12px; background: #fafafa;
+  font-size: 12px; font-weight: 600;
+}
+.zn-api-status-dot { width: 8px; height: 8px; border-radius: 50%; background: #d39b39; }
+.zn-api-connection-state.ready .zn-api-status-dot { background: #2f9c69; }
+.zn-api-status-detail { min-width: 0; overflow: hidden; color: #777982; font-size: 11px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
+.zn-api-fields { min-width: 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; }
+.zn-api-field { min-width: 0; display: grid; gap: 7px; }
+.zn-api-field > span { color: #35363d; font-size: 12px; font-weight: 600; }
+.zn-api-field > small { color: #81838b; font-size: 10px; line-height: 1.45; }
+.zn-api-field-wide { grid-column: 1 / -1; }
+.zn-api-fields .zn-search { width: 100%; max-width: 100%; min-width: 0; margin: 0; }
+.zn-api-security-details { margin-top: 20px; color: #777982; font-size: 11px; }
+.zn-api-security-details summary { width: fit-content; cursor: pointer; }
+.zn-api-security-details p { margin: 8px 0 0; }
+.zn-api-security-details[open] { padding: 12px; border: 1px solid #ececef; border-radius: 10px; background: #fafafa; }
 .zn-settings-open .zn-topbar { padding-right: 152px; }
 .zn-connection-recovery { color: #624c20; border-color: #eee0ba; background: #fff9eb; }
 .zn-connection-recovery-copy span { color: #806e48; }
@@ -76,4 +110,8 @@
   .zn-settings-nav-label { display: none; }
   .zn-settings-nav button { width: auto; white-space: nowrap; }
   .zn-settings-content { padding: 22px 14px 32px; }
+  .zn-api-fields { grid-template-columns: minmax(0, 1fr); }
+  .zn-api-field-wide { grid-column: auto; }
+  .zn-api-connection-state { grid-template-columns: 9px auto; }
+  .zn-api-status-detail { grid-column: 2; white-space: normal; }
 }

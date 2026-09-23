@@ -673,7 +673,6 @@ export function ZnWorkbench() {
       const readiness = describeZnProviderReadiness(settings)
       const detail = providerReadinessDetail(settings, t)
       setProviderNotice(t(readiness.ready ? 'provider.notice.ready' : 'provider.notice.notReady', { detail }))
-      setResidentHealth('live')
     } catch (error) {
       setProviderNotice(error instanceof Error ? error.message : String(error))
     } finally {
@@ -758,7 +757,7 @@ export function ZnWorkbench() {
   const focusSettingsSection = useCallback((section: SettingsSection) => {
     setSettingsSection(section)
     window.requestAnimationFrame(() => {
-      document.getElementById(`zn-settings-${section}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      document.querySelector('.zn-settings-content')?.scrollTo({ top: 0, behavior: 'smooth' })
     })
   }, [])
 
@@ -979,9 +978,12 @@ export function ZnWorkbench() {
                   <span>{t('workstation.returnToConversation')}</span>
                 </button>
                 <div className="zn-settings-nav-group">
-                  <div className="zn-settings-nav-label">ZN</div>
+                  <div className="zn-settings-nav-label">{t('settings.nav.personal')}</div>
                   <button className={settingsSection === 'language' ? 'active' : ''} type="button" aria-current={settingsSection === 'language' ? 'page' : undefined} onClick={() => focusSettingsSection('language')}><Desktop size={17} /><span>{t('settings.language.title')}</span></button>
                   <button className={settingsSection === 'models' ? 'active' : ''} type="button" aria-current={settingsSection === 'models' ? 'page' : undefined} onClick={() => focusSettingsSection('models')}><Brain size={17} /><span>{t('settings.models.title')}</span></button>
+                </div>
+                <div className="zn-settings-nav-group zn-settings-nav-group-spaced">
+                  <div className="zn-settings-nav-label">{t('settings.nav.app')}</div>
                   <button className={settingsSection === 'background' ? 'active' : ''} type="button" aria-current={settingsSection === 'background' ? 'page' : undefined} onClick={() => focusSettingsSection('background')}><Pulse size={17} /><span>{t('settings.background.title')}</span></button>
                   <button className={settingsSection === 'updates' ? 'active' : ''} type="button" aria-current={settingsSection === 'updates' ? 'page' : undefined} onClick={() => focusSettingsSection('updates')}><CheckCircle size={17} /><span>{t('settings.updates.title')}</span></button>
                 </div>
@@ -989,13 +991,11 @@ export function ZnWorkbench() {
               <div className="zn-settings-content">
             <div className="zn-page-intro">
               <span className="zn-eyebrow">{t('settings.eyebrow')}</span>
-              <h1>{t('settings.title')}</h1>
-              <p>{t('settings.description')}</p>
+              <h1>{t(settingsSection === 'language' ? 'settings.language.title' : settingsSection === 'models' ? 'settings.models.title' : settingsSection === 'background' ? 'settings.background.title' : 'settings.updates.title')}</h1>
+              <p>{t(settingsSection === 'language' ? 'settings.language.description' : settingsSection === 'models' ? 'settings.models.description' : settingsSection === 'background' ? 'settings.background.description' : 'settings.updates.description')}</p>
             </div>
-            <div className="zn-settings-grid">
+            <div className="zn-settings-grid" data-active-section={settingsSection}>
               <section className="zn-card" id="zn-settings-language">
-                <h2>{t('settings.language.title')}</h2>
-                <p className="zn-muted">{t('settings.language.description')}</p>
                 <label className="zn-setting-field">
                   <span className="zn-context-title">{t('settings.language.label')}</span>
                   <select
@@ -1018,8 +1018,6 @@ export function ZnWorkbench() {
               </section>
 
               <section className="zn-card" id="zn-settings-background">
-                <h2>{t('settings.background.title')}</h2>
-                <p className="zn-muted">{t('settings.background.description')}</p>
                 <button type="button" onClick={() => void refreshResident()}>{t('settings.background.refresh')}</button>
                 {residentError ? <div className="zn-error-text">{residentError}</div> : null}
                 <details>
@@ -1029,8 +1027,6 @@ export function ZnWorkbench() {
               </section>
 
               <section className="zn-card" id="zn-settings-models">
-                <h2>{t('settings.models.title')}</h2>
-                <p className="zn-muted">{t('settings.models.description')}</p>
                 {providerSettings && !providerSettings.editable ? (
                   <>
                     <div className="zn-setting-state">
@@ -1045,21 +1041,43 @@ export function ZnWorkbench() {
                   </>
                 ) : (
                   <form onSubmit={saveProvider}>
-                    <div className="zn-context-title">{t('settings.models.provider')}</div>
-                    <input className="zn-search" aria-label={t('settings.models.providerAria')} value={providerName} disabled={providerBusy} onChange={event => setProviderName(event.target.value)} placeholder="openai, anthropic, gemini, ollama..." />
-                    <div className="zn-context-title zn-context-title-spaced">{t('settings.models.model')}</div>
-                    <input className="zn-search" aria-label={t('settings.models.modelAria')} value={providerModel} disabled={providerBusy} onChange={event => setProviderModel(event.target.value)} placeholder={t('settings.models.modelPlaceholder')} />
-                    <div className="zn-context-title zn-context-title-spaced">{t('settings.models.baseUrl')}</div>
-                    <input className="zn-search" aria-label={t('settings.models.baseUrlAria')} value={providerBaseUrl} disabled={providerBusy} onChange={event => setProviderBaseUrl(event.target.value)} placeholder={t('settings.models.baseUrlPlaceholder')} />
-                    <div className="zn-context-title zn-context-title-spaced">{t('settings.models.credential')}</div>
-                    <input className="zn-search" aria-label={t('settings.models.credentialAria')} type="password" autoComplete="new-password" value={providerApiKey} disabled={providerBusy} onChange={event => setProviderApiKey(event.target.value)} placeholder={providerSettings?.credential.configured ? t('settings.models.keepCredential') : t('settings.models.optionalCredential')} />
-                    <p className="zn-muted zn-small">{credentialLabel(providerSettings, t)}</p>
-                    {providerSettings ? <p className="zn-muted zn-small">{t('settings.models.secureStore', {
-                      status: providerSettings.credential.secureStore.available ? t('common.available') : t('common.unavailable'),
-                      backend: providerSettings.credential.secureStore.backend
-                    })}</p> : null}
-                    {providerSettings?.configurationError ? <div className="zn-error-text">{providerSettings.configurationError}</div> : null}
-                    {providerNotice ? <div className="zn-setting-state">{providerNotice}</div> : null}
+                    <div className={'zn-api-connection-state ' + (providerReadiness.ready ? 'ready' : 'needs-setup')} role="status" aria-live="polite">
+                      <span className="zn-api-status-dot" />
+                      <span>{t(providerReadiness.ready ? 'settings.models.connectionReady' : 'settings.models.connectionNeedsSetup')}</span>
+                      <span className="zn-api-status-detail">{localizedProviderReadinessDetail}</span>
+                    </div>
+                    <div className="zn-api-fields">
+                      <label className="zn-api-field">
+                        <span>{t('settings.models.provider')}</span>
+                        <input className="zn-search" aria-label={t('settings.models.providerAria')} value={providerName} disabled={providerBusy} onChange={event => setProviderName(event.target.value)} placeholder="openai, anthropic, gemini, ollama..." />
+                        <small>{t('settings.models.providerHelp')}</small>
+                      </label>
+                      <label className="zn-api-field">
+                        <span>{t('settings.models.model')}</span>
+                        <input className="zn-search" aria-label={t('settings.models.modelAria')} value={providerModel} disabled={providerBusy} onChange={event => setProviderModel(event.target.value)} placeholder={t('settings.models.modelPlaceholder')} />
+                        <small>{t('settings.models.modelHelp')}</small>
+                      </label>
+                      <label className="zn-api-field zn-api-field-wide">
+                        <span>{t('settings.models.baseUrl')}</span>
+                        <input className="zn-search" aria-label={t('settings.models.baseUrlAria')} type="url" autoComplete="url" value={providerBaseUrl} disabled={providerBusy} onChange={event => setProviderBaseUrl(event.target.value)} placeholder={t('settings.models.baseUrlPlaceholder')} />
+                        <small>{t('settings.models.baseUrlHelp')}</small>
+                      </label>
+                      <label className="zn-api-field zn-api-field-wide">
+                        <span>{t('settings.models.credential')}</span>
+                        <input className="zn-search" aria-label={t('settings.models.credentialAria')} type="password" autoComplete="new-password" value={providerApiKey} disabled={providerBusy} onChange={event => setProviderApiKey(event.target.value)} placeholder={providerSettings?.credential.configured ? t('settings.models.keepCredential') : t('settings.models.optionalCredential')} />
+                        <small>{t(providerSettings?.credential.configured ? 'settings.models.credentialSaved' : 'settings.models.credentialHelp')}</small>
+                      </label>
+                    </div>
+                    <details className="zn-api-security-details">
+                      <summary>{t('settings.models.securityDetails')}</summary>
+                      <p>{credentialLabel(providerSettings, t)}</p>
+                      {providerSettings ? <p>{t('settings.models.secureStore', {
+                        status: providerSettings.credential.secureStore.available ? t('common.available') : t('common.unavailable'),
+                        backend: providerSettings.credential.secureStore.backend
+                      })}</p> : null}
+                    </details>
+                    {providerSettings?.configurationError ? <div className="zn-error-text" role="alert">{providerSettings.configurationError}</div> : null}
+                    {providerNotice ? <div className="zn-setting-state" role="status" aria-live="polite">{providerNotice}</div> : null}
                     <div className="zn-inline-actions zn-settings-actions">
                       <button className="zn-primary" type="submit" disabled={providerBusy || !providerName.trim() || !providerModel.trim()}>{providerBusy ? t('common.applying') : t('settings.models.save')}</button>
                       {showClearCredential ? <button type="button" disabled={providerBusy} onClick={() => void clearProviderCredential()}>{t('settings.models.clearCredential')}</button> : null}
@@ -1070,8 +1088,6 @@ export function ZnWorkbench() {
               </section>
 
               <section className="zn-card" id="zn-settings-updates">
-                <h2>{t('settings.updates.title')}</h2>
-                <p className="zn-muted">{t('settings.updates.description')}</p>
                 <div className="zn-inline-actions">
                   <button type="button" disabled={updateBusy} onClick={() => void checkUpdates()}>{updateBusy ? t('common.checking') : t('settings.updates.check')}</button>
                   {updateStatus?.updateAvailable ? <button className="zn-primary" type="button" disabled={updateBusy} onClick={() => void applyUpdate()}>{t('settings.updates.apply', { version: updateStatus.availableVersion || t('settings.updates.updateFallback') })}</button> : null}
