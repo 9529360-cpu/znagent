@@ -11,6 +11,8 @@ from pathlib import Path
 _RETIRED_FRAGMENT = bytes.fromhex("653265").decode("ascii")
 _NUMBERED_STORY = re.compile(rf"{_RETIRED_FRAGMENT}[-_]?\d+", re.IGNORECASE)
 _ACTIVE_TEXT_SUFFIXES = {".md", ".py", ".ps1", ".js", ".mjs", ".ts", ".tsx", ".yml", ".yaml"}
+_ACTION_USE = re.compile(r"^\s*uses:\s*([^\s#]+)", re.MULTILINE)
+_IMMUTABLE_ACTION_REF = re.compile(r"^[^@\s]+@[0-9a-f]{40}$")
 
 
 _PATH_SCOPES = (".github/workflows", "runtime/python/zn_agent/core", "tests/zn_agent", "docs")
@@ -74,6 +76,27 @@ class CiContractSurfacePolicyTests(unittest.TestCase):
             offenders,
             [],
             "retired scenario terminology remains in active sources:\n" + "\n".join(offenders),
+        )
+
+    def test_external_github_actions_are_pinned_to_full_commit_sha(self) -> None:
+        root = self._root()
+        workflows = root / ".github" / "workflows"
+        offenders: list[str] = []
+        for path in sorted((*workflows.glob("*.yml"), *workflows.glob("*.yaml"))):
+            text = path.read_text(encoding="utf-8")
+            for match in _ACTION_USE.finditer(text):
+                reference = match.group(1)
+                if reference.startswith("./"):
+                    continue
+                if not _IMMUTABLE_ACTION_REF.fullmatch(reference):
+                    offenders.append(
+                        f"{path.relative_to(root).as_posix()}: {reference}"
+                    )
+        self.assertEqual(
+            offenders,
+            [],
+            "external GitHub Actions must use full commit SHAs:\n"
+            + "\n".join(offenders),
         )
 
     def test_required_automatic_gates_are_contract_named(self) -> None:

@@ -80,7 +80,7 @@ jobs:
           Write-Host "runner.name=$env:RUNNER_NAME"
           Write-Host "runner.session_id=$sessionId"
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Require standard-user interactive runner context
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: |

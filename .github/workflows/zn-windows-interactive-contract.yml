@@ -154,7 +154,7 @@ jobs:
             throw "ZN interactive desktop Contract requires Windows X64; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Prove interactive desktop readiness
         shell: powershell
         run: |
@@ -163,7 +163,7 @@ jobs:
             exit $LASTEXITCODE
           }
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: '0.11.6'
           enable-cache: false
