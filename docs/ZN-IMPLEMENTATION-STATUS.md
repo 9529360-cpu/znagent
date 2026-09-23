@@ -22,9 +22,9 @@ External model or tool success is evidence only.
 | Durable Work / Root completion | CONNECTED | Root status is ZN-owned; child/tool success cannot independently complete the Root |
 | Side-effect journaling / no-blind-replay | CONNECTED | replay-sensitive effects preserve durable dispatch identity and fail closed when outcome is uncertain |
 | Work recovery / continuation | CONNECTED + VERIFIED NARROW | durable plan/progress/recovery are reusable; broader long-horizon UX remains open |
-| Managed Browser | CONNECTED | current generic adapter remains Playwright-based; mature provider substrate is intentionally not integrated yet |
+| Managed Browser | CONNECTED + CAPABILITY-ROUTED | pinned Chrome DevTools MCP is preferred for supported semantic sessions; Playwright remains the fallback for capabilities with stricter provider-specific contracts |
 | USER Browser bridge | CONNECTED + VERIFIED NARROW | explicit current-tab authorization/generation ownership; no silent attachment to arbitrary user tabs |
-| Browser semantic grounding | CONNECTED + VERIFIED NARROW | fresh target observation, exact target binding and post-action verification; arbitrary web complexity remains open |
+| Browser semantic grounding | CONNECTED + VERIFIED NARROW | fresh exact checkbox/textbox/button/combobox grounding, pre-dispatch revalidation and post-action verification; arbitrary web complexity remains open |
 | Windows application awareness | CONNECTED | installed-app/process/window identity and bounded activation use fresh machine evidence |
 | Windows interactive actions | CONNECTED + VERIFIED NARROW | pointer/keyboard/UIA movements remain Body-owned and authority-gated |
 | Atomic file overwrite | CONNECTED + VERIFIED | staged write, identity checks, durable attempt tracking and recovery contracts |
@@ -61,11 +61,10 @@ The repository policy test prevents retired scenario namespaces and numbered sto
 
 ## Current major gaps
 
-1. Mature managed-Browser provider substrate is not yet integrated.
-2. Managed Browser capability breadth is still limited by the current Playwright implementation.
-3. USER Browser support remains intentionally explicit and bounded.
-4. Windows/application automation is not general RPA.
-5. Document/spreadsheet capabilities are not complete Office automation.
-6. Long-horizon autonomous Work, broader delegation and learning remain partial.
+1. Managed Browser capability breadth is still partial even with capability-routed Chrome DevTools MCP and Playwright providers.
+2. USER Browser support remains intentionally explicit and bounded.
+3. Windows/application automation is not general RPA.
+4. Document/spreadsheet capabilities are not complete Office automation.
+5. Long-horizon autonomous Work, broader delegation and learning remain partial.
 
 The next Browser phase starts only after the cleanup line is merged and the latest `main` is reread.
