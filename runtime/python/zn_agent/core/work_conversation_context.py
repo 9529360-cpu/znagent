@@ -12,8 +12,7 @@ from contextlib import closing
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from .cognition import CognitionRequest
-    from .models import AgentEvent
+    from .models import AgentEvent, CognitionRequest
     from .work import ResidentWorkLedger
 
 
@@ -46,7 +45,7 @@ def build_work_conversation_context(
     Existing ``allow_memory=False`` also opts out of conversation context.
     """
     payload = event.payload if isinstance(event.payload, dict) else {}
-    if payload.get("allow_memory") is False:
+    if payload.get("allow_memory", True) is not True:
         return None
     # Explicitly isolated cognition questions must not acquire extra private
     # context merely because their source event also belongs to a Work thread.
