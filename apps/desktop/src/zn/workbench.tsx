@@ -605,7 +605,7 @@ export function ZnWorkbench() {
         let current = started.progress
         let finalThread = started.progress.finalized ? started.thread : undefined
         while (!current.terminal && current.stage !== 'inspection_complete') {
-          await sleep(700)
+          await sleep(current.assistantResponse ? 260 : 650)
           const update = await loadZnWorkProgress(progressThreadId, current.eventId)
           current = update.progress
           setWorkProgress(current)
@@ -1170,7 +1170,7 @@ export function ZnWorkbench() {
                             <span>{t('message.modelCalls', { count: executionEvidence.modelInvocations })}</span>
                           </div>
                         ) : null}
-                        {message.detail ? (
+                        {message.detail && Object.keys(message.detail).length > 0 ? (
                           executionEvidence ? (
                             <details className="zn-activity-technical">
                               <summary>{t('message.technical')}</summary>
@@ -1181,6 +1181,12 @@ export function ZnWorkbench() {
                       </article>
                     )
                   })}
+                  {showActiveWork && workProgress?.assistantResponse ? (
+                    <article className="zn-message zn zn-message-streaming" aria-live="polite">
+                      <div className="zn-message-label">ZN</div>
+                      <div className="zn-message-body">{workProgress.assistantResponse}<span className="zn-stream-caret" aria-hidden="true" /></div>
+                    </article>
+                  ) : null}
                 </div>
               ) : null}
 
