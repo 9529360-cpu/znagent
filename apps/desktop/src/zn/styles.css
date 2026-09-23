@@ -593,6 +593,47 @@ button, input, textarea { -webkit-tap-highlight-color: transparent; }
 .zn-context-section p { margin: 0; }
 .zn-error-text { margin-top: 9px; color: #f09aa2; font-size: 11px; line-height: 1.45; }
 
+.zn-connection-recovery {
+  width: min(780px, 100%);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 auto 20px;
+  padding: 14px 16px;
+  border: 1px solid rgba(245, 178, 109, .25);
+  border-radius: 14px;
+  background: rgba(94, 62, 31, .2);
+  color: #ead5b5;
+}
+.zn-connection-recovery-copy { display: grid; gap: 4px; min-width: 0; }
+.zn-connection-recovery-copy strong { font-size: 12px; font-weight: 680; }
+.zn-connection-recovery-copy span { color: #b8a88f; font-size: 11px; line-height: 1.45; }
+.zn-connection-recovery > button {
+  flex: 0 0 auto;
+  border: 1px solid rgba(245, 198, 140, .28);
+  border-radius: 9px;
+  padding: 8px 11px;
+  color: #f1d5a8;
+  background: rgba(137, 91, 42, .2);
+  font-size: 11px;
+}
+.zn-connection-recovery > button:hover { background: rgba(137, 91, 42, .36); }
+.zn-topbar-actions .zn-workstation-return {
+  display: inline-flex !important;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  width: auto;
+  padding: 0 9px;
+  color: #c7d5ef !important;
+  background: rgba(51, 76, 118, .24) !important;
+  border-color: rgba(157, 188, 240, .16) !important;
+  font-size: 10px;
+  white-space: nowrap;
+}
+.zn-topbar-actions .zn-workstation-return:hover { background: rgba(65, 93, 143, .4) !important; }
+
 .zn-artifact-section { gap: 10px; }
 .zn-artifact-list { display: grid; gap: 5px; max-height: 166px; overflow: auto; flex: 0 0 auto; }
 .zn-artifact-link {
@@ -1680,16 +1721,41 @@ body {
   .zn-spin { animation: none; }
 }
 
-/* Native Slides workstation: one PresentationSpec drives rail and preview. */
-.zn-app.slides-open,
-.zn-app.slides-open.context-closed {
+/* Keep the conversation mounted while document and slide work opens beside it. */
+.zn-work-content {
+  min-width: 0;
+  min-height: 0;
+  display: grid;
   grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
 }
 
-.zn-app.slides-open .zn-sidebar {
-  display: none;
+.zn-main-column.has-workbench-preview .zn-work-content {
+  grid-template-columns: minmax(320px, 1fr) minmax(390px, 44%);
 }
 
+.zn-workbench-preview {
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--zn-v2-line);
+  background: #0c1422;
+}
+
+.zn-workbench-preview > .zn-document-workstation,
+.zn-workbench-preview > .zn-slides-workstation {
+  width: 100%;
+  height: 100%;
+  grid-template-columns: minmax(112px, 28%) minmax(0, 1fr);
+}
+
+@media (max-width: 1080px) and (min-width: 721px) {
+  .zn-main-column.has-workbench-preview .zn-work-content {
+    grid-template-columns: minmax(280px, 1fr) minmax(330px, 44%);
+  }
+}
+
+/* Native Slides workstation: one PresentationSpec drives rail and preview. */
 .zn-slides-workstation {
   min-width: 0;
   min-height: 0;
@@ -2034,15 +2100,6 @@ body {
 }
 
 /* Native Document workstation: one DocumentSpec drives outline and paper preview. */
-.zn-app.document-open,
-.zn-app.document-open.context-closed {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.zn-app.document-open .zn-sidebar {
-  display: none;
-}
-
 .zn-document-workstation {
   min-width: 0;
   min-height: 0;
@@ -2277,3 +2334,200 @@ body {
     padding: 46px 42px 64px;
   }
 }
+
+@media (max-width: 720px) {
+  .zn-main-column.has-workbench-preview .zn-work-content {
+    position: relative;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .zn-main-column.has-workbench-preview .zn-workbench-preview {
+    position: absolute;
+    z-index: 4;
+    inset: 0;
+    border-left: 0;
+  }
+
+  .zn-workbench-preview > .zn-document-workstation,
+  .zn-workbench-preview > .zn-slides-workstation {
+    grid-template-columns: minmax(86px, 25%) minmax(0, 1fr);
+  }
+}
+
+/* Selected light workbench direction: neutral surfaces keep long work readable. */
+body::before,
+body::after { display: none; }
+
+.zn-app {
+  color: #262831;
+  background: #fff;
+}
+
+.zn-sidebar {
+  background: #f3f4f6;
+  border-color: #e4e5e8;
+}
+
+.zn-sidebar .zn-brand,
+.zn-sidebar .zn-thread-link,
+.zn-sidebar .zn-workspace-card,
+.zn-sidebar .zn-sidebar-footer button { color: #383a42 !important; }
+
+.zn-sidebar .zn-muted,
+.zn-sidebar .zn-section-label,
+.zn-sidebar .zn-thread-time { color: #858790 !important; }
+
+.zn-sidebar .zn-thread-link.active,
+.zn-sidebar .zn-thread-link:hover { color: #282a31 !important; background: #e6e7eb !important; }
+
+.zn-main-column {
+  background: #fff;
+  border-color: #e7e8ec;
+}
+
+.zn-main-column::before { display: none; }
+
+.zn-topbar {
+  color: #272932;
+  background: #fff;
+  border-color: #e8e9ed;
+  box-shadow: none;
+}
+
+.zn-topbar-title,
+.zn-topbar-brand .zn-brand { color: #292b33; }
+
+.zn-thread-surface { background: #fff; }
+
+.zn-message-body,
+.zn-message.user .zn-message-body { color: #343640; }
+
+.zn-message.user {
+  background: #f0eafe;
+  border-color: #ebe4fb;
+}
+
+.zn-home h1,
+.zn-home-card strong { color: #292b33; }
+
+.zn-home p,
+.zn-home-card > span:last-child { color: #737680; }
+
+.zn-home-quick-starts button,
+.zn-home-card {
+  color: #41434b;
+  background: #fff;
+  border-color: #e6e7eb;
+  box-shadow: 0 2px 10px rgba(20, 25, 40, .035);
+}
+
+.zn-composer-wrap {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0), #fff 24%);
+}
+
+.zn-composer {
+  color: #353740;
+  background: #fff;
+  border-color: #e5e6ea;
+  box-shadow: 0 8px 28px rgba(22, 27, 42, .07);
+}
+
+.zn-composer-caption { color: #777b85; }
+.zn-composer textarea { color: #30323a; }
+.zn-composer textarea::placeholder { color: #a3a5ad; }
+
+.zn-workbench-preview {
+  background: #f8f9fb;
+  border-color: #e4e5e9;
+}
+
+.zn-context-panel {
+  color: #343640;
+  background: #fafbfc;
+  border-color: #e5e6ea;
+}
+
+.zn-context-section { background: #fff; border-color: #e8e9ed; }
+.zn-context-header strong,
+.zn-context-value,
+.zn-artifact-preview-head strong { color: #33353d; }
+.zn-context-title,
+.zn-context-path,
+.zn-artifact-preview-head span { color: #7d8089; }
+
+
+/* The expanded desktop keeps conversation and task context visible like the selected Codex reference. */
+.zn-app.details-open {
+  grid-template-columns: minmax(220px, 252px) minmax(0, 1fr) minmax(320px, 370px);
+}
+
+.zn-app.details-open .zn-sidebar {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.zn-app.details-open .zn-main-column {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+.zn-app.details-open .zn-details-backdrop {
+  display: none;
+}
+
+.zn-app.details-open .zn-context-panel {
+  position: relative;
+  inset: auto;
+  grid-column: 3;
+  grid-row: 1;
+  width: auto;
+  height: 100vh;
+  border-left: 1px solid #e5e7eb;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.zn-app.details-open .zn-context-header {
+  background: #fff;
+  border-color: #e8e9ed;
+}
+
+.zn-app.details-open .zn-context-section-head button,
+.zn-app.details-open .zn-context-actions button {
+  color: #555965;
+  border-color: #e2e4e8;
+  background: #fff;
+}
+
+@media (min-width: 721px) and (max-width: 1080px) {
+  .zn-app.details-open {
+    grid-template-columns: minmax(196px, 220px) minmax(0, 1fr) minmax(300px, 330px);
+  }
+}
+
+@media (min-width: 721px) and (max-width: 900px) {
+  .zn-app.details-open .zn-context-panel {
+    position: fixed;
+    inset: 62px 0 0 auto;
+    z-index: 21;
+    width: min(360px, calc(100vw - 196px));
+    box-shadow: -16px 0 40px rgba(20, 24, 35, .14);
+  }
+
+  .zn-app.details-open .zn-details-backdrop {
+    display: block;
+    position: fixed;
+    inset: 62px 0 0;
+    z-index: 20;
+    background: transparent;
+    backdrop-filter: none;
+  }
+}
+
+
+.zn-app.details-open .zn-context-header strong { font-size: 14px; }
+.zn-app.details-open .zn-context-title { color: #6f737d; font-size: 10px; }
+.zn-app.details-open .zn-context-value { color: #434650; font-size: 12px; line-height: 1.45; }
+.zn-app.details-open .zn-context-path,
+.zn-app.details-open .zn-context-section p { color: #6b707a; font-size: 11px; line-height: 1.5; }
