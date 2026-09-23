@@ -18,7 +18,7 @@ import {
   type ZnReleaseNotes,
   type ZnReleaseTarget
 } from './zn-release-channel'
-import { verifyZnWindowsUpdateAuthenticode } from './zn-windows-update-trust'
+import { verifyZnReleaseChannelSignature } from './zn-release-signature'
 
 const execFileAsync = promisify(execFile)
 const USER_AGENT = 'ZN-Desktop-Updater/2'
@@ -171,7 +171,13 @@ async function readJson(url: string): Promise<unknown> {
   const response = await request(url)
   const chunks: Buffer[] = []
   for await (const chunk of response) chunks.push(Buffer.from(chunk))
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+  const document = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+  verifyZnReleaseChannelSignature(
+    document,
+    String(process.env.ZN_UPDATE_SIGNING_PUBLIC_KEYS || ''),
+    { required: app.isPackaged }
+  )
+  return document
 }
 
 async function resolvePlan(): Promise<UpdatePlan | { status: ZnReleaseUpdateStatus }> {
@@ -509,15 +515,8 @@ export async function applyZnReleaseUpdate(): Promise<ZnReleaseApplyResult> {
 
     const installer = await ensurePrepared(resolved, true)
     let handoff: (() => Promise<void>) | null = null
-    if (process.platform === 'win32') {
-      handoff = async () => {
-        await verifyZnWindowsUpdateAuthenticode(
-          installer,
-          String(process.env.ZN_WINDOWS_SIGNING_PUBLISHERS || '')
-        )
-        await handoffWindows(installer)
-      }
-    } else if (process.platform === 'darwin') handoff = () => handoffMac(installer)
+    if (process.platform === 'win32') handoff = () => handoffWindows(installer)
+    else if (process.platform === 'darwin') handoff = () => handoffMac(installer)
     else if (process.platform === 'linux') handoff = () => handoffLinux(installer)
     else return { ok: false, error: 'unsupported-platform', message: process.platform }
 
