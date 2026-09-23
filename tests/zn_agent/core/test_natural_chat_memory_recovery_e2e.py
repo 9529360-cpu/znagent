@@ -70,6 +70,20 @@ class _CapturingWorkerFactory:
         return _CapturingWorker(self.capture, route)
 
 
+class _FailingWorker:
+    def run(self, goal, kernel_context: str) -> WorkerResult:
+        return WorkerResult(
+            success=False,
+            error="TimeoutError: synthetic provider timeout with private diagnostic",
+            metrics={"model_invoked": True},
+        )
+
+
+class _FailingWorkerFactory:
+    def create(self, route):
+        return _FailingWorker()
+
+
 class _TelegramAdapter:
     name = "telegram"
 
@@ -389,6 +403,80 @@ class NaturalChatMemoryRecoveryE2ETests(unittest.TestCase):
             self.assertEqual(
                 sum(item["role"] == "zn" for item in final_view["messages"]),
                 3,
+            )
+            resident.store.close()
+
+    def test_configured_provider_failure_is_not_published_as_success(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            credentials = _MemoryCredentialStore()
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+                credential_store=credentials,
+            )
+            settings = ProviderSettingsService(
+                resident,
+                config_path=root / "config.yaml",
+                credential_store=credentials,
+                environ={},
+            )
+            snapshot = settings.update(
+                {
+                    "provider": "openai",
+                    "model": "gpt-e2e-failing",
+                    "api_key": "synthetic-e2e-failure-key",
+                }
+            )
+            self.assertTrue(snapshot["cognition_available"])
+            resident.kernel.reconfigure_resources(
+                routes=list(resident.kernel.router.routes),
+                worker_factory=_FailingWorkerFactory(),
+                max_attempts=1,
+                resource_status={"available": True, "error": None},
+            )
+
+            telegram = _TelegramAdapter()
+            channels = ResidentChannelSupervisor(
+                resident,
+                [telegram],
+                reply_failures=True,
+            )
+            event = self._event(
+                update_id=151,
+                message_id="tg-151",
+                text="请解释这个需要模型完成的问题。",
+                chat_id="telegram-provider-failure",
+            )
+            thread_id = channel_work_thread_id(
+                event.channel, event.conversation_id, event.thread_id
+            )
+            channels._ingest_events([event])
+            event_id = stable_external_event_id(
+                "channel", channels.ledger.source_key(event)
+            )
+            run = self._drive(resident, event_id)
+            self.assertFalse(run.success)
+            self.assertEqual(channels._deliver_ready("telegram", telegram), 1)
+            self.assertEqual(len(telegram.sent), 1)
+            self.assertIn(
+                "could not complete this request with the configured cognitive resource",
+                telegram.sent[0].text,
+            )
+            self.assertNotIn("private diagnostic", telegram.sent[0].text)
+
+            view = ResidentRpcServer(
+                resident=resident,
+                provider_settings=settings,
+            ).handle(
+                {"id": "failed", "method": "work_get", "params": {"thread_id": thread_id}}
+            )["result"]
+            self.assertIsNone(view["active_run"])
+            self.assertTrue(
+                any(
+                    item["role"] == "zn" and item["detail"].get("failed") is True
+                    for item in view["messages"]
+                )
             )
             resident.store.close()
 
