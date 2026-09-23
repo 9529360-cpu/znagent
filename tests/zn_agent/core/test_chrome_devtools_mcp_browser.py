@@ -130,6 +130,11 @@ class _FakeChromeMcpClient:
                         "multiple": False,
                         "selected_value": self.select_value,
                         "selected_text": self.select_label,
+                        "options_truncated": False,
+                        "options": [
+                            {"label": label, "value": value}
+                            for label, value in self.select_options.items()
+                        ],
                     }
                 else:
                     value = {
@@ -327,18 +332,19 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
 
     def test_select_value_mapping_refuses_ambiguous_visible_provider_label(self):
         browser = self._browser()
-        node = {
-            "children": [
-                {"role": "option", "name": "Duplicate", "value": "first"},
-                {"role": "option", "name": "Duplicate", "value": "second"},
-            ]
+        state = {
+            "options_truncated": False,
+            "options": [
+                {"label": "Duplicate", "value": "first"},
+                {"label": "Duplicate", "value": "second"},
+            ],
         }
         with self.assertRaisesRegex(
             Exception,
             "ambiguous visible option label",
         ):
             browser._select_option_choice(
-                node,
+                state,
                 mode="value",
                 requested="second",
             )
@@ -356,7 +362,7 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             "exactly one fresh native option",
         ):
             browser._select_option_choice(
-                node,
+                state,
                 mode="label",
                 requested="Duplicate",
             )
