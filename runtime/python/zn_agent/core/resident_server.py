@@ -293,6 +293,16 @@ class ResidentSocketService:
         self._server: _ResidentTcpServer | None = None
         self._visual_stop = threading.Event()
         self._visual_thread: threading.Thread | None = None
+        self.rpc.set_fatal_life_error_handler(self._shutdown_for_fatal_life_error)
+
+    def _shutdown_for_fatal_life_error(self, error: BaseException) -> None:
+        print(
+            f"[zn-resident] fatal life-loop failure: {type(error).__name__}: {error}",
+            file=sys.stderr,
+        )
+        server = self._server
+        if server is not None:
+            server.shutdown()
 
     def _health_aware_visual_capture(self, capture: VisualCaptureFn) -> VisualCaptureFn:
         """Observe actual capture attempts without polling persisted last_error.
@@ -360,6 +370,7 @@ class ResidentSocketService:
                 self.channels.start()
                 server.serve_forever(poll_interval=0.25)
         finally:
+            self.rpc.set_fatal_life_error_handler(None)
             self._server = None
             self._remove_owned_endpoint()
             self.channels.stop()

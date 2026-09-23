@@ -5,7 +5,7 @@ import sys
 import threading
 import time
 from dataclasses import asdict
-from typing import Any, TextIO
+from typing import Any, Callable, TextIO
 
 from .outcome_aware_work_control import OutcomeAwareRestoreWorkControl
 from .provider_bridge import build_resident_runtime_from_existing_stack
@@ -47,6 +47,7 @@ class ResidentRpcServer:
         self._life_stop = threading.Event()
         self._life_thread: threading.Thread | None = None
         self._world_thread: threading.Thread | None = None
+        self._fatal_life_error_handler: Callable[[BaseException], None] | None = None
 
     def serve_forever(self) -> int:
         self.service.acquire()
@@ -559,14 +560,31 @@ class ResidentRpcServer:
         self._life_thread = None
         self._world_thread = None
 
+    def set_fatal_life_error_handler(
+        self,
+        handler: Callable[[BaseException], None] | None,
+    ) -> None:
+        self._fatal_life_error_handler = handler
+
+    def _fail_life_closed(self, error: BaseException) -> None:
+        self._shutdown = True
+        self._life_stop.set()
+        handler = self._fatal_life_error_handler
+        if handler is not None:
+            handler(error)
+
     def _life_loop(self) -> None:
         next_lease_heartbeat = 0.0
         while not self._life_stop.wait(self.life_interval):
-            try:
-                now = time.monotonic()
-                if now >= next_lease_heartbeat:
+            now = time.monotonic()
+            if now >= next_lease_heartbeat:
+                try:
                     self.service.heartbeat()
-                    next_lease_heartbeat = now + self.service.heartbeat_interval
+                except Exception as exc:
+                    self._fail_life_closed(exc)
+                    return
+                next_lease_heartbeat = now + self.service.heartbeat_interval
+            try:
                 self.resident.live_once()
             except Exception:
                 continue
