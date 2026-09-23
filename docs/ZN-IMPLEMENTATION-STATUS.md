@@ -32,7 +32,7 @@ External model or tool success is evidence only.
 | Spreadsheet primitives | CONNECTED + PARTIAL | generic workbook operations remain; no task-specific browser-to-sheet product route owns the architecture |
 | Public research primitives | CONNECTED + PARTIAL | search/extract/evidence mechanisms remain; no dedicated representative-task completion path owns the product |
 | Delegated Work / routing | CONNECTED + PARTIAL | generic routing, progress, health and authority remain; fixed story phase orchestration was retired |
-| Memory / learned behavior | PARTIAL | bounded verified learning mechanisms remain; arbitrary workflow learning is not claimed |
+| Memory / learned behavior | PARTIAL | explicitly saved structured facts can enter bounded cognition context through exact saved-key/alias cues when `allow_memory` is enabled; automatic memory writing, semantic retrieval, and arbitrary workflow learning remain open |
 | Packaging / clean install | CONNECTED | packaged runtime and clean-install verification remain release boundaries |
 
 ## Recently retired scenario-owned surfaces
@@ -69,3 +69,4 @@ The repository policy test prevents retired scenario namespaces and numbered sto
 6. Long-horizon autonomous Work, broader delegation and learning remain partial.
 
 Browser expansion now proceeds from the cleaned capability-owned substrate rather than from retired representative-task stories.
+
