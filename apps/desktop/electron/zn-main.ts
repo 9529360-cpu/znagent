@@ -1,3 +1,4 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -58,6 +59,25 @@ let currentLocaleState: ZnDesktopLocaleState = {
   preferredSystemLanguages: []
 }
 const pendingDeepLinks: ZnDeepLink[] = []
+
+function isSourceDevelopmentInstance(): boolean {
+  return !app.isPackaged && process.env.ZN_DESKTOP_DEV === '1'
+}
+
+function configureSourceDevelopmentProfile(): void {
+  if (!isSourceDevelopmentInstance()) return
+  const userData = String(process.env.ZN_DESKTOP_USER_DATA || '').trim()
+  if (!userData) {
+    throw new Error('ZN_DESKTOP_USER_DATA is required for an isolated source-development desktop')
+  }
+  const resolved = path.resolve(userData)
+  const sessionData = path.join(resolved, 'session')
+  fs.mkdirSync(resolved, { recursive: true })
+  fs.mkdirSync(sessionData, { recursive: true })
+  app.setPath('userData', resolved)
+  app.setPath('sessionData', sessionData)
+  console.info(`[ZN] source-development profile isolated at ${resolved}`)
+}
 
 function isSafeExternalUrl(value: string): boolean {
   try {
@@ -428,6 +448,9 @@ function registerZnShellIpc(): void {
 }
 
 async function bootstrapZnDesktop(): Promise<void> {
+  configureSourceDevelopmentProfile()
+  const sourceDevelopment = isSourceDevelopmentInstance()
+
   if (!app.requestSingleInstanceLock()) {
     app.quit()
     return
@@ -462,7 +485,9 @@ async function bootstrapZnDesktop(): Promise<void> {
 
   await app.whenReady()
   refreshLocaleStateFromDisk()
-  if (!app.setAsDefaultProtocolClient('zn')) {
+  if (sourceDevelopment) {
+    console.info('[ZN] source-development instance skips zn:// OS protocol registration')
+  } else if (!app.setAsDefaultProtocolClient('zn')) {
     console.warn('[ZN] OS protocol registration for zn:// is unavailable in this build')
   }
   initializeWindowsResidentSurface()
