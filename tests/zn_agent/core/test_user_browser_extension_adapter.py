@@ -10,6 +10,7 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserTargetRegroundDisposition,
 )
 from zn_agent.core.user_browser_extension_adapter import AuthorizedExtensionUserBrowser
 from zn_agent.core.user_browser_extension_relay import (
@@ -110,6 +111,33 @@ class _UncertainMutationRelay:
         assert args["target_name"] == _TARGET
 
 
+class _RegroundRelay(_UncertainMutationRelay):
+    def __init__(self):
+        self.target_id = _TARGET_ID
+
+    def request_command(
+        self,
+        kind,
+        *,
+        args=None,
+        timeout_seconds=5.0,
+        expected_tab_id=None,
+        expected_attached_at=None,
+    ):
+        result = super().request_command(
+            kind,
+            args=args,
+            timeout_seconds=timeout_seconds,
+            expected_tab_id=expected_tab_id,
+            expected_attached_at=expected_attached_at,
+        )
+        if kind == "observe_named_textbox":
+            result = dict(result)
+            result["result"] = dict(result["result"])
+            result["result"]["target_id"] = self.target_id
+        return result
+
+
 class _LostResultMutationRelay(_UncertainMutationRelay):
     def request_command(
         self,
@@ -188,6 +216,42 @@ class AuthorizedExtensionUserBrowserTests(unittest.TestCase):
         )
         self.assertIn("refusing replay", str(evidence.error))
         browser.close_session(session.session_id)
+
+    def test_reground_uses_fresh_backend_node_identity(self) -> None:
+        relay = _RegroundRelay()
+        browser = AuthorizedExtensionUserBrowser(relay)
+        session, action, _authority = _prepared_action(browser)
+        assert action.target is not None
+        query = BrowserTargetQuery(
+            kind=BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
+            value=_TARGET,
+        )
+        try:
+            same = browser.reground_target(
+                session.session_id,
+                query,
+                action.target,
+                page_id=action.page_id,
+            )
+            self.assertIs(
+                same.disposition,
+                BrowserTargetRegroundDisposition.SAME_EXACT_TARGET,
+            )
+
+            relay.target_id = "backend:702"
+            rebound = browser.reground_target(
+                session.session_id,
+                query,
+                action.target,
+                page_id=action.page_id,
+            )
+            self.assertIs(
+                rebound.disposition,
+                BrowserTargetRegroundDisposition.REBOUND_TARGET,
+            )
+            self.assertFalse(rebound.exact_node_continuity)
+        finally:
+            browser.close_session(session.session_id)
 
     def test_lost_result_after_command_delivery_requires_fresh_resense_before_replay(self) -> None:
         browser = AuthorizedExtensionUserBrowser(_LostResultMutationRelay())
