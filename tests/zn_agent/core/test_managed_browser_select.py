@@ -500,7 +500,7 @@ class ManagedBrowserSelectOptionTests(unittest.TestCase):
             authority = BrowserActionAuthority.from_observation(action, observed, permission)
             effect = browser.act(action, authority)
             self.assertFalse(effect.success)
-            self.assertIn("postcondition was not observed", effect.error or "")
+            self.assertIn("selected a different native option", effect.error or "")
             self.assertTrue(effect.data["exact_node_continuity"])
             self.assertEqual(page.select_dispatches, 1)
         finally:
