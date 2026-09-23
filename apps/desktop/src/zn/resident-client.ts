@@ -1,3 +1,4 @@
+import { normalizeZnActiveWorkRun } from './work-reconnection'
 import type {
   ZnArtifact,
   ZnArtifactKind,
@@ -458,6 +459,7 @@ function normalizeThread(value: unknown): ZnThread {
     .filter((artifact): artifact is ZnArtifact => Boolean(artifact))
   const metadata = record(item.metadata)
   const workspace = normalizeWorkspace(metadata)
+  const activeRun = normalizeZnActiveWorkRun(item.active_run, id)
   const rawRestorePoints = Array.isArray(metadata?.restore_points)
     ? metadata.restore_points
     : Array.isArray(metadata?.restorePoints)
@@ -476,7 +478,8 @@ function normalizeThread(value: unknown): ZnThread {
     messages,
     artifacts,
     ...(workspace ? { workspace } : {}),
-    ...(restorePoints ? { restorePoints } : {})
+    ...(restorePoints ? { restorePoints } : {}),
+    ...(activeRun ? { activeRun } : {})
   }
 }
 
