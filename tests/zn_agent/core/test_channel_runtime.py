@@ -231,6 +231,54 @@ class ResidentChannelSupervisorTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
+    def test_route_insert_failure_replays_same_work_despite_new_percept_id(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = _Resident(Path(tmp) / "kernel.db")
+            try:
+                adapter = _RollbackAdapter()
+                supervisor = ResidentChannelSupervisor(
+                    resident,
+                    [adapter],
+                    poll_timeout=0.01,
+                    min_backoff=0.01,
+                    max_backoff=0.02,
+                )
+                original = supervisor.ledger.remember
+                attempts = 0
+
+                def fail_once(*args, **kwargs):
+                    nonlocal attempts
+                    attempts += 1
+                    if attempts == 1:
+                        raise RuntimeError("synthetic route insert failure")
+                    return original(*args, **kwargs)
+
+                supervisor.ledger.remember = fail_once
+                supervisor.start()
+                self.assertTrue(adapter.delivered.wait(1.0))
+                supervisor.stop()
+
+                event_id = stable_external_event_id(
+                    "channel", "telegram:update:42"
+                )
+                route = supervisor.ledger.route_for_event(event_id)
+                self.assertIsNotNone(route)
+                self.assertIsNotNone(route.work_thread_id)
+                messages = supervisor.work.list_messages(route.work_thread_id)
+                self.assertEqual(
+                    sum(item.role == "user" for item in messages),
+                    1,
+                )
+                self.assertEqual(
+                    [item.event_id for item in resident.store.list_events(limit=20)].count(event_id),
+                    1,
+                )
+                self.assertGreaterEqual(attempts, 2)
+                self.assertIn({"offset": 0}, adapter.restored)
+                self.assertEqual(len(adapter.sent), 1)
+            finally:
+                resident.store.close()
+
     def test_restart_restores_checkpoint_delivers_outcome_and_deduplicates_replay(self):
         with tempfile.TemporaryDirectory() as tmp:
             store_path = Path(tmp) / "kernel.db"
