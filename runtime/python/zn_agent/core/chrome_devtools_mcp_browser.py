@@ -574,7 +574,7 @@ class ChromeDevToolsMcpManagedBrowser:
                 raise ChromeDevToolsMcpBrowserError(str(exc)) from exc
             self._require_safe_select_target(state_before)
             choice = self._select_option_choice(
-                node,
+                state_before,
                 mode=request.mode,
                 requested=request.requested,
             )
@@ -914,6 +914,14 @@ class ChromeDevToolsMcpManagedBrowser:
               const selectedValue = selectedOption
                 ? String(selectedOption.value || '')
                 : '';
+              const rawOptions = tag === 'select'
+                ? Array.from(el.options || [])
+                : [];
+              const optionsTruncated = rawOptions.length > 256;
+              const options = rawOptions.slice(0, 256).map((option) => ({
+                value: String(option.value || '').slice(0, 1024),
+                label: String(option.label || '').slice(0, 1024),
+              }));
               return {
                 connected: Boolean(el.isConnected),
                 sensitive,
@@ -926,6 +934,8 @@ class ChromeDevToolsMcpManagedBrowser:
                 multiple: Boolean(el.multiple),
                 selected_value: selectedValue,
                 selected_text: selectedText,
+                options_truncated: optionsTruncated,
+                options,
               };
             }""",
         )
@@ -1069,37 +1079,45 @@ class ChromeDevToolsMcpManagedBrowser:
 
     @staticmethod
     def _select_option_choice(
-        node: Mapping[str, Any],
+        state: Mapping[str, Any],
         *,
         mode: str,
         requested: str,
     ) -> dict[str, str]:
-        children = node.get("children")
+        if state.get("options_truncated") is True:
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option refuses a truncated native option inventory"
+            )
+        raw_options = state.get("options")
+        if not isinstance(raw_options, list):
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option could not read the native option inventory"
+            )
         rows: list[dict[str, str]] = []
-        if isinstance(children, list):
-            for child in children:
-                if not isinstance(child, Mapping):
-                    continue
-                if str(child.get("role") or "").casefold() != "option":
-                    continue
-                label = str(child.get("name") or "")
-                value = str(child.get("value") or "")
-                if label and value:
-                    rows.append({"label": label, "value": value})
-        matches = [
-            row for row in rows if row[mode] == requested
-        ]
+        for item in raw_options:
+            if not isinstance(item, Mapping):
+                raise ChromeDevToolsMcpBrowserError(
+                    "select_option provider returned invalid native option evidence"
+                )
+            label = str(item.get("label") or "")
+            value = str(item.get("value") or "")
+            if not label or len(label) > 1024 or len(value) > 1024:
+                raise ChromeDevToolsMcpBrowserError(
+                    "select_option native option evidence is outside the bounded contract"
+                )
+            rows.append({"label": label, "value": value})
+
+        matches = [row for row in rows if row[mode] == requested]
         if len(matches) != 1:
             raise ChromeDevToolsMcpBrowserError(
                 "select_option must resolve to exactly one fresh native option"
             )
         choice = matches[0]
-        if mode == "value":
-            same_label = [row for row in rows if row["label"] == choice["label"]]
-            if len(same_label) != 1:
-                raise ChromeDevToolsMcpBrowserError(
-                    "select_option value maps to an ambiguous visible option label"
-                )
+        same_label = [row for row in rows if row["label"] == choice["label"]]
+        if len(same_label) != 1:
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option target maps to an ambiguous visible option label"
+            )
         return choice
 
     @staticmethod
