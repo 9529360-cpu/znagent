@@ -226,7 +226,7 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             browser.close()
         self.assertEqual(browser._sessions, {})
 
-    def test_semantic_target_reground_uses_fresh_provider_uid_for_continuity(self):
+    def test_semantic_target_reground_never_infers_node_continuity_from_snapshot_uid(self):
         browser = self._browser()
         permission = self._permission()
         session = browser.open_session(permission=permission, headless=True)
@@ -259,29 +259,36 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             )
             assert observed.target is not None
 
-            same = browser.reground_target(
+            same_uid = browser.reground_target(
                 session.session_id,
                 query,
                 observed.target,
                 page_id=observed.page_id,
             )
-            self.assertIs(
-                same.disposition,
-                BrowserTargetRegroundDisposition.SAME_EXACT_TARGET,
-            )
-
-            browser._sessions[session.session_id].client.node_generation += 1
-            rebound = browser.reground_target(
-                session.session_id,
-                query,
-                observed.target,
-                page_id=observed.page_id,
+            assert same_uid.observation.target is not None
+            self.assertEqual(
+                same_uid.observation.target.target_id,
+                observed.target.target_id,
+                "fixture keeps the UID stable to prove equality alone grants no authority",
             )
             self.assertIs(
-                rebound.disposition,
+                same_uid.disposition,
                 BrowserTargetRegroundDisposition.REBOUND_TARGET,
             )
-            self.assertFalse(rebound.exact_node_continuity)
+            self.assertFalse(same_uid.exact_node_continuity)
+
+            browser._sessions[session.session_id].client.node_generation += 1
+            changed_uid = browser.reground_target(
+                session.session_id,
+                query,
+                observed.target,
+                page_id=observed.page_id,
+            )
+            self.assertIs(
+                changed_uid.disposition,
+                BrowserTargetRegroundDisposition.REBOUND_TARGET,
+            )
+            self.assertFalse(changed_uid.exact_node_continuity)
         finally:
             browser.close()
 
