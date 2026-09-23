@@ -111,6 +111,8 @@ class StructuredMemory:
     def _cue_occurs(query: str, cue: str) -> bool:
         # Latin cues use word boundaries; Chinese cues are matched as phrases
         # because users commonly type them without whitespace segmentation.
+        if re.search(r"[\u4e00-\u9fff]", cue):
+            return cue in query
         if re.search(r"[a-z0-9]", cue):
             if " " not in cue:
                 return query == cue or len(cue) >= 12 and re.search(
