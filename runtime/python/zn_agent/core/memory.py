@@ -35,7 +35,7 @@ _RESPONSE_PREFERENCE_KEYS = {
 
 
 _PREFERENCE_SCOPE_RE = re.compile(
-    r"(?:回答|回复|回应|答复|answer|reply|respond|response)", re.IGNORECASE
+    r"(?:回答|回复|回应|答复|answer|repl(?:y|ies)|respond|responses?)", re.IGNORECASE
 )
 _PREFERENCE_DURABLE_RE = re.compile(
     r"(?:记住|以后|今后|从现在起|长期|默认|偏好|我(?:更)?喜欢|请一直|"
