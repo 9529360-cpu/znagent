@@ -239,9 +239,10 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Require desktop tests and applicable product contracts
+        shell: bash
         env:
           DESKTOP_RESULT: ${{ needs.desktop.result }}
-          PRODUCT_GATE_RESULT: ${{ needs.product-gate.result }}
+          PRODUCT_GATE_RESULT: ${{ needs['product-gate'].result }}
         run: |
           if [ "$DESKTOP_RESULT" != "success" ]; then
             echo "Desktop test job result: $DESKTOP_RESULT"
@@ -277,8 +278,8 @@ jobs:
               ['ZN Source Boundary / Windows', '${{ needs.source-boundary.result }}'],
               ['ZN Kernel / Python', '${{ needs.kernel.result }}'],
               ['ZN Kernel / Python / Windows', '${{ needs.kernel.result }}'],
-              ['Electron / TypeScript', '${{ needs.desktop-required.result }}'],
-              ['Electron / TypeScript / Windows', '${{ needs.desktop-required.result }}'],
+              ['Electron / TypeScript', '${{ needs['desktop-required'].result }}'],
+              ['Electron / TypeScript / Windows', '${{ needs['desktop-required'].result }}'],
             ]
             for (const sha of statusShas) {
               for (const [statusContext, result] of rows) {
@@ -318,8 +319,8 @@ jobs:
               ['ZN Source Boundary / Windows', '${{ needs.source-boundary.result }}'],
               ['ZN Kernel / Python', '${{ needs.kernel.result }}'],
               ['ZN Kernel / Python / Windows', '${{ needs.kernel.result }}'],
-              ['Electron / TypeScript', '${{ needs.desktop-required.result }}'],
-              ['Electron / TypeScript / Windows', '${{ needs.desktop-required.result }}'],
+              ['Electron / TypeScript', '${{ needs['desktop-required'].result }}'],
+              ['Electron / TypeScript / Windows', '${{ needs['desktop-required'].result }}'],
             ]
             for (const sha of statusShas) {
               for (const [statusContext, result] of rows) {
