@@ -217,6 +217,8 @@ class ResidentChannelSupervisor:
         try:
             while not self._stop.is_set():
                 started = time.monotonic()
+                checkpoint_before_poll: dict[str, Any] | None = None
+                polled = False
                 try:
                     delivered_before = self._deliver_ready(name, adapter)
                     # stop() may arrive while an outbound provider send is
@@ -224,6 +226,8 @@ class ResidentChannelSupervisor:
                     # teardown has already revoked further channel work.
                     if self._stop.is_set():
                         break
+                    checkpoint_before_poll = self._adapter_checkpoint(adapter)
+                    polled = True
                     events = adapter.poll(timeout=self.poll_timeout)
                     # A stop can arrive while a long poll is blocked. Once the
                     # poll returns, do not enqueue, checkpoint or deliver anything
@@ -232,13 +236,23 @@ class ResidentChannelSupervisor:
                         break
                     enqueued, duplicates = self._ingest_events(events)
                     # Persist transport cursor only after every percept returned by
-                    # this poll has a durable route. A crash before here replays
-                    # the update; deterministic event ids make that replay
-                    # idempotent even if the event reached the queue first.
+                    # this poll has a durable Work route. A crash or ingestion
+                    # failure before here replays the update rather than advancing
+                    # the provider cursor past a message ZN never made durable.
                     self._save_adapter_checkpoint(name, adapter)
                     delivered_after = self._deliver_ready(name, adapter)
                     delivered = delivered_before + delivered_after
                 except Exception as exc:
+                    if polled and checkpoint_before_poll is not None:
+                        try:
+                            self._restore_adapter_checkpoint_value(
+                                adapter, checkpoint_before_poll
+                            )
+                        except Exception:
+                            # Preserve the original ingestion/provider failure.
+                            # A later process restart still restores the last
+                            # durable checkpoint from ChannelDeliveryLedger.
+                            pass
                     with self._lock:
                         state = self._states[name]
                         state.total_failures += 1
@@ -407,22 +421,34 @@ class ResidentChannelSupervisor:
             "The conversation and Work state were kept; resolve the provider/model problem and try again."
         )
 
-    def _restore_adapter_checkpoint(self, name: str, adapter: ChannelAdapter) -> None:
-        restore = getattr(adapter, "restore_checkpoint", None)
-        if not callable(restore):
-            return
-        checkpoint = self.ledger.load_checkpoint(name)
-        if checkpoint is not None:
-            restore(checkpoint)
-
-    def _save_adapter_checkpoint(self, name: str, adapter: ChannelAdapter) -> None:
+    @staticmethod
+    def _adapter_checkpoint(adapter: ChannelAdapter) -> dict[str, Any] | None:
         snapshot = getattr(adapter, "checkpoint", None)
         if not callable(snapshot):
-            return
+            return None
         checkpoint = snapshot()
         if not isinstance(checkpoint, Mapping):
-            raise TypeError(f"channel {name} checkpoint must be a mapping")
-        payload = dict(checkpoint)
+            raise TypeError("channel checkpoint must be a mapping")
+        return dict(checkpoint)
+
+    @staticmethod
+    def _restore_adapter_checkpoint_value(
+        adapter: ChannelAdapter,
+        checkpoint: Mapping[str, Any],
+    ) -> None:
+        restore = getattr(adapter, "restore_checkpoint", None)
+        if callable(restore):
+            restore(dict(checkpoint))
+
+    def _restore_adapter_checkpoint(self, name: str, adapter: ChannelAdapter) -> None:
+        checkpoint = self.ledger.load_checkpoint(name)
+        if checkpoint is not None:
+            self._restore_adapter_checkpoint_value(adapter, checkpoint)
+
+    def _save_adapter_checkpoint(self, name: str, adapter: ChannelAdapter) -> None:
+        payload = self._adapter_checkpoint(adapter)
+        if payload is None:
+            return
         if self.ledger.load_checkpoint(name) != payload:
             self.ledger.save_checkpoint(name, payload)
 
