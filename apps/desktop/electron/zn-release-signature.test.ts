@@ -27,13 +27,6 @@ function fixture() {
   }
 }
 
-function signingFixture() {
-  const { privateKey, publicKey } = generateKeyPairSync('ed25519')
-  const publicDer = publicKey.export({ format: 'der', type: 'spki' }) as Buffer
-  const keyId = (await import('node:crypto')).createHash('sha256').update(publicDer).digest('hex')
-  return { privateKey, publicDer, keyId }
-}
-
 test('signed release channel verifies against its embedded trust root', async () => {
   const { generateKeyPairSync, createHash } = await import('node:crypto')
   const { privateKey, publicKey } = generateKeyPairSync('ed25519')
