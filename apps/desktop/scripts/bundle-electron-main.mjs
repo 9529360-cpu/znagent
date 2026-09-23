@@ -36,8 +36,8 @@ const define = isDev
       'process.env.ZN_DESKTOP_UPDATE_CHANNEL_URL': JSON.stringify(
         process.env.ZN_DESKTOP_UPDATE_CHANNEL_URL || ''
       ),
-      'process.env.ZN_WINDOWS_SIGNING_PUBLISHERS': JSON.stringify(
-        process.env.ZN_WINDOWS_SIGNING_PUBLISHERS || ''
+      'process.env.ZN_UPDATE_SIGNING_PUBLIC_KEYS': JSON.stringify(
+        process.env.ZN_UPDATE_SIGNING_PUBLIC_KEYS || ''
       )
     }
 
