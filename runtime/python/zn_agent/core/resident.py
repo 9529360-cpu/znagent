@@ -1275,10 +1275,6 @@ class ZNResidentRuntime:
             self._required_capabilities(event),
             deliberation,
         )
-        if bool(event.payload.get("allow_memory", True)):
-            related_facts = self.memory.relevant_context(event.task)
-            if related_facts:
-                cognition.context["related_memory_facts"] = related_facts
         state.stage = "external_cognition"
         state.next_action = "consult_external_brain"
         state.data["cognition_request"] = {

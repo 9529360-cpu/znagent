@@ -32,8 +32,20 @@ External model or tool success is evidence only.
 | Spreadsheet primitives | CONNECTED + PARTIAL | generic workbook operations remain; no task-specific browser-to-sheet product route owns the architecture |
 | Public research primitives | CONNECTED + PARTIAL | search/extract/evidence mechanisms remain; no dedicated representative-task completion path owns the product |
 | Delegated Work / routing | CONNECTED + PARTIAL | generic routing, progress, health and authority remain; fixed story phase orchestration was retired |
-| Memory / learned behavior | PARTIAL | explicitly saved structured facts can enter bounded cognition context through exact saved-key/alias cues when `allow_memory` is enabled; automatic memory writing, semantic retrieval, and arbitrary workflow learning remain open |
+| Memory / learned behavior | CONNECTED + VERIFIED NARROW | saved facts, explicit response preferences and same-Work conversation compose in bounded product cognition; automatic personal-memory writing, semantic search and arbitrary workflow learning remain open |
 | Packaging / clean install | CONNECTED | packaged runtime and clean-install verification remain release boundaries |
+
+## Saved memory in ordinary conversation
+
+The active product path is Work route-policy binding -> anchored same-Work conversation -> `StructuredMemory.bind_cognition_context` -> existing CognitionRequest / Kernel / cognitive adapter. The existing `facts` table and `remember` / `forget` RPC remain the owners; no second memory database, identity migration or external agent runtime is introduced.
+
+Saved keys and explicit aliases are matched conservatively, with Unicode normalization, most-specific-cue ranking and stable tie-breaking. Values are never searched for cues. A directly named topic takes precedence; otherwise the last two user messages from the existing bounded Work transcript may supply reference cues. Assistant claims, tools and other threads do not supply these cues. Records carry their saved key, update timestamp and match provenance; they are data, not execution authority or completion evidence.
+
+Explicitly saved response language, style and verbosity are bounded default preferences. Examples of existing fact keys are `response language`, `response style`, `response verbosity`, and their supported Chinese reply-language/style equivalents. Values must be nonempty strings no longer than 200 characters. Other preferences require relevant cues; permission, credential and route-policy fields are not ambient preferences. Current user instructions take precedence over defaults. Saving/inference of preferences from arbitrary chat is not implemented by this projection.
+
+The projection selects at most five facts, preserves whole values rather than generating lossy summaries, and caps the actual nested UTF-8 context at 8 KiB. Opt-out (`allow_memory` not exactly true when explicitly supplied) and explicit isolated cognition questions exclude both saved memory and conversation. New requests read current SQLite values without a projection cache; updates and deletions survive reconstruction. An already prepared durable cognition request remains its original snapshot across restart. Forgetting a fact does not erase earlier transcript disclosures or already prepared request snapshots.
+
+Narrow executed evidence in `test_memory_conversation_product.py` exercises the real Product Resident, Work/RPC, Kernel, SQLite and cognitive adapter, including authenticated TCP disconnect/reconnect, two resident lifetimes, follow-up reference retrieval, update/forget, policy/isolation and pre-dispatch continuation without duplicated messages/calls. Provider responses are controlled test boundaries, not live-model quality evidence. Full installed daily-use acceptance and unified knowledge-graph/semantic retrieval remain open.
 
 ## Recently retired scenario-owned surfaces
 
@@ -69,4 +81,3 @@ The repository policy test prevents retired scenario namespaces and numbered sto
 6. Long-horizon autonomous Work, broader delegation and learning remain partial.
 
 Browser expansion now proceeds from the cleaned capability-owned substrate rather than from retired representative-task stories.
-
