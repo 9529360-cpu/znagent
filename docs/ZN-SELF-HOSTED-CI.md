@@ -75,6 +75,12 @@ Credential-backed model acceptance remains a separate authorization boundary. Cr
 
 Formal release and candidate workflows are separate from ordinary development CI. For example, `.github/workflows/zn-release.yml` currently packages Windows on the specialized `zn-interactive` runner for a formal `zn-v*` tag or an explicitly dispatched package run.
 
+The ordinary builder baseline and hosted Clean Install continue to produce unsigned development candidates. A formal `zn-v*` tag is the only current path that enables Windows executable signing and requires code signing to succeed. Formal Windows publication therefore requires `ZN_WINDOWS_SIGNING_PUBLISHERS`, `ZN_WINDOWS_CSC_LINK`, and `ZN_WINDOWS_CSC_KEY_PASSWORD` when the selected certificate needs a password.
+
+For a formal tag, the workflow overrides the unsigned builder baseline with Windows executable signing plus `forceCodeSigning`, then verifies the packaged `ZN.exe` and every published root EXE/MSI with Windows Authenticode before manifest creation or publication. Production builds bake the allowed publisher names into the Electron main bundle, and the Windows updater re-verifies the exact cached NSIS installer immediately before handoff. HTTPS, size and SHA-256 remain integrity checks; they do not replace publisher identity.
+
+Certificate rotation must preserve trust across installed builds: first ship a release still signed by the currently trusted identity while embedding both current and next publisher names, then switch signing identities only after that bridge release is deployed. Ordinary clean-install/development candidates remain unsigned even when signing secrets exist.
+
 Release signing, publishing, stable update-channel mutation, production installer replacement and related trust changes remain high-risk operations. Green ordinary CI or a green clean-install run does not authorize those effects.
 
 If release packaging later becomes reproducible on disposable hosted Windows without weakening its trust boundary, migrate it deliberately and update this document from the real workflow rather than assuming the topology has changed.
