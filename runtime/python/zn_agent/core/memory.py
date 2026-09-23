@@ -143,7 +143,7 @@ class StructuredMemory:
             for value, pattern in _PREFERENCE_VALUES[dimension]:
                 for match in re.finditer(pattern, raw, flags=re.IGNORECASE):
                     prefix = lowered[max(0, match.start() - 14):match.start()]
-                    if re.search(r"(?:不|不要|别|not|don't|do not)\\s*$", prefix):
+                    if re.search(r"(?:不|不要|别|not|don't|do not)\s*$", prefix):
                         continue
                     matches.append((match.start(), value))
             if not matches:
