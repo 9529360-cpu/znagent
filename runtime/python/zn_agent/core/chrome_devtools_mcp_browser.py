@@ -412,15 +412,16 @@ class ChromeDevToolsMcpManagedBrowser:
             raise ChromeDevToolsMcpBrowserError(
                 "fresh semantic regrounding returned no target"
             )
+        # Chrome DevTools MCP documents snapshot UIDs as identities from the
+        # current page-content snapshot and requires consumers to use the latest
+        # snapshot. Equality across snapshots is therefore not sufficient proof
+        # of physical-node continuity. Re-ground conservatively as a new binding;
+        # action-time provider revalidation still protects dispatch.
         return BrowserTargetRegrounding(
             query=query,
             previous_target=previous_target,
             observation=observation,
-            disposition=(
-                BrowserTargetRegroundDisposition.SAME_EXACT_TARGET
-                if current.target_id == previous_target.target_id
-                else BrowserTargetRegroundDisposition.REBOUND_TARGET
-            ),
+            disposition=BrowserTargetRegroundDisposition.REBOUND_TARGET,
         )
 
     def read_page(self, session_id: str, *, page_id: str = "") -> dict[str, Any]:
