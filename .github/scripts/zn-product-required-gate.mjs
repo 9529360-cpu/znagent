@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 export const PRODUCT_CONTRACT_WORKFLOWS = [
   '.github/workflows/zn-managed-browser-contract.yml',
@@ -220,7 +221,7 @@ async function main() {
     }
 
     const failed = states.filter(item =>
-      item.status === 'completed' && !['success', 'neutral', 'skipped'].includes(item.conclusion)
+      item.status === 'completed' && item.conclusion !== 'success'
     )
     if (failed.length) {
       throw new Error(
@@ -241,6 +242,6 @@ async function main() {
   )
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === path.resolve(new URL(import.meta.url).pathname.replace(/^\/(.:)/, '$1'))) {
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   await main()
 }
