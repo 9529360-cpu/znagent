@@ -1362,6 +1362,37 @@ body {
   -webkit-backdrop-filter: blur(20px) saturate(120%);
 }
 
+.zn-execution-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(159, 196, 255, .16);
+  border-radius: 10px;
+  background: rgba(10, 21, 38, .55);
+}
+
+.zn-execution-mode button {
+  height: 29px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  color: #7f91ad;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.zn-execution-mode button.active {
+  color: #dce9ff;
+  background: rgba(57, 121, 216, .3);
+}
+
+.zn-execution-mode button:disabled { opacity: .52; }
+
 .zn-composer-tool,
 .zn-send {
   width: 38px;

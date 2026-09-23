@@ -5,6 +5,7 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .execution_mode import body_action_allowed_for_event
 from .git_semantics import current_git_path_staged_goal, git_stage_command
 from .models import AgentEvent, utc_now
 from .path_context import canonical_host_path, resolve_context_path
@@ -142,13 +143,20 @@ def derive_native_action_intents(
 
     payload = event.payload or {}
     observed = facts if isinstance(facts, dict) else {}
+
+    def allowed(intents: tuple[NativeActionIntent, ...]) -> tuple[NativeActionIntent, ...]:
+        return tuple(
+            intent
+            for intent in intents
+            if body_action_allowed_for_event(event, intent.kind)
+        )
     explicit = payload.get("body_action") or payload.get("native_action")
 
     if explicit:
         kind, args = _explicit_action(explicit, payload)
         if kind:
             args = _contextualize_action_args(args, payload)
-            return (
+            return allowed((
                 NativeActionIntent(
                     intent_id=f"act-{uuid.uuid4().hex[:12]}",
                     event_id=event.event_id,
@@ -157,7 +165,7 @@ def derive_native_action_intents(
                     reason="the oriented event contains a concrete body action",
                     source="structured_event",
                 ),
-            )
+            ))
 
     raw_options = payload.get("native_action_options")
     if isinstance(raw_options, list):
@@ -178,11 +186,11 @@ def derive_native_action_intents(
                 )
             )
         if options:
-            return tuple(options)
+            return allowed(tuple(options))
 
     git_choices = _derive_resident_git_stage_choice_set(event, observed=observed)
     if git_choices:
-        return git_choices
+        return allowed(git_choices)
 
     default = _derive_heuristic_native_action_intent(
         event,
@@ -208,7 +216,7 @@ def derive_native_action_intents(
         observed=observed,
         goal=goal,
     )
-    return resident_choices or (default,)
+    return allowed(resident_choices or (default,))
 
 
 def _derive_resident_git_stage_choice_set(

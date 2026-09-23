@@ -13,6 +13,7 @@ generic Work/WorkerRun primitives; cognition cannot materialize WorkerRuns direc
 from .action_authority import install_worker_authority_gate
 from .broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from .cognition import CognitiveIncrement
+from .execution_mode import event_allows_effects
 from .models import utc_now
 from .route_policy_intake import infer_thread_route_policy, merge_route_policy
 from .steerable_work import WorkItem
@@ -98,6 +99,8 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         return request
 
     def _autonomous_root_candidate(self, event) -> WorkItem | None:
+        if not event_allows_effects(event):
+            return None
         payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
         thread_id = str(payload.get("work_thread_id") or "").strip()
         item_id = str(payload.get("work_item_id") or "").strip()
