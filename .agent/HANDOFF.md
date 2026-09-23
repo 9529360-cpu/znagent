@@ -2,14 +2,16 @@
 
 ## Current objective
 
-Finish removing scenario-owned product, test, CI, and documentation surfaces before adding any new mature Browser provider.
+Expand reusable capabilities from the cleaned substrate without restoring scenario-owned product paths.
 
-The product direction is substrate-first:
+The Browser line is active again: pinned Chrome DevTools MCP is integrated behind ZN's provider/capability routing, Playwright remains a bounded fallback, and USER Browser authority stays isolated behind explicit current-tab authorization.
+
+The product direction remains substrate-first:
 
 1. keep one ZN Resident / Work truth / authority / Body / completion truth;
 2. validate reusable capability contracts in CI;
 3. keep real integration evidence capability-owned rather than story-owned;
-4. only after the cleanup is merged, add mature external Browser mechanics behind ZN's existing control plane.
+4. broaden mature external Browser mechanics only behind ZN-owned permission, fresh evidence, no-replay and completion semantics.
 
 ## Current cleanup state
 
@@ -53,20 +55,22 @@ Required automatic contract surfaces include:
 
 Historical task stories are not architecture owners and do not get dedicated Resident modules, behaviors, routing rules, worker phase sequences, or merge gates.
 
-## Browser work remains intentionally paused
+## Browser capability line
 
-Do not add the mature Browser provider until this cleanup is merged and the latest `main` is reread.
+The cleanup prerequisite is complete and Browser work now proceeds from current clean `main`.
 
-When Browser work resumes:
+Current rules:
 
-- start from a fresh branch off clean `main`;
 - prefer mature external Browser mechanics instead of growing ZN-specific DOM automation;
 - keep USER Browser ownership isolated from public/background research;
 - route providers by declared capability, never by task story or prompt text;
 - require fresh semantic observation before side effects and fresh verification after them;
+- allow bounded semantic re-ground only when the provider proves the previous attempt never crossed dispatch;
+- pin the pre-dispatch page context so a same-named control on a changed page cannot inherit authority;
+- never replay dispatched or uncertain effects;
 - treat provider success only as evidence, never as Root completion;
 - keep Playwright as a fallback where stricter file-transfer/session contracts still require it;
-- package any external runtime at an exact version; never download `@latest` at user runtime.
+- package external runtimes at exact versions; never download `@latest` at user runtime.
 
 ## Non-negotiable architecture rules
 

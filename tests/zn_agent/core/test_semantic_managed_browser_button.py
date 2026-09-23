@@ -18,8 +18,9 @@ from zn_agent.core.semantic_managed_browser import (
 
 
 class _Element:
-    def __init__(self, page):
+    def __init__(self, page, generation):
         self.page = page
+        self.generation = generation
         self.disposed = False
 
     def evaluate(self, expression, arg=None):
@@ -33,7 +34,11 @@ class _Element:
                 "native_button": True,
             }
         if "element === other" in expression:
-            return isinstance(arg, _Element) and self.page is arg.page
+            return (
+                isinstance(arg, _Element)
+                and self.page is arg.page
+                and self.generation == arg.generation
+            )
         raise AssertionError("unexpected element expression")
 
     def click(self):
@@ -56,7 +61,11 @@ class _Locator:
         return self._count
 
     def element_handle(self):
-        return _Element(self.page)
+        self.page.handle_calls += 1
+        if self.page.replace_before_dispatch and self.page.handle_calls >= 2:
+            self.page.node_generation += 1
+            self.page.replace_before_dispatch = False
+        return _Element(self.page, self.page.node_generation)
 
 
 class _Page:
@@ -68,6 +77,9 @@ class _Page:
         self.viewport_size = {"width": 800, "height": 600}
         self.count = count
         self.role_calls = []
+        self.handle_calls = 0
+        self.node_generation = 1
+        self.replace_before_dispatch = False
 
     def get_by_role(self, role, *, name, exact):
         self.role_calls.append((role, name, exact))
@@ -214,6 +226,34 @@ class SemanticManagedBrowserButtonTests(unittest.TestCase):
             self.assertTrue(effect.data["target_revalidated_before_dispatch"])
             self.assertEqual(page.click_dispatches, 1)
             self.assertGreaterEqual(len(page.role_calls), 2)
+        finally:
+            browser.close()
+
+    def test_replaced_button_before_dispatch_is_safe_for_fresh_reground(self):
+        browser, session, permission, page, query = _build()
+        try:
+            observed = browser.observe_target(session.session_id, query)
+            page.replace_before_dispatch = True
+            action = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=observed.page_id,
+                kind=BrowserActionKind.CLICK,
+                target=observed.target,
+                expected={"url_equals": "https://example.com/done"},
+            )
+            authority = BrowserActionAuthority.from_observation(
+                action,
+                observed,
+                permission,
+            )
+
+            effect = browser.act(action, authority)
+
+            self.assertFalse(effect.success)
+            self.assertTrue(effect.allows_fresh_semantic_reground)
+            self.assertEqual(effect.data["dispatch_state"], "not_started")
+            self.assertTrue(effect.data["requires_fresh_resense"])
+            self.assertEqual(page.click_dispatches, 0)
         finally:
             browser.close()
 
