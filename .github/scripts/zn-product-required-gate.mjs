@@ -144,14 +144,9 @@ async function workflowRunsForHead({ apiUrl, repository, headSha, token }) {
   return Array.isArray(payload?.workflow_runs) ? payload.workflow_runs : []
 }
 
-function runForWorkflow(runs, workflowPath, pullNumber) {
+function runForWorkflow(runs, workflowPath) {
   return runs
-    .filter(run =>
-      run?.path === workflowPath &&
-      run?.head_sha &&
-      Array.isArray(run?.pull_requests) &&
-      run.pull_requests.some(item => Number(item?.number) === Number(pullNumber))
-    )
+    .filter(run => run?.path === workflowPath && run?.head_sha)
     .sort((left, right) => Number(right.id || 0) - Number(left.id || 0))[0] || null
 }
 
@@ -202,7 +197,7 @@ async function main() {
   while (Date.now() < deadline) {
     const runs = await workflowRunsForHead({ apiUrl, repository, headSha, token })
     const states = required.map(workflowPath => {
-      const run = runForWorkflow(runs, workflowPath, pullNumber)
+      const run = runForWorkflow(runs, workflowPath)
       return {
         workflowPath,
         id: run?.id || null,
