@@ -1,8 +1,9 @@
 import { promises as fs } from 'node:fs'
 import path from 'node:path'
 
-import { BrowserWindow, dialog, ipcMain, type OpenDialogOptions } from 'electron'
+import { BrowserWindow, dialog, type OpenDialogOptions } from 'electron'
 
+import { handleZnDesktopIpc } from './zn-ipc-trust'
 import { getZnResidentProcess } from './zn-resident-ipc'
 
 let registered = false
@@ -17,7 +18,7 @@ export function registerZnWorkspaceIpc(): void {
   if (registered) return
   registered = true
 
-  ipcMain.handle('zn:workspaces:attach', async (event, payload) => {
+  handleZnDesktopIpc('zn:workspaces:attach', async (event, payload) => {
     const threadId = threadIdFrom(payload)
     if (!threadId) throw new Error('threadId is required')
 
@@ -49,7 +50,7 @@ export function registerZnWorkspaceIpc(): void {
     return { cancelled: false, thread }
   })
 
-  ipcMain.handle('zn:workspaces:detach', async (_event, payload) => {
+  handleZnDesktopIpc('zn:workspaces:detach', async (_event, payload) => {
     const threadId = threadIdFrom(payload)
     if (!threadId) throw new Error('threadId is required')
     return getZnResidentProcess().request('work_detach_workspace', {
