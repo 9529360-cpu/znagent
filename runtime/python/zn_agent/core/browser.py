@@ -42,6 +42,10 @@ class BrowserActionKind(str, Enum):
     RELOAD = "reload"
 
 
+class BrowserTargetStaleError(RuntimeError):
+    """A provider proved the exact browser target changed before dispatch."""
+
+
 class BrowserTargetKind(str, Enum):
     PAGE = "page"
     ELEMENT = "element"
@@ -374,6 +378,16 @@ class BrowserEffectEvidence:
             raise ValueError("successful browser effect evidence cannot carry an error")
         if not self.success and not self.error:
             raise ValueError("failed browser effect evidence requires an error")
+
+    @property
+    def allows_fresh_semantic_reground(self) -> bool:
+        """True only when the provider proves no side effect crossed dispatch."""
+
+        return bool(
+            not self.success
+            and self.data.get("dispatch_state") == "not_started"
+            and self.data.get("requires_fresh_resense") is True
+        )
 
 
 class BrowserAdapter(Protocol):

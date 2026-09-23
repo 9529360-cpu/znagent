@@ -16,8 +16,9 @@ This map is capability-owned. Representative task stories are evidence, not arch
 
 | Area | State | Boundary |
 | --- | --- | --- |
-| Managed Browser adapter | CONNECTED | generic adapter contract exists; current implementation is Playwright-based |
-| Managed Browser semantic target actions | VERIFIED NARROW | current observation and target identity must remain fresh |
+| Managed Browser adapter | CONNECTED | pinned Chrome DevTools MCP is preferred by declared capability; Playwright remains a bounded fallback |
+| Managed Browser semantic target actions | VERIFIED NARROW | current observation and exact target identity must remain fresh at dispatch |
+| Cross-provider semantic re-ground | VERIFIED NARROW | same semantic query may re-resolve only after provider-proven pre-dispatch staleness; page URL stays pinned and dispatched/uncertain effects are never replayed |
 | Browser pages/tabs/history | PARTIAL | reusable primitives exist; arbitrary browser complexity is not claimed |
 | Browser file transfer | PARTIAL | strict causal transfer contracts remain provider-specific |
 | USER Browser bridge | VERIFIED NARROW | explicit current-tab authorization and generation ownership |

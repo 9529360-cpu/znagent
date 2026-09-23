@@ -28,6 +28,7 @@ from .browser import (
     BrowserTarget,
     BrowserTargetKind,
     BrowserTargetQuery,
+    BrowserTargetStaleError,
     BrowserTargetQueryKind,
 )
 from .models import utc_now
@@ -448,6 +449,15 @@ class ChromeDevToolsMcpManagedBrowser:
                 action,
                 f"browser action is not admitted by the mature provider: {action.kind.value}",
             )
+        except BrowserTargetStaleError as exc:
+            return self._failure(
+                action,
+                f"{type(exc).__name__}: {exc}",
+                data={
+                    "dispatch_state": "not_started",
+                    "requires_fresh_resense": True,
+                },
+            )
         except Exception as exc:
             return self._failure(action, f"{type(exc).__name__}: {exc}")
 
@@ -825,11 +835,11 @@ class ChromeDevToolsMcpManagedBrowser:
     def _revalidate(self, session: _Session, target: BrowserTarget) -> dict[str, Any]:
         node = self._snapshot(session, target.page_id).nodes.get(target.target_id)
         if node is None:
-            raise ChromeDevToolsMcpBrowserError("browser target is stale")
+            raise BrowserTargetStaleError("browser target is stale")
         if str(node.get("role") or "").casefold() != target.role.casefold():
-            raise ChromeDevToolsMcpBrowserError("browser target role changed")
+            raise BrowserTargetStaleError("browser target role changed")
         if str(node.get("name") or "").strip() != target.name:
-            raise ChromeDevToolsMcpBrowserError("browser target name changed")
+            raise BrowserTargetStaleError("browser target name changed")
         return node
 
     def _target_state(
@@ -1087,7 +1097,12 @@ class ChromeDevToolsMcpManagedBrowser:
         return None
 
     @staticmethod
-    def _failure(action: BrowserAction, error: str) -> BrowserEffectEvidence:
+    def _failure(
+        action: BrowserAction,
+        error: str,
+        *,
+        data: dict[str, Any] | None = None,
+    ) -> BrowserEffectEvidence:
         return BrowserEffectEvidence(
             action_id=action.action_id,
             session_id=action.session_id,
@@ -1095,5 +1110,6 @@ class ChromeDevToolsMcpManagedBrowser:
             success=False,
             page_id=action.page_id,
             target_id=action.target.target_id if action.target else "",
+            data=dict(data or {}),
             error=error,
         )

@@ -17,6 +17,7 @@ from .browser import (
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
+from .browser_semantic_action import execute_fresh_semantic_action
 from .models import utc_now
 
 
@@ -285,26 +286,20 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                     completed_at=utc_now(),
                 )
 
-            observed = browser.observe_target(
-                session.session_id,
-                query,
+            semantic_action = execute_fresh_semantic_action(
+                browser,
+                session_id=session.session_id,
+                permission=permission,
+                query=query,
+                kind=(BrowserActionKind.CHECK if checked else BrowserActionKind.UNCHECK),
                 page_id=navigation_evidence.page_id,
+                expected_url_before=navigation_evidence.url_after,
+                max_regrounds=1,
             )
+            observed = semantic_action.observation
             if observed.target is None or observed.target.role != "checkbox":
                 raise ValueError(f"{action.kind} requires a visible checkbox target")
-
-            mutation = BrowserAction.create(
-                session_id=session.session_id,
-                kind=(BrowserActionKind.CHECK if checked else BrowserActionKind.UNCHECK),
-                page_id=observed.page_id,
-                target=observed.target,
-            )
-            mutation_authority = BrowserActionAuthority.from_observation(
-                mutation,
-                observed,
-                permission,
-            )
-            mutation_evidence = browser.act(mutation, mutation_authority)
+            mutation_evidence = semantic_action.effect
             if not mutation_evidence.success:
                 browser.close_session(session.session_id)
                 closed = True
@@ -318,6 +313,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                         "target_role": observed.target.role,
                         "target_name": observed.target.name,
                         "checked": checked,
+                        "semantic_regrounds": semantic_action.regrounds,
                         "browser_evidence": asdict(mutation_evidence),
                         "closed": True,
                     },
@@ -352,6 +348,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                     "exact_node_continuity": bool(
                         mutation_evidence.data.get("exact_node_continuity")
                     ),
+                    "semantic_regrounds": semantic_action.regrounds,
                     "browser_evidence": asdict(mutation_evidence),
                     "closed": True,
                 },
@@ -482,32 +479,26 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                     navigation_evidence.data.get("provider") or session.provider
                 )
 
-            observed = browser.observe_target(
-                session.session_id,
-                BrowserTargetQuery(
+            semantic_action = execute_fresh_semantic_action(
+                browser,
+                session_id=session.session_id,
+                permission=permission,
+                query=BrowserTargetQuery(
                     kind=BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
                     value=target_name,
                 ),
+                kind=BrowserActionKind.CLICK,
                 page_id=current.page_id,
+                expected={"url_equals": expected_url},
+                expected_url_before=start_url,
+                max_regrounds=1,
             )
+            observed = semantic_action.observation
             if observed.target is None or observed.target.role != "button":
                 raise ValueError(
                     "browser_click_named_button_to_url requires a visible button target"
                 )
-
-            click = BrowserAction.create(
-                session_id=session.session_id,
-                kind=BrowserActionKind.CLICK,
-                page_id=observed.page_id,
-                target=observed.target,
-                expected={"url_equals": expected_url},
-            )
-            click_authority = BrowserActionAuthority.from_observation(
-                click,
-                observed,
-                permission,
-            )
-            click_evidence = browser.act(click, click_authority)
+            click_evidence = semantic_action.effect
             if not click_evidence.success:
                 browser.close_session(session.session_id)
                 closed = True
@@ -519,6 +510,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                         "target_id": observed.target.target_id,
                         "target_name": observed.target.name,
                         "expected_url": expected_url,
+                        "semantic_regrounds": semantic_action.regrounds,
                         "browser_evidence": asdict(click_evidence),
                         "closed": True,
                     },
@@ -544,6 +536,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                         "target_name": observed.target.name,
                         "expected_url": expected_url,
                         "observed_url": verified.url,
+                        "semantic_regrounds": semantic_action.regrounds,
                         "browser_evidence": asdict(click_evidence),
                         "closed": True,
                     },
@@ -586,6 +579,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                     "authorization_attached_at": str(
                         click_evidence.data.get("authorization_attached_at") or ""
                     ),
+                    "semantic_regrounds": semantic_action.regrounds,
                     "browser_evidence": asdict(click_evidence),
                     "closed": True,
                 },

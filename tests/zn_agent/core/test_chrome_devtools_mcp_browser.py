@@ -124,6 +124,27 @@ class _FakeChromeMcpClient:
         raise AssertionError(f"unexpected tool: {name}")
 
 
+
+class _StaleChromeMcpClient(_FakeChromeMcpClient):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.snapshot_calls = 0
+        self.fill_calls = 0
+
+    def call_tool(self, name, arguments=None):
+        if name == "take_snapshot":
+            self.snapshot_calls += 1
+            result = super().call_tool(name, arguments)
+            if self.snapshot_calls >= 3:
+                snapshot = result["structuredContent"]["snapshot"]
+                snapshot["children"][0]["id"] = "1_9"
+            return result
+        if name == "fill":
+            self.fill_calls += 1
+        return super().call_tool(name, arguments)
+
+
+
 def _command_factory(**_kwargs):
     return StdioMcpCommand(
         argv=("node", "fake"),
@@ -223,6 +244,47 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
         finally:
             browser.close()
         self.assertEqual(browser._sessions, {})
+
+    def test_pre_dispatch_stale_target_is_safe_for_one_fresh_reground(self):
+        browser = ChromeDevToolsMcpManagedBrowser(
+            client_factory=_StaleChromeMcpClient,
+            command_factory=_command_factory,
+            url_checker=lambda *_args, **_kwargs: True,
+        )
+        permission = self._permission()
+        session = browser.open_session(permission=permission, headless=True)
+        try:
+            observed = browser.observe_target(
+                session.session_id,
+                BrowserTargetQuery(
+                    kind=BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
+                    value="Search",
+                ),
+            )
+            action = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.TYPE_TEXT,
+                page_id=observed.page_id,
+                target=observed.target,
+                args={"text": "fresh"},
+            )
+            effect = browser.act(
+                action,
+                BrowserActionAuthority.from_observation(
+                    action,
+                    observed,
+                    permission,
+                ),
+            )
+
+            self.assertFalse(effect.success)
+            self.assertTrue(effect.allows_fresh_semantic_reground)
+            self.assertEqual(effect.data["dispatch_state"], "not_started")
+            self.assertTrue(effect.data["requires_fresh_resense"])
+            client = browser._sessions[session.session_id].client
+            self.assertEqual(client.fill_calls, 0)
+        finally:
+            browser.close()
 
     def test_command_uses_pinned_runtime_real_chrome_and_privacy_flags(self):
         with tempfile.TemporaryDirectory() as tmp:

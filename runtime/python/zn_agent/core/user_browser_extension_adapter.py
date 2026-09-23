@@ -481,7 +481,11 @@ class AuthorizedExtensionUserBrowser:
                 url_before=current.url,
                 url_after=current.url,
                 target_id=target.target_id,
-                data={"provider": self.name, "input_sent": False},
+                data={
+                    "provider": self.name,
+                    "input_sent": False,
+                    **self._command_failure_dispatch_data(command),
+                },
                 error=str(command.get("error") or "extension textbox command failed"),
             )
         result = self._command_result(command, "authorized browser textbox mutation")
@@ -633,7 +637,11 @@ class AuthorizedExtensionUserBrowser:
                 url_before=current.url,
                 url_after=current.url,
                 target_id=target.target_id,
-                data={"provider": self.name, "click_sent": False},
+                data={
+                    "provider": self.name,
+                    "click_sent": False,
+                    **self._command_failure_dispatch_data(command),
+                },
                 error=str(command.get("error") or "extension button command failed"),
             )
         result = self._command_result(command, "authorized browser button click")
@@ -761,6 +769,18 @@ class AuthorizedExtensionUserBrowser:
             raise
         except (ValueError, UserBrowserExtensionRelayError) as exc:
             raise ExtensionUserBrowserError(str(exc)) from exc
+
+    @staticmethod
+    def _command_failure_dispatch_data(command: dict[str, Any]) -> dict[str, Any]:
+        result = command.get("result")
+        if not isinstance(result, dict):
+            return {}
+        if str(result.get("dispatch_state") or "") != "not_started":
+            return {}
+        return {
+            "dispatch_state": "not_started",
+            "requires_fresh_resense": result.get("requires_fresh_resense") is True,
+        }
 
     @staticmethod
     def _command_result(command: dict[str, Any], label: str) -> dict[str, Any]:

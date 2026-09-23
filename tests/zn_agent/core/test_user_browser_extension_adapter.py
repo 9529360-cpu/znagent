@@ -139,6 +139,37 @@ class _LostResultMutationRelay(_UncertainMutationRelay):
         )
 
 
+class _PreDispatchStaleMutationRelay(_UncertainMutationRelay):
+    def request_command(
+        self,
+        kind,
+        *,
+        args=None,
+        timeout_seconds=5.0,
+        expected_tab_id=None,
+        expected_attached_at=None,
+    ):
+        if kind == "type_named_textbox":
+            self._expect_target(args)
+            return {
+                "success": False,
+                "result": {
+                    "dispatch_state": "not_started",
+                    "requires_fresh_resense": True,
+                },
+                "error": "authorized textbox identity changed before text entry; fresh sensing is required",
+                "authorization_attached_at": _AUTH_AT,
+                "completed_at": "2026-09-23T00:00:00Z",
+            }
+        return super().request_command(
+            kind,
+            args=args,
+            timeout_seconds=timeout_seconds,
+            expected_tab_id=expected_tab_id,
+            expected_attached_at=expected_attached_at,
+        )
+
+
 def _prepared_action(browser: AuthorizedExtensionUserBrowser):
     permission = BrowserPermissionContext(
         allow_navigation=False,
@@ -201,8 +232,22 @@ class AuthorizedExtensionUserBrowserTests(unittest.TestCase):
         self.assertTrue(evidence.data["requires_fresh_resense"])
         self.assertEqual(evidence.data["command_delivery"], "extension_received")
         self.assertEqual(evidence.data["expected_text_sha256"], _digest(_TEXT))
+        self.assertFalse(evidence.allows_fresh_semantic_reground)
         self.assertIn("side effect may have occurred", str(evidence.error))
         self.assertIn("refusing replay", str(evidence.error))
+        browser.close_session(session.session_id)
+
+    def test_pre_dispatch_stale_target_is_explicitly_safe_for_fresh_reground(self) -> None:
+        browser = AuthorizedExtensionUserBrowser(_PreDispatchStaleMutationRelay())
+        session, action, authority = _prepared_action(browser)
+
+        evidence = browser.act(action, authority)
+
+        self.assertFalse(evidence.success)
+        self.assertFalse(evidence.data["input_sent"])
+        self.assertEqual(evidence.data["dispatch_state"], "not_started")
+        self.assertTrue(evidence.data["requires_fresh_resense"])
+        self.assertTrue(evidence.allows_fresh_semantic_reground)
         browser.close_session(session.session_id)
 
 

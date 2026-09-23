@@ -20,6 +20,15 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+class FreshSemanticRegroundRequiredError extends Error {}
+
+function commandFailureEvidence(error) {
+  return {
+    dispatch_state: "not_started",
+    requires_fresh_resense: error instanceof FreshSemanticRegroundRequiredError
+  }
+}
+
 async function relay(path, payload) {
   const response = await fetch(`${RELAY_BASE}${path}`, {
     method: 'POST',
@@ -153,10 +162,10 @@ async function exactNamedTextbox(tabId, targetName) {
     return (role === 'textbox' || role === 'searchbox') && accessibleName === name
   })
   if (matches.length !== 1) {
-    throw new Error(
+    throw (
       matches.length === 0
-        ? 'exact accessible textbox target was not found'
-        : 'exact accessible textbox target is ambiguous'
+        ? new FreshSemanticRegroundRequiredError('exact accessible textbox target was not found')
+        : new FreshSemanticRegroundRequiredError('exact accessible textbox target is ambiguous')
     )
   }
 
@@ -206,10 +215,10 @@ async function exactNamedButton(tabId, targetName) {
       String(node?.name?.value || '') === name
   })
   if (matches.length !== 1) {
-    throw new Error(
+    throw (
       matches.length === 0
-        ? 'exact accessible button target was not found'
-        : 'exact accessible button target is ambiguous'
+        ? new FreshSemanticRegroundRequiredError('exact accessible button target was not found')
+        : new FreshSemanticRegroundRequiredError('exact accessible button target is ambiguous')
     )
   }
 
@@ -662,11 +671,11 @@ async function typeNamedTextbox(tabId, args) {
 
   const beforeTab = await currentTabEvidence(tabId)
   if (beforeTab.url !== expectedUrl) {
-    throw new Error('authorized tab URL changed before text entry; fresh sensing is required')
+    throw new FreshSemanticRegroundRequiredError('authorized tab URL changed before text entry; fresh sensing is required')
   }
   const before = await exactNamedTextbox(tabId, targetName)
   if (before.targetId !== targetId) {
-    throw new Error('authorized textbox identity changed before text entry; fresh sensing is required')
+    throw new FreshSemanticRegroundRequiredError('authorized textbox identity changed before text entry; fresh sensing is required')
   }
 
   const expectedDigest = await sha256Text(text)
@@ -753,11 +762,11 @@ async function clickNamedButtonToUrl(tabId, args) {
 
   const beforeTab = await currentTabEvidence(tabId)
   if (beforeTab.url !== expectedUrlBefore) {
-    throw new Error('authorized tab URL changed before button click; fresh sensing is required')
+    throw new FreshSemanticRegroundRequiredError('authorized tab URL changed before button click; fresh sensing is required')
   }
   const before = await exactNamedButton(tabId, targetName)
   if (before.targetId !== targetId) {
-    throw new Error('authorized button identity changed before click; fresh sensing is required')
+    throw new FreshSemanticRegroundRequiredError('authorized button identity changed before click; fresh sensing is required')
   }
 
   let clickSent = false
@@ -879,6 +888,7 @@ async function commandLoop(tabId) {
         success = true
       } catch (commandError) {
         error = commandError instanceof Error ? commandError.message : String(commandError)
+        result = commandFailureEvidence(commandError)
       }
 
       try {
