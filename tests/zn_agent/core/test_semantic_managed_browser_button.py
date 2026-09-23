@@ -10,6 +10,7 @@ from zn_agent.core.browser import (
     BrowserTargetKind,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserTargetRegroundDisposition,
 )
 from zn_agent.core.semantic_managed_browser import (
     ManagedBrowserError,
@@ -20,6 +21,7 @@ from zn_agent.core.semantic_managed_browser import (
 class _Element:
     def __init__(self, page):
         self.page = page
+        self.node_generation = page.node_generation
         self.disposed = False
 
     def evaluate(self, expression, arg=None):
@@ -33,7 +35,11 @@ class _Element:
                 "native_button": True,
             }
         if "element === other" in expression:
-            return isinstance(arg, _Element) and self.page is arg.page
+            return (
+                isinstance(arg, _Element)
+                and self.page is arg.page
+                and self.node_generation == arg.node_generation
+            )
         raise AssertionError("unexpected element expression")
 
     def click(self):
@@ -68,6 +74,7 @@ class _Page:
         self.viewport_size = {"width": 800, "height": 600}
         self.count = count
         self.role_calls = []
+        self.node_generation = 1
 
     def get_by_role(self, role, *, name, exact):
         self.role_calls.append((role, name, exact))
@@ -177,6 +184,54 @@ class SemanticManagedBrowserButtonTests(unittest.TestCase):
             self.assertEqual(observed.target.name, "Continue")
             self.assertEqual(observed.target.selector_hint, "accessible_button_name:exact")
             self.assertEqual(page.role_calls, [("button", "Continue", True)])
+        finally:
+            browser.close()
+
+    def test_reground_reports_exact_node_continuity_when_provider_handle_is_same(self):
+        browser, session, _permission, _page, query = _build()
+        try:
+            observed = browser.observe_target(session.session_id, query)
+            assert observed.target is not None
+
+            regrounded = browser.reground_target(
+                session.session_id,
+                query,
+                observed.target,
+            )
+
+            self.assertIs(
+                regrounded.disposition,
+                BrowserTargetRegroundDisposition.SAME_EXACT_TARGET,
+            )
+            self.assertTrue(regrounded.exact_node_continuity)
+        finally:
+            browser.close()
+
+    def test_reground_reports_rebound_when_dom_node_changes_even_if_semantic_target_id_matches(self):
+        browser, session, _permission, page, query = _build()
+        try:
+            observed = browser.observe_target(session.session_id, query)
+            assert observed.target is not None
+            previous_target_id = observed.target.target_id
+            page.node_generation += 1
+
+            regrounded = browser.reground_target(
+                session.session_id,
+                query,
+                observed.target,
+            )
+
+            assert regrounded.observation.target is not None
+            self.assertEqual(
+                regrounded.observation.target.target_id,
+                previous_target_id,
+                "semantic hash identity is deliberately not physical-node identity",
+            )
+            self.assertIs(
+                regrounded.disposition,
+                BrowserTargetRegroundDisposition.REBOUND_TARGET,
+            )
+            self.assertFalse(regrounded.exact_node_continuity)
         finally:
             browser.close()
 
