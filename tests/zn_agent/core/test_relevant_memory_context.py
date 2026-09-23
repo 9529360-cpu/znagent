@@ -46,7 +46,7 @@ class RelevantMemoryContextTests(unittest.TestCase):
         self.addCleanup(store.close)
         memory = StructuredMemory(store)
         memory.remember(
-            "project", "ZN Agent", aliases=("当前项目", "active project")
+            "project", "ZN Agent", aliases=("当前项目", "active project", "ZN项目")
         )
         memory.remember("unrelated", "should stay private", aliases=("home address",))
         memory.remember("long", "x" * 2_000, aliases=("large detail",))
@@ -58,6 +58,10 @@ class RelevantMemoryContextTests(unittest.TestCase):
         self.assertEqual(memory.relevant_context("update the active project"), [
             {"key": "project", "value": "ZN Agent"}
         ])
+        self.assertEqual(
+            memory.relevant_context("继续ZN项目的开发"),
+            [{"key": "project", "value": "ZN Agent"}],
+        )
         self.assertEqual(memory.relevant_context("please project the image"), [])
         self.assertEqual(
             memory.relevant_context("large detail", max_json_chars=100), []
