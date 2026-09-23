@@ -2,20 +2,20 @@ from __future__ import annotations
 
 """Verified native-select mutation for the ZN managed-browser adapter.
 
-This stays separate from provider/session ownership so the action remains a small
-resident-owned effect contract: one current native ``select`` element, one
-explicit option value, one provider dispatch, then a fresh observation proving
-that the exact same DOM node now exposes the requested selected value.
+The provider-neutral action accepts either one explicit HTML option value or one
+explicit visible option label. Playwright owns the mechanical selection; ZN owns
+exact target authority, same-node continuity, bounded value handling and fresh
+selected-option verification.
 """
 
 import hashlib
 from typing import Any
 
 from .browser import BrowserAction, BrowserEffectEvidence
+from .browser_select_option import browser_select_option_request
 from .models import utc_now
 
 
-_MAX_OPTION_VALUE_UTF16_UNITS = 256
 _MAX_SELECTED_VALUE_CHARS = 1024
 
 _EXACT_NODE_EQUAL_SCRIPT = r"""
@@ -29,15 +29,16 @@ _NATIVE_SELECT_STATE_SCRIPT = r"""
   const supported = tag === "select";
   const disabled = Boolean(element && element.disabled);
   const multiple = Boolean(element && element.multiple);
-  const selected = connected && supported
-    ? Array.from(element.selectedOptions || []).map((option) => String(option.value || ""))
+  const selectedOptions = connected && supported
+    ? Array.from(element.selectedOptions || [])
     : [];
   return {
     connected,
     supported,
     disabled,
     multiple,
-    selected,
+    selected_values: selectedOptions.map((option) => String(option.value || "")),
+    selected_labels: selectedOptions.map((option) => String(option.label || "")),
   };
 }
 """
@@ -54,33 +55,7 @@ def _value_fingerprint(value: str) -> dict[str, Any]:
     }
 
 
-def _requested_value(action: BrowserAction) -> tuple[str, dict[str, Any]]:
-    if "value" not in action.args or not isinstance(action.args.get("value"), str):
-        raise ManagedSelectError(
-            "browser select_option requires one explicit string value argument"
-        )
-    value = action.args["value"]
-    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
-        raise ManagedSelectError(
-            "browser select_option value must not contain control characters"
-        )
-    try:
-        encoded = value.encode("utf-16-le")
-    except UnicodeEncodeError as exc:
-        raise ManagedSelectError(
-            "browser select_option value contains an invalid Unicode scalar sequence"
-        ) from exc
-    units = len(encoded) // 2
-    if units > _MAX_OPTION_VALUE_UTF16_UNITS:
-        raise ManagedSelectError(
-            f"browser select_option value is limited to {_MAX_OPTION_VALUE_UTF16_UNITS} UTF-16 code units"
-        )
-    fingerprint = _value_fingerprint(value)
-    fingerprint["utf16_units"] = units
-    return value, fingerprint
-
-
-def _read_native_select_value(handle: Any) -> str:
+def _read_native_select_state(handle: Any) -> dict[str, str]:
     try:
         raw = handle.evaluate(_NATIVE_SELECT_STATE_SCRIPT)
     except Exception as exc:
@@ -103,21 +78,30 @@ def _read_native_select_value(handle: Any) -> str:
         raise ManagedSelectError(
             "managed browser select_option first slice refuses multi-select targets"
         )
-    selected = raw.get("selected")
-    if not isinstance(selected, list) or len(selected) != 1 or not isinstance(selected[0], str):
+    selected_values = raw.get("selected_values")
+    selected_labels = raw.get("selected_labels")
+    if (
+        not isinstance(selected_values, list)
+        or not isinstance(selected_labels, list)
+        or len(selected_values) != 1
+        or len(selected_labels) != 1
+        or not isinstance(selected_values[0], str)
+        or not isinstance(selected_labels[0], str)
+    ):
         raise ManagedSelectError(
-            "managed browser select target does not expose exactly one selected value"
+            "managed browser select target does not expose exactly one selected option"
         )
-    value = selected[0]
-    if len(value) > _MAX_SELECTED_VALUE_CHARS:
+    value = selected_values[0]
+    label = selected_labels[0]
+    if len(value) > _MAX_SELECTED_VALUE_CHARS or len(label) > _MAX_SELECTED_VALUE_CHARS:
         raise ManagedSelectError(
-            "managed browser selected value exceeds the bounded effect-evidence size"
+            "managed browser selected option exceeds the bounded effect-evidence size"
         )
-    return value
+    return {"value": value, "label": label}
 
 
 def perform_select_option(owner: Any, session: Any, action: BrowserAction) -> BrowserEffectEvidence:
-    """Select one native option and prove the fresh exact-node selected value."""
+    """Select one native option and prove a fresh exact-node selected value/label."""
 
     if action.target is None:
         raise ManagedSelectError("browser select_option requires a current target")
@@ -126,21 +110,27 @@ def perform_select_option(owner: Any, session: Any, action: BrowserAction) -> Br
             "browser select_option currently requires a native select/combobox target"
         )
 
-    requested, expected = _requested_value(action)
+    try:
+        request = browser_select_option_request(action.args)
+    except ValueError as exc:
+        raise ManagedSelectError(str(exc)) from exc
+
     page_id = action.page_id or action.target.page_id or owner._default_page_id(session)
     page = owner._page(session, page_id)
     binding = owner._revalidate_target_binding(session, page_id, action.target)
     before_url = str(getattr(page, "url", "") or "")
-    before_value = _read_native_select_value(binding.handle)
-    if before_value == requested:
+    before_state = _read_native_select_state(binding.handle)
+    if before_state[request.mode] == request.requested:
         raise ManagedSelectError(
-            "browser select_option requested value is already selected before dispatch"
+            f"browser select_option requested {request.mode} is already selected before dispatch"
         )
 
+    requested = request.requested
     try:
-        # Provider return values are deliberately ignored. Completion comes only
-        # from the independently re-observed exact node below.
-        binding.handle.select_option(value=requested)
+        if request.mode == "value":
+            binding.handle.select_option(value=requested)
+        else:
+            binding.handle.select_option(label=requested)
     except Exception as exc:
         owner._refresh_page_observation_after_failed_mutation(session, page_id)
         raise ManagedSelectError(
@@ -170,7 +160,7 @@ def perform_select_option(owner: Any, session: Any, action: BrowserAction) -> Br
     except Exception:
         same_exact_node = False
     try:
-        after_value = _read_native_select_value(fresh_binding.handle)
+        after_state = _read_native_select_state(fresh_binding.handle)
     except Exception as exc:
         owner._dispose_target_binding(fresh_binding)
         owner._refresh_page_observation_after_failed_mutation(session, page_id)
@@ -193,91 +183,43 @@ def perform_select_option(owner: Any, session: Any, action: BrowserAction) -> Br
 
     after_url = post_observation.url
     post_target = post_observation.target
-    before_fp = _value_fingerprint(before_value)
-    after_fp = _value_fingerprint(after_value)
+    before_fp = _value_fingerprint(before_state[request.mode])
+    after_fp = _value_fingerprint(after_state[request.mode])
     data = {
         "provider": session.identity.provider,
+        "selection_mode": request.mode,
         "exact_node_continuity": same_exact_node,
         "selection_dispatched": True,
-        "selected_value_length_before": before_fp["length"],
-        "selected_value_sha256_before": before_fp["sha256"],
-        "selected_value_length_after": after_fp["length"],
-        "selected_value_sha256_after": after_fp["sha256"],
-        "expected_value_length": expected["length"],
-        "expected_value_sha256": expected["sha256"],
-        "expected_utf16_units": expected["utf16_units"],
+        f"selected_{request.mode}_length_before": before_fp["length"],
+        f"selected_{request.mode}_sha256_before": before_fp["sha256"],
+        f"selected_{request.mode}_length_after": after_fp["length"],
+        f"selected_{request.mode}_sha256_after": after_fp["sha256"],
+        f"expected_{request.mode}_length": request.length,
+        f"expected_{request.mode}_sha256": request.sha256,
+        "expected_utf16_units": request.utf16_units,
     }
-    postcondition = "same_exact_target_selected_value"
+    postcondition = f"same_exact_target_selected_{request.mode}"
 
+    error = None
     if post_target is None:
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=post_observation.captured_at,
-            success=False,
-            page_id=page_id,
-            url_before=before_url,
-            url_after=after_url,
-            target_id=action.target.target_id,
-            postcondition=postcondition,
-            data=data,
-            error="browser select_option postcondition lost the current target",
-        )
-    if not same_exact_node:
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=post_observation.captured_at,
-            success=False,
-            page_id=page_id,
-            url_before=before_url,
-            url_after=after_url,
-            target_id=post_target.target_id,
-            postcondition=postcondition,
-            data=data,
-            error="browser select_option postcondition observed a replaced target node",
-        )
-    if post_target.target_id != action.target.target_id:
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=post_observation.captured_at,
-            success=False,
-            page_id=page_id,
-            url_before=before_url,
-            url_after=after_url,
-            target_id=post_target.target_id,
-            postcondition=postcondition,
-            data=data,
-            error="browser select_option postcondition observed changed target identity",
-        )
-    if (
-        int(after_fp["length"]) != int(expected["length"])
-        or str(after_fp["sha256"]) != str(expected["sha256"])
-    ):
-        return BrowserEffectEvidence(
-            action_id=action.action_id,
-            session_id=action.session_id,
-            observed_at=post_observation.captured_at,
-            success=False,
-            page_id=page_id,
-            url_before=before_url,
-            url_after=after_url,
-            target_id=post_target.target_id,
-            postcondition=postcondition,
-            data=data,
-            error="browser select_option postcondition was not observed",
-        )
+        error = "browser select_option postcondition lost the current target"
+    elif not same_exact_node:
+        error = "browser select_option postcondition observed a replaced target node"
+    elif post_target.target_id != action.target.target_id:
+        error = "browser select_option postcondition observed changed target identity"
+    elif after_fp["length"] != request.length or after_fp["sha256"] != request.sha256:
+        error = "browser select_option postcondition was not observed"
 
     return BrowserEffectEvidence(
         action_id=action.action_id,
         session_id=action.session_id,
         observed_at=post_observation.captured_at,
-        success=True,
+        success=error is None,
         page_id=page_id,
         url_before=before_url,
         url_after=after_url,
-        target_id=post_target.target_id,
+        target_id=post_target.target_id if post_target is not None else action.target.target_id,
         postcondition=postcondition,
         data=data,
+        error=error,
     )
