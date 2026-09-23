@@ -170,8 +170,10 @@ jobs:
         with:
           node-version: '22.22.0'
       - name: Test product gate ownership and path matching
+        shell: bash
         run: node --test .github/scripts/zn-product-required-gate.test.mjs
       - name: Wait for required product contracts
+        shell: bash
         env:
           GITHUB_TOKEN: ${{ github.token }}
         run: node .github/scripts/zn-product-required-gate.mjs
