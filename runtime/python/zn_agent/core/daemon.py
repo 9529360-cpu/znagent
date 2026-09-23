@@ -37,6 +37,8 @@ class ResidentRpcServer:
         self.service = ResidentService(self.resident)
         self.work = RecoveryBoundedWorkLedger(self.resident)
         self.work_control = OutcomeAwareRestoreWorkControl(self.work)
+        self.resident.cognitive_delta_handler = self.work.publish_response_delta
+        self.resident.cognitive_response_reset_handler = self.work.reset_response_stream
         self.provider_settings = provider_settings or ProviderSettingsService(self.resident)
         self.input = input_stream or sys.stdin
         self.output = output_stream or sys.stdout

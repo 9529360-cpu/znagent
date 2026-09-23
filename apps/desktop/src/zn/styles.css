@@ -1097,6 +1097,21 @@ body {
   line-height: 1.65;
 }
 
+.zn-stream-caret {
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: -0.12em;
+  border-radius: 2px;
+  background: currentColor;
+  animation: zn-stream-blink 1s steps(2, start) infinite;
+}
+
+@keyframes zn-stream-blink {
+  to { visibility: hidden; }
+}
+
 .zn-message.activity {
   padding: 13px 14px;
   background: rgba(18, 29, 48, .72);

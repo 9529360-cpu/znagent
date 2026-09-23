@@ -1317,6 +1317,14 @@ class ZNResidentRuntime:
                 max_calls = 1
             decision_reason = str(budget.get("reason") or decision_reason)
 
+        delta_handler = getattr(self, "cognitive_delta_handler", None)
+        on_cognitive_delta = None
+        on_cognitive_reset = None
+        if callable(delta_handler):
+            on_cognitive_delta = lambda delta: delta_handler(event.event_id, delta)
+            reset_handler = getattr(self, "cognitive_response_reset_handler", None)
+            if callable(reset_handler):
+                on_cognitive_reset = lambda: reset_handler(event.event_id)
         kernel_result = self.kernel.run_goal(
             cognition.question,
             required_capabilities=cognition.required_capabilities,
@@ -1330,6 +1338,8 @@ class ZNResidentRuntime:
                 },
             },
             max_attempts_override=max_calls,
+            on_cognitive_delta=on_cognitive_delta,
+            on_cognitive_reset=on_cognitive_reset,
         )
         invocations = sum(
             1

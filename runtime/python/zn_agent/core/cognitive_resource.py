@@ -11,6 +11,7 @@ A resource answers one bounded cognition request. It does not own ZN's
 identity, memory, tools, session, planning loop or final decision.
 """
 
+import inspect
 import logging
 import os
 from contextlib import contextmanager
@@ -49,9 +50,9 @@ _LOG = logging.getLogger(__name__)
 def _owned_cognitive_client(client: Any) -> Iterator[Any]:
     """Close the per-invocation SDK client without changing provider outcome.
 
-    The response is non-streaming and detached from its transport. Cleanup must
-    also run for transport failure or cancellation, but an ordinary close error
-    must not turn an already-returned answer into a retryable provider failure.
+    The provider response is consumed before leaving this scope, including
+    streamed chunks. Cleanup must also run for transport failure, but an ordinary
+    close error must not turn a returned answer into a retryable provider failure.
     Builder-supplied lightweight clients may omit close; actual SDK clients own
     their HTTP pool. Never log credential-bearing exception text from cleanup.
     """
@@ -268,7 +269,13 @@ class OpenAICompatibleCognitiveResource:
             kwargs["timeout"] = timeout
         return builder(**kwargs)
 
-    def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
+    def invoke(
+        self,
+        *,
+        question: str,
+        context: str,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> CognitiveIncrement:
         text = str(question or "").strip()
         if not text:
             raise ValueError("bounded cognition question must not be empty")
@@ -289,8 +296,46 @@ class OpenAICompatibleCognitiveResource:
         if isinstance(self.route.metadata.get("extra_body"), dict):
             request["extra_body"] = dict(self.route.metadata["extra_body"])
 
+        if on_delta is not None:
+            request["stream"] = True
         with _owned_cognitive_client(self._client()) as client:
             response = client.chat.completions.create(**request)
+            if on_delta is not None and hasattr(response, "__iter__") and not hasattr(response, "choices"):
+                chunks: list[str] = []
+                finish_reason: str | None = None
+                usage: dict[str, int] = {}
+                try:
+                    for chunk in response:
+                        chunk_usage = _usage_dict(getattr(chunk, "usage", None))
+                        if chunk_usage:
+                            usage = chunk_usage
+                        choices = getattr(chunk, "choices", None) or []
+                        if not choices:
+                            continue
+                        delta = getattr(choices[0], "delta", None)
+                        delta_text = _content_text(getattr(delta, "content", None))
+                        if delta_text:
+                            chunks.append(delta_text)
+                            on_delta(delta_text)
+                        finish_reason = str(getattr(choices[0], "finish_reason", "") or "") or finish_reason
+                finally:
+                    close_stream = getattr(response, "close", None)
+                    if callable(close_stream):
+                        try:
+                            close_stream()
+                        except Exception as exc:
+                            _LOG.warning("Cognitive stream cleanup failed (%s)", type(exc).__name__)
+                result_text = "".join(chunks).strip()
+                if not result_text:
+                    raise RuntimeError("cognitive resource returned an empty response")
+                return CognitiveIncrement(
+                    text=result_text,
+                    provider=self.route.provider,
+                    model=self.route.model,
+                    finish_reason=finish_reason,
+                    usage=usage,
+                    metadata={"api_mode": "chat_completions", "streamed": True},
+                )
         choices = getattr(response, "choices", None) or []
         if not choices:
             raise RuntimeError("cognitive resource returned no choices")
@@ -332,8 +377,41 @@ class CognitiveResourceWorker:
         self.health_observer = health_observer
 
     def run(self, goal: Goal, kernel_context: str) -> WorkerResult:
+        return self._run(goal, kernel_context)
+
+    def run_stream(
+        self,
+        goal: Goal,
+        kernel_context: str,
+        on_delta: Callable[[str], None],
+    ) -> WorkerResult:
+        return self._run(goal, kernel_context, on_delta=on_delta)
+
+    def _run(
+        self,
+        goal: Goal,
+        kernel_context: str,
+        *,
+        on_delta: Callable[[str], None] | None = None,
+    ) -> WorkerResult:
         try:
-            increment = self.resource.invoke(question=goal.task, context=kernel_context)
+            invoke = self.resource.invoke
+            if on_delta is not None:
+                try:
+                    parameters = inspect.signature(invoke).parameters.values()
+                    supports_delta = any(
+                        parameter.name == "on_delta"
+                        or parameter.kind is inspect.Parameter.VAR_KEYWORD
+                        for parameter in parameters
+                    )
+                except (TypeError, ValueError):
+                    supports_delta = False
+                if supports_delta:
+                    increment = invoke(question=goal.task, context=kernel_context, on_delta=on_delta)
+                else:
+                    increment = invoke(question=goal.task, context=kernel_context)
+            else:
+                increment = invoke(question=goal.task, context=kernel_context)
         except Exception as exc:
             self._observe(exc)
             return WorkerResult(
