@@ -10,7 +10,10 @@ on:
       - .github/scripts/run-zn-interactive-python.ps1
       - .github/scripts/zn-interactive-python-entry.py
       - apps/desktop/browser-extension/background.js
+      - apps/desktop/browser-extension/privacy-background.js
       - apps/desktop/browser-extension/manifest.json
+      - apps/desktop/electron/zn-browser-sensitive-field-overlay.test.ts
+      - tests/zn_agent/integration/test_windows_interactive_user_browser_recovery_code.py
       - tests/zn_agent/integration/_run_owned_unittest_module.py
       - tests/zn_agent/integration/test_windows_interactive_pointer_uia.py
       - tests/zn_agent/integration/test_windows_interactive_text_entry.py
@@ -70,7 +73,10 @@ on:
       - .github/scripts/run-zn-interactive-python.ps1
       - .github/scripts/zn-interactive-python-entry.py
       - apps/desktop/browser-extension/background.js
+      - apps/desktop/browser-extension/privacy-background.js
       - apps/desktop/browser-extension/manifest.json
+      - apps/desktop/electron/zn-browser-sensitive-field-overlay.test.ts
+      - tests/zn_agent/integration/test_windows_interactive_user_browser_recovery_code.py
       - tests/zn_agent/integration/_run_owned_unittest_module.py
       - tests/zn_agent/integration/test_windows_interactive_pointer_uia.py
       - tests/zn_agent/integration/test_windows_interactive_text_entry.py
@@ -187,6 +193,7 @@ jobs:
             'tests/zn_agent/integration/test_windows_interactive_user_browser_bridge.py',
             'tests/zn_agent/integration/test_windows_interactive_user_browser_extension.py',
             'tests/zn_agent/integration/test_windows_interactive_user_browser_semantic_grounding.py',
+            'tests/zn_agent/integration/test_windows_interactive_user_browser_recovery_code.py',
             'tests/zn_agent/integration/test_windows_interactive_user_browser_task_context.py',
             'tests/zn_agent/integration/test_windows_interactive_machine_capability.py',
             'tests/zn_agent/integration/test_windows_interactive_application_activation.py'
