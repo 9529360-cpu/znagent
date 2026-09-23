@@ -36,6 +36,41 @@ class _Element:
                 "disabled": self.page.disabled,
                 "multiple": self.page.multiple,
             }
+        if "matching_count" in expression and "same_label_count" in expression:
+            request = arg if isinstance(arg, dict) else {}
+            mode = str(request.get("mode") or "")
+            requested = str(request.get("requested") or "")
+            options = [
+                {"value": value, "label": label}
+                for label, value in self.page.label_values.items()
+            ]
+            field = "value" if mode == "value" else "label"
+            matches = [item for item in options if item[field] == requested]
+            if len(matches) != 1:
+                return {
+                    "connected": True,
+                    "supported": self.page.tag == "select",
+                    "disabled": self.page.disabled,
+                    "multiple": self.page.multiple,
+                    "matching_count": len(matches),
+                    "same_label_count": 0,
+                    "label": "",
+                    "value": "",
+                }
+            choice = matches[0]
+            same_label_count = sum(
+                item["label"] == choice["label"] for item in options
+            )
+            return {
+                "connected": True,
+                "supported": self.page.tag == "select",
+                "disabled": self.page.disabled,
+                "multiple": self.page.multiple,
+                "matching_count": 1,
+                "same_label_count": same_label_count,
+                "label": choice["label"],
+                "value": choice["value"],
+            }
         if "selectedOptions" in expression and "selected_values" in expression:
             return {
                 "connected": True,
