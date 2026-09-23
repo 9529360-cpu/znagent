@@ -13,6 +13,7 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserTargetRegroundDisposition,
 )
 from zn_agent.core.chrome_devtools_mcp_browser import (
     CHROME_DEVTOOLS_MCP_PROVIDER,
@@ -28,6 +29,7 @@ class _FakeChromeMcpClient:
         self.url = "about:blank"
         self.title = ""
         self.text_value = ""
+        self.node_generation = 0
         self.closed = False
 
     def start(self):
@@ -61,13 +63,13 @@ class _FakeChromeMcpClient:
                         "url": self.url,
                         "children": [
                             {
-                                "id": "1_1",
+                                "id": f"{1 + self.node_generation}_1",
                                 "role": "textbox",
                                 "name": "Search",
                                 "value": self.text_value,
                             },
                             {
-                                "id": "1_2",
+                                "id": f"{1 + self.node_generation}_2",
                                 "role": "button",
                                 "name": "Submit",
                             },
@@ -223,6 +225,65 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
         finally:
             browser.close()
         self.assertEqual(browser._sessions, {})
+
+    def test_semantic_target_reground_uses_fresh_provider_uid_for_continuity(self):
+        browser = self._browser()
+        permission = self._permission()
+        session = browser.open_session(permission=permission, headless=True)
+        query = BrowserTargetQuery(
+            kind=BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
+            value="Submit",
+        )
+        try:
+            initial = browser.observe(session.session_id)
+            navigate = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.NAVIGATE,
+                page_id=initial.page_id,
+                args={"url": "https://example.test/start"},
+                expected={"url_equals": "https://example.test/start"},
+            )
+            moved = browser.act(
+                navigate,
+                BrowserActionAuthority.from_observation(
+                    navigate,
+                    initial,
+                    permission,
+                ),
+            )
+            self.assertTrue(moved.success, moved.error)
+            observed = browser.observe_target(
+                session.session_id,
+                query,
+                page_id=moved.page_id,
+            )
+            assert observed.target is not None
+
+            same = browser.reground_target(
+                session.session_id,
+                query,
+                observed.target,
+                page_id=observed.page_id,
+            )
+            self.assertIs(
+                same.disposition,
+                BrowserTargetRegroundDisposition.SAME_EXACT_TARGET,
+            )
+
+            browser._sessions[session.session_id].client.node_generation += 1
+            rebound = browser.reground_target(
+                session.session_id,
+                query,
+                observed.target,
+                page_id=observed.page_id,
+            )
+            self.assertIs(
+                rebound.disposition,
+                BrowserTargetRegroundDisposition.REBOUND_TARGET,
+            )
+            self.assertFalse(rebound.exact_node_continuity)
+        finally:
+            browser.close()
 
     def test_command_uses_pinned_runtime_real_chrome_and_privacy_flags(self):
         with tempfile.TemporaryDirectory() as tmp:
