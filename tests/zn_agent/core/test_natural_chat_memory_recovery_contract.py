@@ -24,7 +24,7 @@ class _MemoryCredentialStore:
     def status(self) -> CredentialStoreStatus:
         return CredentialStoreStatus(
             available=True,
-            backend="e2e-memory",
+            backend="contract-memory",
             error=None,
         )
 
@@ -106,7 +106,7 @@ class _TelegramAdapter:
         pass
 
 
-class NaturalChatMemoryRecoveryE2ETests(unittest.TestCase):
+class NaturalChatMemoryRecoveryContractTests(unittest.TestCase):
     def _configure_capture(self, resident, capture) -> None:
         routes = list(resident.kernel.router.routes)
         self.assertTrue(routes, "configured provider did not create a route")
@@ -283,7 +283,8 @@ class NaturalChatMemoryRecoveryE2ETests(unittest.TestCase):
             self.assertTrue(second_progress["progress"]["finalized"])
             self.assertEqual(second_progress["thread"]["id"], thread_id)
 
-            second_context = self._bounded_context(capture[-1]["context"])
+            second_state = self._bounded_context(capture[-1]["context"])
+            second_context = second_state["bounded_context"]
             conversation = second_context["work_conversation"]
             self.assertEqual(conversation["thread_id"], thread_id)
             self.assertTrue(
@@ -375,7 +376,8 @@ class NaturalChatMemoryRecoveryE2ETests(unittest.TestCase):
                 telegram_after_restart.sent[0].text,
             )
 
-            third_context = self._bounded_context(capture[-1]["context"])
+            third_state = self._bounded_context(capture[-1]["context"])
+            third_context = third_state["bounded_context"]
             self.assertEqual(
                 third_context["work_conversation"]["thread_id"],
                 thread_id,

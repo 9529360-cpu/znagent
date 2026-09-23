@@ -31,6 +31,7 @@ _RESPONSE_PREFERENCE_KEYS = {
     "response verbosity": "verbosity",
     "reply verbosity": "verbosity",
     "\u56de\u7b54\u8be6\u7ec6\u7a0b\u5ea6": "verbosity",
+    "\u56de\u590d\u8be6\u7ec6\u7a0b\u5ea6": "verbosity",
 }
 
 
