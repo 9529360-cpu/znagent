@@ -22,7 +22,7 @@ env:
   CI: 'true'
   NODE_OPTIONS: --max-old-space-size=4096
   ZN_DESKTOP_UPDATE_CHANNEL_URL: ${{ vars.ZN_UPDATE_CHANNEL_URL }}
-  ZN_WINDOWS_SIGNING_PUBLISHERS: ${{ vars.ZN_WINDOWS_SIGNING_PUBLISHERS }}
+  ZN_UPDATE_SIGNING_PUBLIC_KEYS: ${{ vars.ZN_UPDATE_SIGNING_PUBLIC_KEYS }}
 
 concurrency:
   group: zn-release-${{ github.ref }}
@@ -97,26 +97,16 @@ jobs:
           "version=$version" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "tag=$tag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
-      - name: Require formal Windows release trust configuration
+      - name: Require formal update trust configuration
         if: ${{ github.ref_type == 'tag' }}
-        env:
-          WIN_CSC_LINK: ${{ secrets.ZN_WINDOWS_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.ZN_WINDOWS_CSC_KEY_PASSWORD }}
         run: |
           if ([string]::IsNullOrWhiteSpace($env:ZN_DESKTOP_UPDATE_CHANNEL_URL)) {
             throw 'Set repository variable ZN_UPDATE_CHANNEL_URL to the public ZN stable.json endpoint before publishing a formal tag.'
           }
           node -e "const raw=process.env.ZN_DESKTOP_UPDATE_CHANNEL_URL; const url=new URL(raw); if(url.protocol!=='https:' || !url.pathname.endsWith('/stable.json')) throw new Error('ZN_UPDATE_CHANNEL_URL must be an HTTPS URL ending in /stable.json')"
           if ($LASTEXITCODE -ne 0) { throw 'invalid ZN update channel URL' }
-          if ([string]::IsNullOrWhiteSpace($env:ZN_WINDOWS_SIGNING_PUBLISHERS)) {
-            throw 'Set repository variable ZN_WINDOWS_SIGNING_PUBLISHERS to the semicolon-separated Authenticode publisher allowlist before publishing a formal tag.'
-          }
-          $publishers = @($env:ZN_WINDOWS_SIGNING_PUBLISHERS -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
-          if ($publishers.Count -eq 0) {
-            throw 'ZN_WINDOWS_SIGNING_PUBLISHERS did not contain a publisher name.'
-          }
-          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)) {
-            throw 'Configure secret ZN_WINDOWS_CSC_LINK before publishing a formal Windows tag.'
+          if ([string]::IsNullOrWhiteSpace($env:ZN_UPDATE_SIGNING_PUBLIC_KEYS)) {
+            throw 'Set repository variable ZN_UPDATE_SIGNING_PUBLIC_KEYS before publishing a formal tag.'
           }
 
       - name: Stage ZN-owned packaged runtime
@@ -129,9 +119,6 @@ jobs:
         run: npm run build --workspace apps/desktop
 
       - name: Build ZN Windows installer artifacts from short path
-        env:
-          WIN_CSC_LINK: ${{ secrets.ZN_WINDOWS_CSC_LINK }}
-          WIN_CSC_KEY_PASSWORD: ${{ secrets.ZN_WINDOWS_CSC_KEY_PASSWORD }}
         run: |
           $drive = 'Z:'
           if (Test-Path "$drive\") {
@@ -143,12 +130,7 @@ jobs:
             Push-Location "$drive\apps\desktop"
             try {
               Remove-Item -Recurse -Force release -ErrorAction SilentlyContinue
-              $builderArgs = @('--config', 'electron-builder.zn.yml', '--win', '--publish', 'never')
-              if ($env:GITHUB_REF_TYPE -eq 'tag') {
-                $builderArgs += '--config.win.signAndEditExecutable=true'
-                $builderArgs += '--config.forceCodeSigning=true'
-              }
-              node scripts/run-electron-builder.mjs @builderArgs
+              node scripts/run-electron-builder.mjs --config electron-builder.zn.yml --win --publish never
               if ($LASTEXITCODE -ne 0) { throw "electron-builder failed with exit code $LASTEXITCODE" }
             } finally {
               Pop-Location
@@ -156,14 +138,6 @@ jobs:
           } finally {
             & subst.exe $drive /D
           }
-
-      - name: Verify formal Windows Authenticode trust
-        if: ${{ github.ref_type == 'tag' }}
-        run: |
-          & "$env:GITHUB_WORKSPACE\apps\desktop\scripts\verify-zn-windows-authenticode.ps1" `
-            -ReleaseRoot "$env:GITHUB_WORKSPACE\apps\desktop\release" `
-            -ExpectedPublishers $env:ZN_WINDOWS_SIGNING_PUBLISHERS
-          if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed with exit code $LASTEXITCODE" }
 
       - name: Verify runtime inside packaged Windows app
         env:
@@ -336,12 +310,19 @@ jobs:
           name: zn-desktop-windows
           path: dist
 
-      - name: Prepare public update-channel bundle
+      - name: Prepare and sign public update-channel bundle
         env:
           ZN_PUBLIC_RELEASE_URL: ${{ vars.ZN_PUBLIC_RELEASE_URL }}
+          ZN_UPDATE_SIGNING_PRIVATE_KEY: ${{ secrets.ZN_UPDATE_SIGNING_PRIVATE_KEY }}
         run: |
+          if ([string]::IsNullOrWhiteSpace($env:ZN_UPDATE_SIGNING_PRIVATE_KEY)) {
+            throw 'Configure secret ZN_UPDATE_SIGNING_PRIVATE_KEY before publishing a formal release.'
+          }
           $version = $env:GITHUB_REF_NAME -replace '^zn-v', ''
           node apps/desktop/scripts/prepare-zn-public-channel.mjs dist $version public-channel
+          if ($LASTEXITCODE -ne 0) { throw "public update-channel preparation failed with exit code $LASTEXITCODE" }
+          node apps/desktop/scripts/sign-zn-update-channel.mjs public-channel/stable.json
+          if ($LASTEXITCODE -ne 0) { throw "update-channel signing failed with exit code $LASTEXITCODE" }
 
       - name: Upload public-channel audit artifact
         uses: actions/upload-artifact@v4
