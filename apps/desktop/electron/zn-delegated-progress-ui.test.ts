@@ -3,10 +3,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { build } from 'esbuild'
 import { test, vi } from 'vitest'
-import { loadZnWorkThreads, loadZnWorkProgress, type ZnWorkProgress, type ZnWorkProgressResult } from '../src/zn/resident-client'
-import { loadZnThreadCache, saveZnThreadCache, type ZnThread } from '../src/zn/state'
-import { hasZnUnfinishedWork, normalizeZnActiveWorkRun, observeZnWorkProgress } from '../src/zn/work-reconnection'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const desktopRoot = path.resolve(here, '..')
@@ -91,19 +89,71 @@ test('continuation inspection returns control to the composer without finalizing
   assert.doesNotMatch(inspectionBranch, /finalized\s*=/)
 })
 
+// Like zn-delegated-progress.test.ts, execute the actual renderer bundle rather
+// than importing DOM-dependent source into Electron's deliberately DOM-free
+// TypeScript project. Renderer source remains checked by its own strict project.
+type ActiveRun = { threadId: string; eventId: string }
+type Thread = {
+  id: string; title: string; createdAt: number; updatedAt: number
+  messages: unknown[]; artifacts: unknown[]; activeRun?: ActiveRun
+}
+type Progress = ActiveRun & {
+  status: string; stage: string; nextAction: string; terminal: boolean
+  finalized: boolean; updatedAt: number; bodyActions: unknown[]
+  recovery?: { replayBlocked: boolean }
+}
+type ProgressResult = { progress: Progress; thread?: Thread }
+type ReconnectionModules = {
+  normalizeZnActiveWorkRun: (value: unknown, threadId: string) => ActiveRun | undefined
+  hasZnUnfinishedWork: (thread: Thread | null, progress: Progress | null) => boolean
+  observeZnWorkProgress: (
+    run: ActiveRun,
+    read: (threadId: string, eventId: string) => Promise<ProgressResult>,
+    onUpdate: (value: ProgressResult) => void,
+    onError: (error: Error) => void
+  ) => () => void
+  loadZnThreadCache: () => Thread[]
+  saveZnThreadCache: (threads: Thread[]) => void
+  loadZnWorkThreads: () => Promise<Thread[]>
+  loadZnWorkProgress: (threadId: string, eventId: string) => Promise<ProgressResult>
+}
+let rendererModules: Promise<ReconnectionModules> | undefined
+function loadReconnectionModules(): Promise<ReconnectionModules> {
+  rendererModules ??= (async () => {
+    const result = await build({
+      stdin: {
+        contents: [
+          "export * from './src/zn/work-reconnection';",
+          "export { loadZnWorkThreads, loadZnWorkProgress } from './src/zn/resident-client';",
+          "export { loadZnThreadCache, saveZnThreadCache } from './src/zn/state';"
+        ].join('\n'),
+        resolveDir: desktopRoot,
+        sourcefile: 'reconnection-test-entry.ts',
+        loader: 'ts'
+      },
+      bundle: true, write: false, format: 'esm', platform: 'browser', target: 'es2023'
+    })
+    assert.ok(result.outputFiles[0])
+    const url = `data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`
+    return await import(url) as ReconnectionModules
+  })()
+  return rendererModules
+}
+
 const activeRun = { threadId: 'thread-a', eventId: 'event-a' }
-function progressResult(overrides: Partial<ZnWorkProgress> = {}): ZnWorkProgressResult {
+function progressResult(overrides: Partial<Progress> = {}): ProgressResult {
   return { progress: {
     ...activeRun, status: 'processing', stage: 'working', nextAction: 'observe',
     terminal: false, finalized: false, updatedAt: 1, bodyActions: [], ...overrides
   } }
 }
-function threadWithRun(): ZnThread {
+function threadWithRun(): Thread {
   return { id: activeRun.threadId, title: 'Current work', createdAt: 1, updatedAt: 1,
     messages: [], artifacts: [], activeRun }
 }
 
-test('reconnection identity is same-thread Resident evidence and is never read from the cache', () => {
+test('reconnection identity is same-thread Resident evidence and is never read from the cache', async () => {
+  const { normalizeZnActiveWorkRun, loadZnThreadCache, saveZnThreadCache } = await loadReconnectionModules()
   assert.deepEqual(normalizeZnActiveWorkRun({ thread_id: 'thread-a', event_id: 'event-a', command: 'private' }, 'thread-a'), activeRun)
   for (const invalid of [null, [], {}, { thread_id: 'other', event_id: 'event-a' }, { thread_id: 'thread-a', event_id: 42 }]) {
     assert.equal(normalizeZnActiveWorkRun(invalid, 'thread-a'), undefined)
@@ -121,7 +171,8 @@ test('reconnection identity is same-thread Resident evidence and is never read f
   } finally { vi.unstubAllGlobals() }
 })
 
-test('reconnected Work locks duplicate submission until exact-event inspection or completion', () => {
+test('reconnected Work locks duplicate submission until exact-event inspection or completion', async () => {
+  const { hasZnUnfinishedWork } = await loadReconnectionModules()
   const thread = threadWithRun()
   assert.equal(hasZnUnfinishedWork(thread, null), true)
   assert.equal(hasZnUnfinishedWork(thread, progressResult().progress), true)
@@ -132,8 +183,9 @@ test('reconnected Work locks duplicate submission until exact-event inspection o
 })
 
 test('read-only reconnect survives disconnect and delivers completion without resubmitting', async () => {
+  const { observeZnWorkProgress } = await loadReconnectionModules()
   vi.useFakeTimers()
-  const updates: ZnWorkProgressResult[] = []
+  const updates: ProgressResult[] = []
   const errors: Error[] = []
   let reads = 0
   const reader = vi.fn(async () => {
@@ -155,9 +207,10 @@ test('read-only reconnect survives disconnect and delivers completion without re
 })
 
 test('cleanup ignores late replies and keeps only one outstanding progress request', async () => {
+  const { observeZnWorkProgress } = await loadReconnectionModules()
   vi.useFakeTimers()
-  let resolve!: (result: ZnWorkProgressResult) => void
-  const reader = vi.fn(() => new Promise<ZnWorkProgressResult>(done => { resolve = done }))
+  let resolve!: (result: ProgressResult) => void
+  const reader = vi.fn(() => new Promise<ProgressResult>(done => { resolve = done }))
   const updates = vi.fn()
   const errors = vi.fn()
   const stop = observeZnWorkProgress(activeRun, reader, updates, errors)
@@ -174,6 +227,7 @@ test('cleanup ignores late replies and keeps only one outstanding progress reque
 })
 
 test('mismatched progress identity cannot overwrite the selected Work', async () => {
+  const { observeZnWorkProgress } = await loadReconnectionModules()
   vi.useFakeTimers()
   const updates = vi.fn()
   const errors = vi.fn()
@@ -187,6 +241,7 @@ test('mismatched progress identity cannot overwrite the selected Work', async ()
 })
 
 test('inspection stops observation without inventing terminal Work truth', async () => {
+  const { observeZnWorkProgress } = await loadReconnectionModules()
   vi.useFakeTimers()
   const result = progressResult({ stage: 'inspection_complete' })
   const reader = vi.fn(async () => result)
@@ -202,6 +257,7 @@ test('inspection stops observation without inventing terminal Work truth', async
 })
 
 test('actual renderer client normalizes active Work and reconnects through existing read RPC only', async () => {
+  const { loadZnWorkThreads, loadZnWorkProgress } = await loadReconnectionModules()
   const workStart = vi.fn()
   const workProgress = vi.fn(async () => ({ progress: {
     event_id: 'event-a', thread_id: 'thread-a', status: 'processing',
