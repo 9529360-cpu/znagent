@@ -43,13 +43,21 @@ class _ElementHandle:
         if "selectedOptions" in expression and "element.multiple" in expression:
             connected = bool(self.node.get("connected", True))
             supported = bool(self.node.get("supported", True))
-            selected = [str(self.node.get("selected", ""))] if connected and supported else []
+            selected_values = (
+                [str(self.node.get("selected", ""))] if connected and supported else []
+            )
+            selected_labels = (
+                [str(self.node.get("selected_label", self.node.get("selected", "")))]
+                if connected and supported
+                else []
+            )
             return {
                 "connected": connected,
                 "supported": supported,
                 "disabled": bool(self.node.get("disabled", False)),
                 "multiple": bool(self.node.get("multiple", False)),
-                "selected": selected,
+                "selected_values": selected_values,
+                "selected_labels": selected_labels,
             }
         if "document.querySelectorAll" in expression and "element.isConnected" in expression:
             current = self.page.node
@@ -69,14 +77,25 @@ class _ElementHandle:
             }
         raise AssertionError("unexpected evaluate expression")
 
-    def select_option(self, *, value):
+    def select_option(self, *, value=None, label=None):
         if self.disposed or not self.node.get("connected", True):
             raise RuntimeError("detached element")
+        if (value is None) == (label is None):
+            raise RuntimeError("fake select requires exactly one value or label")
         self.page.select_dispatches += 1
         if self.node.get("select_error"):
             raise RuntimeError("provider select error")
         if not self.node.get("select_blocked"):
-            self.node["selected"] = value
+            if value is not None:
+                self.node["selected"] = value
+                self.node["selected_label"] = self.node.get("value_labels", {}).get(
+                    value, value
+                )
+            else:
+                self.node["selected_label"] = label
+                self.node["selected"] = self.node.get("label_values", {}).get(
+                    label, label
+                )
         if self.node.get("replace_on_select"):
             replacement = dict(self.node)
             replacement.pop("replace_on_select", None)
@@ -314,6 +333,41 @@ class ManagedBrowserSelectOptionTests(unittest.TestCase):
             self.assertEqual(effect.data["selected_value_length_after"], len(raw_requested))
             self.assertNotEqual(effect.observed_at, observed.captured_at)
             self.assertNotIn(raw_requested, json.dumps(effect.data, sort_keys=True))
+        finally:
+            browser.close()
+
+    def test_select_by_visible_label_uses_fresh_same_node_label_evidence(self):
+        raw_label = "Private Beta"
+        browser, session, permission, page, observed = _build(
+            {
+                "connected": True,
+                "selected": "alpha",
+                "selected_label": "Alpha",
+                "label_values": {raw_label: "beta-private"},
+            }
+        )
+        try:
+            action = BrowserAction.create(
+                session_id=session.session_id,
+                page_id=observed.page_id,
+                kind=BrowserActionKind.SELECT_OPTION,
+                target=observed.target,
+                args={"label": raw_label},
+            )
+            authority = BrowserActionAuthority.from_observation(
+                action, observed, permission
+            )
+            effect = browser.act(action, authority)
+            self.assertTrue(effect.success, effect.error)
+            self.assertEqual(effect.postcondition, "same_exact_target_selected_label")
+            self.assertEqual(effect.data["selection_mode"], "label")
+            self.assertTrue(effect.data["exact_node_continuity"])
+            self.assertTrue(effect.data["selection_dispatched"])
+            digest = hashlib.sha256(raw_label.encode("utf-8")).hexdigest()
+            self.assertEqual(effect.data["expected_label_sha256"], digest)
+            self.assertEqual(effect.data["selected_label_sha256_after"], digest)
+            self.assertEqual(page.node["selected"], "beta-private")
+            self.assertNotIn(raw_label, json.dumps(effect.data, sort_keys=True))
         finally:
             browser.close()
 
