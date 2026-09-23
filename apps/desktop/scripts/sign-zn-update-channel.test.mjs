@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import { execFileSync } from 'node:child_process'
-import { createHash, createPublicKey, generateKeyPairSync, verify } from 'node:crypto'
+import { createHash, generateKeyPairSync, verify } from 'node:crypto'
 import fs from 'node:fs'
 import fsp from 'node:fs/promises'
 import os from 'node:os'
@@ -66,7 +66,7 @@ test('sign script produces a trusted Ed25519 signature and rejects a mismatched 
     delete unsigned.signatures
     const payload = Buffer.from(canonicalize(unsigned), 'utf8')
     const signature = Buffer.from(signed.signatures[0].value, 'base64')
-    assert.equal(verify(null, payload, createPublicKey(publicKey), signature), true)
+    assert.equal(verify(null, payload, publicKey, signature), true)
 
     const other = generateKeyPairSync('ed25519').publicKey.export({ format: 'der', type: 'spki' }).toString('base64')
     assert.throws(() => {
