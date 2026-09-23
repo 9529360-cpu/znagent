@@ -6,6 +6,7 @@ import { initializeZnDesktopI18n } from './i18n'
 import { ZnWorkbench } from './workbench'
 import './styles.css'
 import './liquid-performance.css'
+import './chat-shell.css'
 import './desktop-resilience.css'
 
 document.title = 'ZN'
