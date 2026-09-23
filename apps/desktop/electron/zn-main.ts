@@ -12,6 +12,7 @@ import {
   type ZnLocalePreference,
   type ZnTranslationKey
 } from '../localization/zn-localization'
+import { handleZnDesktopIpc, trustZnDesktopWebContents } from './zn-ipc-trust'
 import { readZnLocalePreference, writeZnLocalePreference } from './zn-locale-preference'
 import { configureZnPackagedRuntime } from './zn-packaged-runtime'
 import { parseZnDeepLink, type ZnDeepLink, znDeepLinksFromArgv } from './zn-protocol'
@@ -206,6 +207,7 @@ export function createZnDesktopWindow(): BrowserWindow {
       sandbox: true
     }
   })
+  trustZnDesktopWebContents(window.webContents)
   window.center()
   window.setBounds(fitZnWindowToWorkArea(window.getBounds(), screen.getDisplayMatching(window.getBounds()).workArea))
   window.setMenu(null)
@@ -393,7 +395,7 @@ function initializeGlobalInvocation(): void {
 
 function registerZnShellIpc(): void {
   ipcMain.removeHandler('zn:shell:get-locale-state')
-  ipcMain.handle('zn:shell:get-locale-state', () => {
+  handleZnDesktopIpc('zn:shell:get-locale-state', () => {
     if (currentLocaleState.preference === 'system') {
       currentLocaleState = buildLocaleState('system')
     }
@@ -404,7 +406,7 @@ function registerZnShellIpc(): void {
   })
 
   ipcMain.removeHandler('zn:shell:set-locale-preference')
-  ipcMain.handle('zn:shell:set-locale-preference', (_event, preference: unknown) => {
+  handleZnDesktopIpc('zn:shell:set-locale-preference', (_event, preference: unknown) => {
     if (!isZnLocalePreference(preference)) {
       throw new Error('invalid ZN locale preference')
     }
@@ -419,7 +421,7 @@ function registerZnShellIpc(): void {
 
   ipcMain.removeHandler('zn:shell:set-window-mode')
   ipcMain.removeHandler('zn:shell:ack-window-mode-transition')
-  ipcMain.handle('zn:shell:ack-window-mode-transition', (event, ack: unknown) => {
+  handleZnDesktopIpc('zn:shell:ack-window-mode-transition', (event, ack: unknown) => {
     if (
       !ack ||
       typeof ack !== 'object' ||
@@ -443,7 +445,7 @@ function registerZnShellIpc(): void {
     pending.resolve()
     return { accepted: true }
   })
-  ipcMain.handle('zn:shell:set-window-mode', async (_event, mode: unknown) => {
+  handleZnDesktopIpc('zn:shell:set-window-mode', async (_event, mode: unknown) => {
     if (mode !== 'compact' && mode !== 'expanded') {
       throw new Error('invalid ZN window mode')
     }
