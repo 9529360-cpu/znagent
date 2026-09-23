@@ -11,7 +11,7 @@ agent orchestration or constructing the legacy AIAgent.
 import os
 from typing import Any, Callable, Mapping
 
-from .cognitive_resource import CognitiveIncrement
+from .cognitive_resource import CognitiveIncrement, _owned_cognitive_client
 from .models import ModelRoute
 
 
@@ -120,7 +120,11 @@ class AnthropicCognitiveResource:
                 ) from exc
             builder = Anthropic
 
-        kwargs: dict[str, Any] = {"api_key": self.route.metadata["api_key"]}
+        kwargs: dict[str, Any] = {
+            "api_key": self.route.metadata["api_key"],
+            # A single durable Worker attempt must not hide SDK retries.
+            "max_retries": 0,
+        }
         if self.route.metadata.get("base_url"):
             kwargs["base_url"] = self.route.metadata["base_url"]
         if self.route.metadata.get("timeout") is not None:
@@ -153,7 +157,8 @@ class AnthropicCognitiveResource:
         if isinstance(thinking, dict) and thinking:
             request["thinking"] = dict(thinking)
 
-        response = self._client().messages.create(**request)
+        with _owned_cognitive_client(self._client()) as client:
+            response = client.messages.create(**request)
         blocks = getattr(response, "content", None)
         if not isinstance(blocks, list):
             raise RuntimeError("Anthropic resource returned invalid content blocks")
