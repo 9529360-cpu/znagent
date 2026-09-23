@@ -93,7 +93,7 @@ def channel_work_thread_id(
     if not normalized_channel or not normalized_conversation:
         raise ValueError("channel conversation requires channel and conversation_id")
     digest = hashlib.sha256(
-        f"{normalized_channel}\\0{normalized_conversation}\\0{normalized_transport_thread}".encode(
+        f"{normalized_channel}\0{normalized_conversation}\0{normalized_transport_thread}".encode(
             "utf-8", errors="replace"
         )
     ).hexdigest()[:24]
