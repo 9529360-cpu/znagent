@@ -232,6 +232,21 @@ class ManagedBrowserProviderRouter:
             page_id=page_id,
         )
 
+    def reground_target(
+        self,
+        session_id: str,
+        query,
+        previous_target,
+        *,
+        page_id: str = "",
+    ):
+        return self._adapter(session_id).reground_target(
+            session_id,
+            query,
+            previous_target,
+            page_id=page_id,
+        )
+
     def act(
         self,
         action: BrowserAction,
