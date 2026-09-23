@@ -352,6 +352,17 @@ class CognitiveResourceWorker:
         metrics.update(increment.usage)
         if increment.finish_reason:
             metrics["finish_reason"] = increment.finish_reason
+        if increment.finish_reason == "length":
+            # The transport returned successfully, but its answer is incomplete.
+            # Keep usage accounting without promoting partial prose or JSON into
+            # an answer/action proposal. Kernel owns any later explicit attempt;
+            # this boundary never extends the budget or continues the request.
+            metrics["response_truncated"] = True
+            return WorkerResult(
+                success=False,
+                error="cognitive response was truncated at the provider token/context limit",
+                metrics=metrics,
+            )
         return WorkerResult(success=True, response=increment.text, metrics=metrics)
 
     def _observe(self, error: BaseException | None) -> None:
