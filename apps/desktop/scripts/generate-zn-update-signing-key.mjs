@@ -12,6 +12,15 @@ const publicDer = publicKey.export({ format: 'der', type: 'spki' })
 const privatePath = path.join(outputDir, 'zn-update-private-key.pem')
 const publicPath = path.join(outputDir, 'zn-update-public-key.txt')
 
+for (const candidate of [privatePath, publicPath]) {
+  try {
+    await fs.access(candidate)
+    throw new Error(`refusing to overwrite existing update signing material: ${candidate}`)
+  } catch (error) {
+    if (error?.code !== 'ENOENT') throw error
+  }
+}
+
 await fs.writeFile(privatePath, privatePem, { mode: 0o600 })
 await fs.writeFile(publicPath, `${publicDer.toString('base64')}\n`, { mode: 0o600 })
 
