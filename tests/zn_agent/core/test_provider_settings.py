@@ -8,11 +8,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import zn_agent.core.provider_settings as provider_settings_module
 from zn_agent.core.config import load_zn_config
 from zn_agent.core.credentials import CredentialStoreStatus, CredentialStoreUnavailable
 from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.provider_bridge import build_resident_runtime, build_runtime
-from zn_agent.core.provider_settings import ProviderSettingsService
+from zn_agent.core.provider_settings import ProviderSettingsConsistencyError, ProviderSettingsService
 from zn_agent.core.worker import UnavailableModelWorkerFactory
 
 
@@ -273,6 +274,145 @@ class ProviderSettingsTests(unittest.TestCase):
                 service.update({"provider": "openai", "model": "gpt-test"})
             self.assertNotIn("gpt-test", config_path.read_text(encoding="utf-8"))
             resident.store.close()
+
+    def test_config_write_failure_restores_previous_credential_and_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "config.yaml"
+            credentials = MemoryCredentialStore()
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+                credential_store=credentials,
+            )
+            service = ProviderSettingsService(
+                resident,
+                config_path=config_path,
+                credential_store=credentials,
+                environ={},
+            )
+            try:
+                service.update(
+                    {
+                        "provider": "openai",
+                        "model": "gpt-old",
+                        "api_key": "old-secret",
+                    }
+                )
+                with patch(
+                    "zn_agent.core.provider_settings.save_zn_config",
+                    side_effect=OSError("disk full"),
+                ):
+                    with self.assertRaisesRegex(OSError, "disk full"):
+                        service.update(
+                            {
+                                "provider": "openai",
+                                "model": "gpt-new",
+                                "api_key": "new-secret",
+                            }
+                        )
+
+                self.assertEqual(credentials.values["provider:openai"], "old-secret")
+                self.assertEqual(load_zn_config(config_path)["model"]["default"], "gpt-old")
+                route = resident.kernel.router.routes[0]
+                self.assertEqual(route.model, "gpt-old")
+                self.assertEqual(route.metadata["api_key"], "old-secret")
+            finally:
+                resident.store.close()
+
+    def test_hot_apply_failure_compensates_config_credential_and_runtime(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "config.yaml"
+            credentials = MemoryCredentialStore()
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+                credential_store=credentials,
+            )
+            service = ProviderSettingsService(
+                resident,
+                config_path=config_path,
+                credential_store=credentials,
+                environ={},
+            )
+            try:
+                service.update(
+                    {
+                        "provider": "openai",
+                        "model": "gpt-old",
+                        "api_key": "old-secret",
+                    }
+                )
+                original_apply = provider_settings_module.apply_zn_cognitive_config
+
+                def fail_new_config(runtime, config, **kwargs):
+                    model = config.get("model") if isinstance(config, dict) else None
+                    if isinstance(model, dict) and model.get("default") == "gpt-new":
+                        raise RuntimeError("hot apply failed")
+                    return original_apply(runtime, config, **kwargs)
+
+                with patch(
+                    "zn_agent.core.provider_settings.apply_zn_cognitive_config",
+                    side_effect=fail_new_config,
+                ):
+                    with self.assertRaisesRegex(RuntimeError, "hot apply failed"):
+                        service.update(
+                            {
+                                "provider": "openai",
+                                "model": "gpt-new",
+                                "api_key": "new-secret",
+                            }
+                        )
+
+                self.assertEqual(credentials.values["provider:openai"], "old-secret")
+                self.assertEqual(load_zn_config(config_path)["model"]["default"], "gpt-old")
+                route = resident.kernel.router.routes[0]
+                self.assertEqual(route.model, "gpt-old")
+                self.assertEqual(route.metadata["api_key"], "old-secret")
+            finally:
+                resident.store.close()
+
+    def test_incomplete_compensation_surfaces_consistency_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            credentials = MemoryCredentialStore()
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+                credential_store=credentials,
+            )
+            service = ProviderSettingsService(
+                resident,
+                config_path=root / "config.yaml",
+                credential_store=credentials,
+                environ={},
+            )
+            try:
+                with (
+                    patch(
+                        "zn_agent.core.provider_settings.save_zn_config",
+                        side_effect=OSError("disk full"),
+                    ),
+                    patch.object(
+                        service,
+                        "_restore_credential",
+                        side_effect=OSError("keyring rollback failed"),
+                    ),
+                ):
+                    with self.assertRaisesRegex(
+                        ProviderSettingsConsistencyError,
+                        "rollback was incomplete",
+                    ):
+                        service.update(
+                            {
+                                "provider": "openai",
+                                "model": "gpt-test",
+                                "api_key": "new-secret",
+                            }
+                        )
+            finally:
+                resident.store.close()
 
     def test_provider_settings_rpc_is_sanitized(self):
         with tempfile.TemporaryDirectory() as tmp:
