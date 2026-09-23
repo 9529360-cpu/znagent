@@ -116,7 +116,24 @@ class _FakeChromeMcpClient:
             function = str(args.get("function") or "")
             uid_args = list(args.get("args") or [])
             uid = str(uid_args[0]) if uid_args else ""
-            if "selected_text" in function:
+            if "matching_count" in function:
+                if 'const mode = "label";' in function and '"Private Beta"' in function:
+                    choice = {"label": "Private Beta", "value": "beta-private"}
+                elif 'const mode = "value";' in function and '"alpha"' in function:
+                    choice = {"label": "Alpha", "value": "alpha"}
+                else:
+                    choice = None
+                value = {
+                    "connected": True,
+                    "supported": True,
+                    "disabled": False,
+                    "multiple": False,
+                    "matching_count": 1 if choice is not None else 0,
+                    "same_label_count": 1 if choice is not None else 0,
+                    "label": "" if choice is None else choice["label"],
+                    "value": "" if choice is None else choice["value"],
+                }
+            elif "selected_text" in function:
                 if uid == "1_3":
                     value = {
                         "connected": True,
@@ -332,41 +349,39 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
 
     def test_select_value_mapping_refuses_ambiguous_visible_provider_label(self):
         browser = self._browser()
-        state = {
-            "options_truncated": False,
-            "options": [
-                {"label": "Duplicate", "value": "first"},
-                {"label": "Duplicate", "value": "second"},
-            ],
+        evidence = {
+            "connected": True,
+            "supported": True,
+            "disabled": False,
+            "multiple": False,
+            "matching_count": 1,
+            "same_label_count": 2,
+            "label": "Duplicate",
+            "value": "second",
         }
         with self.assertRaisesRegex(
             Exception,
             "ambiguous visible option label",
         ):
-            browser._select_option_choice(
-                state,
-                mode="value",
-                requested="second",
-            )
+            browser._select_option_choice_from_evidence(evidence)
 
     def test_select_label_mapping_requires_one_unique_fresh_option(self):
         browser = self._browser()
-        state = {
-            "options_truncated": False,
-            "options": [
-                {"label": "Duplicate", "value": "first"},
-                {"label": "Duplicate", "value": "second"},
-            ],
+        evidence = {
+            "connected": True,
+            "supported": True,
+            "disabled": False,
+            "multiple": False,
+            "matching_count": 2,
+            "same_label_count": 0,
+            "label": "",
+            "value": "",
         }
         with self.assertRaisesRegex(
             Exception,
             "exactly one fresh native option",
         ):
-            browser._select_option_choice(
-                state,
-                mode="label",
-                requested="Duplicate",
-            )
+            browser._select_option_choice_from_evidence(evidence)
 
     def test_command_uses_pinned_runtime_real_chrome_and_privacy_flags(self):
         with tempfile.TemporaryDirectory() as tmp:
