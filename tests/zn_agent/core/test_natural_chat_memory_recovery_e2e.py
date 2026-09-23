@@ -240,6 +240,12 @@ class NaturalChatMemoryRecoveryE2ETests(unittest.TestCase):
                 resident=resident,
                 provider_settings=settings,
             )
+            provider_view = rpc.handle(
+                {"id": "provider", "method": "provider_settings", "params": {}}
+            )["result"]
+            self.assertTrue(provider_view["cognition_available"])
+            self.assertEqual(provider_view["provider"], "openai")
+            self.assertEqual(provider_view["model"], "gpt-e2e-a")
             desktop_view = rpc.handle(
                 {"id": "get", "method": "work_get", "params": {"thread_id": thread_id}}
             )
@@ -330,6 +336,12 @@ class NaturalChatMemoryRecoveryE2ETests(unittest.TestCase):
                 resident=resident,
                 provider_settings=settings,
             )
+            provider_view = rpc.handle(
+                {"id": "provider-after", "method": "provider_settings", "params": {}}
+            )["result"]
+            self.assertTrue(provider_view["cognition_available"])
+            self.assertEqual(provider_view["provider"], "anthropic")
+            self.assertEqual(provider_view["model"], "claude-e2e-b")
             restored = rpc.handle(
                 {"id": "restored", "method": "work_get", "params": {"thread_id": thread_id}}
             )["result"]
@@ -497,6 +509,14 @@ class NaturalChatMemoryRecoveryE2ETests(unittest.TestCase):
             snapshot = settings.snapshot()
             self.assertFalse(snapshot["cognition_available"])
             self.assertEqual(snapshot["model"], "")
+            provider_view = ResidentRpcServer(
+                resident=resident,
+                provider_settings=settings,
+            ).handle(
+                {"id": "provider-unconfigured", "method": "provider_settings", "params": {}}
+            )["result"]
+            self.assertFalse(provider_view["cognition_available"])
+            self.assertEqual(provider_view["model"], "")
 
             telegram = _TelegramAdapter()
             channels = ResidentChannelSupervisor(
