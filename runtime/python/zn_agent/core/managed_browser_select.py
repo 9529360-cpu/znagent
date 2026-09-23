@@ -9,6 +9,7 @@ selected-option verification.
 """
 
 import hashlib
+import json
 from typing import Any
 
 from .browser import BrowserAction, BrowserEffectEvidence
@@ -39,6 +40,64 @@ _NATIVE_SELECT_STATE_SCRIPT = r"""
     multiple,
     selected_values: selectedOptions.map((option) => String(option.value || "")),
     selected_labels: selectedOptions.map((option) => String(option.label || "")),
+  };
+}
+"""
+
+
+_NATIVE_SELECT_CHOICE_SCRIPT = r"""
+(element, request) => {
+  const connected = Boolean(element && element.isConnected);
+  const tag = String(element && element.tagName || "").toLowerCase();
+  const supported = tag === "select";
+  const disabled = Boolean(element && element.disabled);
+  const multiple = Boolean(element && element.multiple);
+  const mode = String(request && request.mode || "");
+  const requested = String(request && request.requested || "");
+  if (!connected || !supported || disabled || multiple) {
+    return {
+      connected,
+      supported,
+      disabled,
+      multiple,
+      matching_count: 0,
+      same_label_count: 0,
+      label: "",
+      value: "",
+    };
+  }
+  const options = Array.from(element.options || []);
+  const field = (option) => mode === "value"
+    ? String(option.value || "")
+    : String(option.label || "");
+  const matches = options.filter((option) => field(option) === requested);
+  if (matches.length !== 1) {
+    return {
+      connected,
+      supported,
+      disabled,
+      multiple,
+      matching_count: matches.length,
+      same_label_count: 0,
+      label: "",
+      value: "",
+    };
+  }
+  const choice = matches[0];
+  const label = String(choice.label || "");
+  const value = String(choice.value || "");
+  const sameLabelCount = options.filter(
+    (option) => String(option.label || "") === label
+  ).length;
+  return {
+    connected,
+    supported,
+    disabled,
+    multiple,
+    matching_count: 1,
+    same_label_count: sameLabelCount,
+    label: label.slice(0, 1025),
+    value: value.slice(0, 1025),
   };
 }
 """
@@ -100,6 +159,49 @@ def _read_native_select_state(handle: Any) -> dict[str, str]:
     return {"value": value, "label": label}
 
 
+def _select_option_choice(handle: Any, *, mode: str, requested: str) -> dict[str, str]:
+    try:
+        raw = handle.evaluate(
+            _NATIVE_SELECT_CHOICE_SCRIPT,
+            {"mode": mode, "requested": requested},
+        )
+    except Exception as exc:
+        raise ManagedSelectError(
+            f"managed browser option mapping provider failed: {type(exc).__name__}: {exc}"
+        ) from exc
+    if not isinstance(raw, dict):
+        raise ManagedSelectError(
+            "managed browser option mapping provider returned invalid native option evidence"
+        )
+    if not bool(raw.get("connected")):
+        raise ManagedSelectError("managed browser select target is detached")
+    if not bool(raw.get("supported")):
+        raise ManagedSelectError(
+            "managed browser select_option currently requires a native select/combobox target"
+        )
+    if bool(raw.get("disabled")):
+        raise ManagedSelectError("managed browser select target is disabled")
+    if bool(raw.get("multiple")):
+        raise ManagedSelectError(
+            "managed browser select_option first slice refuses multi-select targets"
+        )
+    if int(raw.get("matching_count") or 0) != 1:
+        raise ManagedSelectError(
+            "managed browser select_option must resolve to exactly one fresh native option"
+        )
+    if int(raw.get("same_label_count") or 0) != 1:
+        raise ManagedSelectError(
+            "managed browser select_option target maps to an ambiguous visible option label"
+        )
+    label = str(raw.get("label") or "")
+    value = str(raw.get("value") or "")
+    if not label or len(label) > _MAX_SELECTED_VALUE_CHARS or len(value) > _MAX_SELECTED_VALUE_CHARS:
+        raise ManagedSelectError(
+            "managed browser native option evidence is outside the bounded contract"
+        )
+    return {"label": label, "value": value}
+
+
 def perform_select_option(owner: Any, session: Any, action: BrowserAction) -> BrowserEffectEvidence:
     """Select one native option and prove a fresh exact-node selected value/label."""
 
@@ -120,17 +222,22 @@ def perform_select_option(owner: Any, session: Any, action: BrowserAction) -> Br
     binding = owner._revalidate_target_binding(session, page_id, action.target)
     before_url = str(getattr(page, "url", "") or "")
     before_state = _read_native_select_state(binding.handle)
-    if before_state[request.mode] == request.requested:
+    requested = request.requested
+    choice = _select_option_choice(
+        binding.handle,
+        mode=request.mode,
+        requested=requested,
+    )
+    if before_state[request.mode] == requested:
         raise ManagedSelectError(
             f"browser select_option requested {request.mode} is already selected before dispatch"
         )
 
-    requested = request.requested
     try:
         if request.mode == "value":
-            binding.handle.select_option(value=requested)
+            binding.handle.select_option(value=choice["value"])
         else:
-            binding.handle.select_option(label=requested)
+            binding.handle.select_option(label=choice["label"])
     except Exception as exc:
         owner._refresh_page_observation_after_failed_mutation(session, page_id)
         raise ManagedSelectError(
@@ -185,11 +292,15 @@ def perform_select_option(owner: Any, session: Any, action: BrowserAction) -> Br
     post_target = post_observation.target
     before_fp = _value_fingerprint(before_state[request.mode])
     after_fp = _value_fingerprint(after_state[request.mode])
+    value_matches = after_state["value"] == choice["value"]
+    label_matches = after_state["label"] == choice["label"]
     data = {
         "provider": session.identity.provider,
         "selection_mode": request.mode,
         "exact_node_continuity": same_exact_node,
         "selection_dispatched": True,
+        "selected_value_matches": value_matches,
+        "selected_label_matches": label_matches,
         f"selected_{request.mode}_length_before": before_fp["length"],
         f"selected_{request.mode}_sha256_before": before_fp["sha256"],
         f"selected_{request.mode}_length_after": after_fp["length"],
@@ -207,6 +318,8 @@ def perform_select_option(owner: Any, session: Any, action: BrowserAction) -> Br
         error = "browser select_option postcondition observed a replaced target node"
     elif post_target.target_id != action.target.target_id:
         error = "browser select_option postcondition observed changed target identity"
+    elif not value_matches or not label_matches:
+        error = "browser select_option selected a different native option"
     elif after_fp["length"] != request.length or after_fp["sha256"] != request.sha256:
         error = "browser select_option postcondition was not observed"
 
