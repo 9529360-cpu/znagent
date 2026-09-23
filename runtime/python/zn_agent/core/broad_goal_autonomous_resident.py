@@ -157,6 +157,7 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         request = super()._build_cognition_request(event, impasse, required, deliberation)
         request = self._bind_work_route_policy(event, request)
         request = bind_work_conversation_context(self.work_ledger, event, request)
+        request = self.memory.bind_cognition_context(event, request)
         root = self._autonomous_root_candidate(event)
         if root is None:
             return request
