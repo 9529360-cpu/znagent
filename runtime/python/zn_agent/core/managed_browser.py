@@ -27,6 +27,8 @@ from .browser import (
     BrowserTargetKind,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserTargetRegroundDisposition,
+    BrowserTargetRegrounding,
 )
 from .managed_browser_select import perform_select_option
 from .models import utc_now
@@ -360,6 +362,78 @@ class PlaywrightManagedBrowser:
         except Exception:
             self._dispose_target_binding(binding)
             raise
+
+    def reground_target(
+        self,
+        session_id: str,
+        query: BrowserTargetQuery,
+        previous_target: BrowserTarget,
+        *,
+        page_id: str = "",
+    ) -> BrowserTargetRegrounding:
+        """Freshly resolve a semantic query while preserving exact-node truth.
+
+        Playwright locators intentionally re-resolve current DOM. ZN therefore
+        compares the provider's retained previous ElementHandle with the newly
+        resolved handle before replacing the binding. A matching semantic query
+        alone never proves physical-node continuity.
+        """
+
+        session = self._session(session_id)
+        resolved_page_id = page_id or previous_target.page_id or self._default_page_id(session)
+        if previous_target.session_id != session.identity.session_id:
+            raise ManagedBrowserError(
+                "browser target regrounding cannot use a target from another session"
+            )
+        if previous_target.page_id != resolved_page_id:
+            raise ManagedBrowserError(
+                "browser target regrounding cannot transfer authority across pages"
+            )
+        previous_binding = session.target_bindings.get(resolved_page_id)
+        if previous_binding is None or previous_binding.target != previous_target:
+            raise ManagedBrowserError(
+                "browser target regrounding requires current provider evidence for the previous target"
+            )
+
+        captured_at = utc_now()
+        fresh_binding = self._acquire_target_binding(
+            session,
+            resolved_page_id,
+            query,
+            observed_at=captured_at,
+        )
+        installed = False
+        try:
+            try:
+                same_exact_node = bool(
+                    previous_binding.handle.evaluate(
+                        _EXACT_NODE_EQUAL_SCRIPT,
+                        fresh_binding.handle,
+                    )
+                )
+            except Exception:
+                same_exact_node = False
+            observation = self._capture(
+                session,
+                resolved_page_id,
+                target=fresh_binding.target,
+                captured_at=captured_at,
+                target_binding=fresh_binding,
+            )
+            installed = True
+            return BrowserTargetRegrounding(
+                query=query,
+                previous_target=previous_target,
+                observation=observation,
+                disposition=(
+                    BrowserTargetRegroundDisposition.SAME_EXACT_TARGET
+                    if same_exact_node
+                    else BrowserTargetRegroundDisposition.REBOUND_TARGET
+                ),
+            )
+        finally:
+            if not installed:
+                self._dispose_target_binding(fresh_binding)
 
     def act(
         self,
