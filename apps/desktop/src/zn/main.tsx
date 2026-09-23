@@ -8,6 +8,8 @@ import './styles.css'
 import './liquid-performance.css'
 import './chat-shell.css'
 import './desktop-resilience.css'
+import './settings-shell.css'
+import './gpt-desktop.css'
 
 document.title = 'ZN'
 
