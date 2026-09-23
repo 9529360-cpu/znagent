@@ -23,6 +23,7 @@ class _Adapter:
 
     def __init__(self, name):
         self.name = name
+        self.reground_calls = []
 
     def open_session(self, *, permission=None, headless=True):
         return BrowserSessionIdentity.create(
@@ -38,6 +39,10 @@ class _Adapter:
 
     def observe_target(self, session_id, query, *, page_id=""):
         raise NotImplementedError
+
+    def reground_target(self, session_id, query, previous_target, *, page_id=""):
+        self.reground_calls.append((session_id, query, previous_target, page_id))
+        return "regrounded"
 
     def act(self, action, authority):
         raise NotImplementedError
@@ -247,6 +252,37 @@ class BrowserProviderRegistryTests(unittest.TestCase):
         )
         self.assertEqual(legacy_dom.provider, "playwright")
         adapter.close_session(legacy_dom.session_id)
+
+    def test_session_router_preserves_target_reground_provider_ownership(self):
+        provider = _Adapter("mature")
+        registry = BrowserProviderRegistry()
+        registry.register(
+            BrowserProviderDescriptor(
+                name="mature",
+                plane=BrowserPlane.MANAGED,
+                priority=200,
+                factory=lambda: provider,
+                available=lambda: True,
+            )
+        )
+        adapter = build_managed_browser_adapter(registry=registry)
+        session = adapter.open_session(permission=BrowserPermissionContext())
+        query = object()
+        previous_target = object()
+        try:
+            result = adapter.reground_target(
+                session.session_id,
+                query,
+                previous_target,
+                page_id="page-7",
+            )
+            self.assertEqual(result, "regrounded")
+            self.assertEqual(
+                provider.reground_calls,
+                [(session.session_id, query, previous_target, "page-7")],
+            )
+        finally:
+            adapter.close_session(session.session_id)
 
     def test_explicit_provider_capability_mismatch_fails_closed(self):
         registry = BrowserProviderRegistry()
