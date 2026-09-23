@@ -29,6 +29,8 @@ from .browser import (
     BrowserTargetKind,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserTargetRegroundDisposition,
+    BrowserTargetRegrounding,
 )
 from .models import utc_now
 from .stdio_mcp import StdioMcpClient, StdioMcpCommand
@@ -381,6 +383,45 @@ class ChromeDevToolsMcpManagedBrowser:
         )
         session.last_observation[resolved] = observation
         return observation
+
+    def reground_target(
+        self,
+        session_id: str,
+        query: BrowserTargetQuery,
+        previous_target: BrowserTarget,
+        *,
+        page_id: str = "",
+    ) -> BrowserTargetRegrounding:
+        session = self._session(session_id)
+        resolved_page_id = page_id or previous_target.page_id or session.default_page_id
+        if previous_target.session_id != session.identity.session_id:
+            raise ChromeDevToolsMcpBrowserError(
+                "browser target regrounding cannot use a target from another session"
+            )
+        if previous_target.page_id != resolved_page_id:
+            raise ChromeDevToolsMcpBrowserError(
+                "browser target regrounding cannot transfer authority across pages"
+            )
+        observation = self.observe_target(
+            session_id,
+            query,
+            page_id=resolved_page_id,
+        )
+        current = observation.target
+        if current is None:
+            raise ChromeDevToolsMcpBrowserError(
+                "fresh semantic regrounding returned no target"
+            )
+        return BrowserTargetRegrounding(
+            query=query,
+            previous_target=previous_target,
+            observation=observation,
+            disposition=(
+                BrowserTargetRegroundDisposition.SAME_EXACT_TARGET
+                if current.target_id == previous_target.target_id
+                else BrowserTargetRegroundDisposition.REBOUND_TARGET
+            ),
+        )
 
     def read_page(self, session_id: str, *, page_id: str = "") -> dict[str, Any]:
         session = self._session(session_id)
