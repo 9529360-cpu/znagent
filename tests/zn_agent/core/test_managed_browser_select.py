@@ -40,6 +40,68 @@ class _ElementHandle:
             raise RuntimeError("disposed element")
         if "element === other" in expression:
             return isinstance(arg, _ElementHandle) and self.node is arg.node
+        if "matching_count" in expression and "same_label_count" in expression:
+            request = arg if isinstance(arg, dict) else {}
+            mode = str(request.get("mode") or "")
+            requested = str(request.get("requested") or "")
+            raw_options = self.node.get("options")
+            if isinstance(raw_options, list):
+                options = [
+                    {"value": str(item.get("value") or ""), "label": str(item.get("label") or "")}
+                    for item in raw_options
+                    if isinstance(item, dict)
+                ]
+            else:
+                current_value = str(self.node.get("selected", ""))
+                current_label = str(
+                    self.node.get("selected_label", self.node.get("selected", ""))
+                )
+                options = [{"value": current_value, "label": current_label}]
+                if mode == "value":
+                    requested_value = requested
+                    requested_label = str(
+                        self.node.get("value_labels", {}).get(requested, requested)
+                    )
+                    requested_field = requested_value
+                    current_field = current_value
+                else:
+                    requested_label = requested
+                    requested_value = str(
+                        self.node.get("label_values", {}).get(requested, requested)
+                    )
+                    requested_field = requested_label
+                    current_field = current_label
+                if requested_field != current_field:
+                    options.append(
+                        {"value": requested_value, "label": requested_label}
+                    )
+            field = "value" if mode == "value" else "label"
+            matches = [item for item in options if item[field] == requested]
+            if len(matches) != 1:
+                return {
+                    "connected": bool(self.node.get("connected", True)),
+                    "supported": bool(self.node.get("supported", True)),
+                    "disabled": bool(self.node.get("disabled", False)),
+                    "multiple": bool(self.node.get("multiple", False)),
+                    "matching_count": len(matches),
+                    "same_label_count": 0,
+                    "label": "",
+                    "value": "",
+                }
+            choice = matches[0]
+            same_label_count = sum(
+                item["label"] == choice["label"] for item in options
+            )
+            return {
+                "connected": bool(self.node.get("connected", True)),
+                "supported": bool(self.node.get("supported", True)),
+                "disabled": bool(self.node.get("disabled", False)),
+                "multiple": bool(self.node.get("multiple", False)),
+                "matching_count": 1,
+                "same_label_count": same_label_count,
+                "label": choice["label"],
+                "value": choice["value"],
+            }
         if "selectedOptions" in expression and "element.multiple" in expression:
             connected = bool(self.node.get("connected", True))
             supported = bool(self.node.get("supported", True))
@@ -312,6 +374,64 @@ class ManagedBrowserSelectOptionTests(unittest.TestCase):
             self.assertEqual(page.select_dispatches, 0)
         finally:
             browser.close()
+
+    def test_select_refuses_ambiguous_native_option_mapping_before_dispatch(self):
+        cases = (
+            (
+                {"label": "Duplicate"},
+                [
+                    {"value": "a", "label": "Duplicate"},
+                    {"value": "b", "label": "Duplicate"},
+                ],
+                "exactly one fresh native option",
+            ),
+            (
+                {"value": "dup"},
+                [
+                    {"value": "dup", "label": "First"},
+                    {"value": "dup", "label": "Second"},
+                ],
+                "exactly one fresh native option",
+            ),
+            (
+                {"value": "b"},
+                [
+                    {"value": "a", "label": "Same label"},
+                    {"value": "b", "label": "Same label"},
+                ],
+                "ambiguous visible option label",
+            ),
+        )
+        for args, options, expected_error in cases:
+            with self.subTest(args=args):
+                browser, session, permission, page, observed = _build(
+                    {
+                        "connected": True,
+                        "selected": "before",
+                        "selected_label": "Before",
+                        "options": [
+                            {"value": "before", "label": "Before"},
+                            *options,
+                        ],
+                    }
+                )
+                try:
+                    action = BrowserAction.create(
+                        session_id=session.session_id,
+                        page_id=observed.page_id,
+                        kind=BrowserActionKind.SELECT_OPTION,
+                        target=observed.target,
+                        args=args,
+                    )
+                    authority = BrowserActionAuthority.from_observation(
+                        action, observed, permission
+                    )
+                    effect = browser.act(action, authority)
+                    self.assertFalse(effect.success)
+                    self.assertIn(expected_error, effect.error or "")
+                    self.assertEqual(page.select_dispatches, 0)
+                finally:
+                    browser.close()
 
     def test_select_succeeds_only_from_fresh_same_node_selected_value(self):
         raw_requested = "ZN private option value"
