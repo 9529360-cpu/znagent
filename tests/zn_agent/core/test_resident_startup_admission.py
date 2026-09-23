@@ -21,7 +21,7 @@ class ResidentStartupAdmissionTests(unittest.TestCase):
         calls = Mock()
         service.rpc = SimpleNamespace(
             service=SimpleNamespace(acquire=calls.acquire, release=calls.release),
-            resident=SimpleNamespace(live_once=calls.live_once, store=SimpleNamespace(close=calls.close)),
+            resident=SimpleNamespace(pulse=calls.pulse, live_once=calls.live_once, store=SimpleNamespace(close=calls.close)),
             _start_life_loop=calls.life_start,
             _stop_life_loop=calls.life_stop,
         )
@@ -44,8 +44,10 @@ class ResidentStartupAdmissionTests(unittest.TestCase):
             builder.return_value.__enter__.return_value = server
             self.assertEqual(service.serve_forever(), 0)
         calls.live_once.assert_not_called()
+        calls.pulse.assert_called_once_with()
         names = [call[0] for call in calls.mock_calls]
-        self.assertLess(names.index("acquire"), names.index("publish"))
+        self.assertLess(names.index("acquire"), names.index("pulse"))
+        self.assertLess(names.index("pulse"), names.index("publish"))
         for start in ("life_start", "visual_start", "channels_start"):
             self.assertLess(names.index("publish"), names.index(start))
             self.assertLess(names.index(start), names.index("serve"))
@@ -58,7 +60,7 @@ class ResidentStartupAdmissionTests(unittest.TestCase):
         with patch("zn_agent.core.resident_server._ResidentTcpServer", side_effect=OSError("port unavailable")):
             with self.assertRaisesRegex(OSError, "port unavailable"):
                 service.serve_forever()
-        for callback in (calls.live_once, calls.life_start, calls.visual_start, calls.channels_start, calls.publish):
+        for callback in (calls.pulse, calls.live_once, calls.life_start, calls.visual_start, calls.channels_start, calls.publish):
             callback.assert_not_called()
         calls.release.assert_called_once_with()
         calls.close.assert_called_once_with()
@@ -77,6 +79,19 @@ class ResidentStartupAdmissionTests(unittest.TestCase):
         calls.release.assert_called_once_with()
         calls.close.assert_called_once_with()
 
+    def test_initial_pulse_failure_does_not_publish_endpoint_or_dispatch_work(self):
+        service, calls, server = self.service()
+        calls.pulse.side_effect = RuntimeError("initial pulse failed")
+        with patch("zn_agent.core.resident_server._ResidentTcpServer") as builder:
+            builder.return_value.__enter__.return_value = server
+            with self.assertRaisesRegex(RuntimeError, "initial pulse failed"):
+                service.serve_forever()
+            builder.return_value.__exit__.assert_called_once()
+        for callback in (calls.publish, calls.live_once, calls.life_start, calls.visual_start, calls.channels_start, calls.serve):
+            callback.assert_not_called()
+        calls.release.assert_called_once_with()
+        calls.close.assert_called_once_with()
+
     def test_lease_refusal_never_binds_or_dispatches_work(self):
         service, calls, _ = self.service()
         calls.acquire.side_effect = RuntimeError("another resident")
@@ -84,6 +99,7 @@ class ResidentStartupAdmissionTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "another resident"):
                 service.serve_forever()
             builder.assert_not_called()
+        calls.pulse.assert_not_called()
         calls.live_once.assert_not_called()
         calls.life_start.assert_not_called()
         calls.publish.assert_not_called()
@@ -109,6 +125,60 @@ class ResidentRestartCognitionReadinessTests(unittest.TestCase):
                     if response.get("ok") is not True:
                         raise AssertionError("Resident authentication failed")
                 return exchange({"id": "request", "method": method, "params": params or {}})
+
+    def test_first_authenticated_ping_has_real_life_without_dispatching_pending_work(self):
+        from zn_agent.core.daemon import ResidentRpcServer
+        from zn_agent.core.models import EventStatus
+        from zn_agent.core.provider_bridge import build_resident_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime(config={"model": {}}, store_path=Path(tmp) / "kernel.db")
+            # Delay only scheduled cycles, so readiness cannot accidentally pass
+            # because a fast background cycle happened before the first ping.
+            rpc = ResidentRpcServer(resident, life_interval=60.0)
+            started = rpc.handle({"method": "work_start", "params": {
+                "thread_id": "first-connect", "task": "Explain tidal generation",
+            }})["result"]
+            event_id = started["progress"]["event_id"]
+            self.assertEqual(resident.life.snapshot().pulse_count, 0)
+            service = ResidentSocketService(rpc, endpoint_path=Path(tmp) / "endpoint.json")
+            service._start_visual_loop = Mock()
+            errors = []
+            def serve():
+                try:
+                    service.serve_forever()
+                except BaseException as error:
+                    errors.append(error)
+            thread = threading.Thread(target=serve, daemon=True)
+            thread.start()
+            try:
+                endpoint = None
+                deadline = time.monotonic() + 10
+                while time.monotonic() < deadline and thread.is_alive():
+                    try:
+                        endpoint = json.loads(service.endpoint_path.read_text(encoding="utf-8"))
+                        break
+                    except (OSError, ValueError):
+                        time.sleep(0.02)
+                self.assertIsNotNone(endpoint)
+                ping = self.request(endpoint, "ping")["result"]
+                self.assertTrue(ping["alive"])
+                self.assertGreaterEqual(ping["pulse_count"], 1, "ready endpoint has no initialized life")
+                event = resident.store.get_event(event_id)
+                self.assertEqual(event.status, EventStatus.PENDING)
+                self.assertEqual(event.attempts, 0, "startup pulse dispatched user Work")
+                self.assertIsNone(resident.store.get_event_outcome(event_id))
+                snapshot = self.request(endpoint, "work_get", {"thread_id": "first-connect"})["result"]
+                self.assertEqual(snapshot["active_run"]["event_id"], event_id)
+                self.assertEqual(sum(m["role"] == "user" for m in snapshot["messages"]), 1)
+            finally:
+                if service._server is not None:
+                    service._server.shutdown()
+                thread.join(10)
+                self.assertFalse(thread.is_alive())
+                self.assertEqual(errors, [])
+                resident.store.close()
+            self.assertFalse(service.endpoint_path.exists())
 
     def test_restart_reconnects_while_saved_cognition_waits_then_finishes_same_work(self):
         # This test uses the actual product Resident, SQLite, Work facade, Kernel,

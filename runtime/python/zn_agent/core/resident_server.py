@@ -347,6 +347,9 @@ class ResidentSocketService:
             ) as server:
                 self._server = server
                 host, port = server.server_address[:2]
+                # Establish real life readiness without dispatching saved Work.
+                # A published endpoint must not report an uninitialized subject.
+                self.rpc.resident.pulse()
                 self._write_endpoint(str(host), int(port))
                 # Restored Work may immediately enter slow cognition or Body IO.
                 # Only the existing life thread drives it, after transport bind
