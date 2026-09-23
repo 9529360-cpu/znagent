@@ -10,6 +10,10 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.browser_rpc import BrowserResidentRpcServer
+from zn_agent.core.chrome_devtools_mcp_browser import (
+    CHROME_DEVTOOLS_MCP_PROVIDER,
+    chrome_devtools_mcp_available,
+)
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.resident_server import ResidentSocketService
 
@@ -122,7 +126,12 @@ class ResidentManagedBrowserWindowsContract(unittest.TestCase):
                 )
                 self.assertTrue(opened["ok"], opened)
                 session_id = opened["result"]["session_id"]
-                self.assertEqual(opened["result"]["provider"], "playwright-chromium")
+                expected_provider = (
+                    CHROME_DEVTOOLS_MCP_PROVIDER
+                    if chrome_devtools_mcp_available()
+                    else "playwright-chromium"
+                )
+                self.assertEqual(opened["result"]["provider"], expected_provider)
                 self.assertEqual(opened["result"]["profile_scope"], "ephemeral")
 
                 navigated = self._request(

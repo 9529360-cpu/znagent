@@ -124,6 +124,25 @@ class _ResidentManagedBrowser:
             lambda: self._browser.open_session(permission=permission, headless=headless)
         )
 
+    def open_session_for_requirements(
+        self,
+        *,
+        permission=None,
+        headless=True,
+        required_target_queries=(),
+    ):
+        opener = getattr(self._browser, "open_session_for_requirements", None)
+        if not callable(opener):
+            return self.open_session(permission=permission, headless=headless)
+        queries = tuple(required_target_queries)
+        return self._owner.call(
+            lambda: opener(
+                permission=permission,
+                headless=headless,
+                required_target_queries=queries,
+            )
+        )
+
     def close_session(self, session_id: str) -> None:
         self._owner.call(lambda: self._browser.close_session(session_id))
 

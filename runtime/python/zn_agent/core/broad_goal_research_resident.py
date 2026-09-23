@@ -21,7 +21,7 @@ from .browser import (
 )
 from .cognition import CognitiveIncrement
 from .models import utc_now
-from .research_managed_browser import ResearchSemanticPlaywrightManagedBrowser
+from .browser_provider_registry import build_readable_managed_browser_adapter
 from .steerable_work import WorkItem
 from .work import title_for_work_task
 
@@ -33,9 +33,11 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
     _BROAD_RESEARCH_HISTORY_KEY = "broad_goal_research_history"
     _MAX_RESEARCH_EVIDENCE_TEXT = 8192
 
-    def _new_managed_browser_adapter(self):
-        """Use the additive readable MANAGED adapter for generic research Work."""
-        return ResearchSemanticPlaywrightManagedBrowser()
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Keep public/background research on an independent MANAGED provider even
+        # while the USER Browser bridge temporarily owns self.managed_browser.
+        self.research_browser = build_readable_managed_browser_adapter()
 
     def _criterion_bound_root(self, event) -> WorkItem | None:
         root = super()._criterion_bound_root(event)
@@ -245,8 +247,8 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
         if child.status == "completed":
             return self._roll_forward_research_state(event, state)
 
-        browser = self.managed_browser
-        if not isinstance(browser, ResearchSemanticPlaywrightManagedBrowser):
+        browser = self.research_browser
+        if not callable(getattr(browser, "read_page", None)):
             return self._fail_research_step(
                 event,
                 state,

@@ -17,10 +17,12 @@ async function writeFakePackagedRuntime(root, { version = '1.2.3', commit = 'a'.
   const pythonRelative = process.platform === 'win32' ? 'python/python.exe' : 'python/bin/python3'
   const backendRelative = 'python/site-packages'
   const browserRelative = 'playwright-browsers'
+  const chromeDevtoolsMcpRelative = 'browser-runtimes/chrome-devtools-mcp'
   const veteranRelative = 'veteran-engineer'
   const python = path.join(runtimeRoot, ...pythonRelative.split('/'))
   const backendRoot = path.join(runtimeRoot, ...backendRelative.split('/'))
   const browserRoot = path.join(runtimeRoot, browserRelative)
+  const chromeDevtoolsMcpRoot = path.join(runtimeRoot, ...chromeDevtoolsMcpRelative.split('/'))
   const veteranRuntimeRoot = path.join(runtimeRoot, veteranRelative)
   await fs.mkdir(path.dirname(python), { recursive: true })
   await fs.writeFile(python, 'fake-python')
@@ -30,6 +32,10 @@ async function writeFakePackagedRuntime(root, { version = '1.2.3', commit = 'a'.
   await fs.writeFile(path.join(backendRoot, 'zn_agent', 'core', 'resident_server.py'), '# resident core\n')
   await fs.mkdir(path.join(browserRoot, 'chromium-fixture'), { recursive: true })
   await fs.writeFile(path.join(browserRoot, 'chromium-fixture', 'marker'), 'managed chromium')
+  const chromeDevtoolsMcpPackageRoot = path.join(chromeDevtoolsMcpRoot, 'node_modules', 'chrome-devtools-mcp')
+  await fs.mkdir(path.join(chromeDevtoolsMcpPackageRoot, 'build', 'src', 'bin'), { recursive: true })
+  await fs.writeFile(path.join(chromeDevtoolsMcpPackageRoot, 'package.json'), JSON.stringify({ name: 'chrome-devtools-mcp', version: '1.9.0' }))
+  await fs.writeFile(path.join(chromeDevtoolsMcpPackageRoot, 'build', 'src', 'bin', 'chrome-devtools-mcp.js'), '// chrome devtools mcp fixture\n')
   await fs.mkdir(path.join(veteranRuntimeRoot, 'mcp'), { recursive: true })
   await fs.writeFile(path.join(veteranRuntimeRoot, 'mcp', 'server.mjs'), '// veteran fixture\n')
   await fs.writeFile(path.join(veteranRuntimeRoot, 'VENDOR.json'), '{}\n')
@@ -44,9 +50,11 @@ async function writeFakePackagedRuntime(root, { version = '1.2.3', commit = 'a'.
     python: pythonRelative,
     backend_root: backendRelative,
     browser_root: browserRelative,
+    chrome_devtools_mcp_runtime: chromeDevtoolsMcpRelative,
+    chrome_devtools_mcp_version: '1.9.0',
     veteran_runtime: veteranRelative
   }, null, 2)}\n`)
-  return { releaseDir: path.join(root, 'release'), runtimeRoot, python, backendRoot, browserRoot, veteranRuntimeRoot }
+  return { releaseDir: path.join(root, 'release'), runtimeRoot, python, backendRoot, browserRoot, chromeDevtoolsMcpRoot, veteranRuntimeRoot }
 }
 
 test('packaged release verifier validates ZN runtime and version-bound managed browser root', async () => {
@@ -58,6 +66,7 @@ test('packaged release verifier validates ZN runtime and version-bound managed b
     assert.equal(verified.length, 1)
     assert.equal(verified[0].python, fixture.python)
     assert.equal(verified[0].browserRoot, fixture.browserRoot)
+    assert.equal(verified[0].chromeDevtoolsMcpRoot, fixture.chromeDevtoolsMcpRoot)
     assert.equal(verified[0].veteranRuntimeRoot, fixture.veteranRuntimeRoot)
   } finally {
     await fs.rm(root, { recursive: true, force: true })
@@ -79,6 +88,7 @@ test('packaged runtime smoke binds Chromium lookup to the verified runtime root'
     assert.equal(invocation.python, fixture.python)
     assert.deepEqual(invocation.args.slice(0, 2), ['-I', '-c'])
     assert.equal(invocation.options.env.PLAYWRIGHT_BROWSERS_PATH, fixture.browserRoot)
+    assert.equal(invocation.options.env.ZN_CHROME_DEVTOOLS_MCP_ROOT, fixture.chromeDevtoolsMcpRoot)
     assert.equal(invocation.options.env.ZN_VETERAN_RUNTIME_ROOT, fixture.veteranRuntimeRoot)
     assert.match(invocation.args[2], /PlaywrightManagedBrowser/)
     assert.match(invocation.args[2], /vendored_veteran_root/)
@@ -160,6 +170,30 @@ test('packaged release verifier requires resident core entrypoint', async () => 
     const fixture = await writeFakePackagedRuntime(root)
     await fs.rm(path.join(fixture.backendRoot, 'zn_agent', 'core', 'resident_server.py'))
     await assert.rejects(verifyPackagedZnRelease({ releaseDir: fixture.releaseDir, version: '1.2.3', commit: 'a'.repeat(40) }), /resident core entrypoint is missing/)
+  } finally {
+    await fs.rm(root, { recursive: true, force: true })
+  }
+})
+
+test('packaged release verifier rejects Chrome DevTools MCP path escape and version drift', async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), 'zn-packaged-release-'))
+  try {
+    const fixture = await writeFakePackagedRuntime(root)
+    const manifestPath = path.join(fixture.runtimeRoot, 'runtime.json')
+    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'))
+    manifest.chrome_devtools_mcp_runtime = '../outside-runtime'
+    await fs.writeFile(manifestPath, `${JSON.stringify(manifest)}\n`)
+    await assert.rejects(
+      verifyPackagedZnRelease({ releaseDir: fixture.releaseDir, version: '1.2.3', commit: 'a'.repeat(40) }),
+      /chrome_devtools_mcp_runtime escapes runtime root/
+    )
+    manifest.chrome_devtools_mcp_runtime = 'browser-runtimes/chrome-devtools-mcp'
+    manifest.chrome_devtools_mcp_version = '1.9.1'
+    await fs.writeFile(manifestPath, `${JSON.stringify(manifest)}\n`)
+    await assert.rejects(
+      verifyPackagedZnRelease({ releaseDir: fixture.releaseDir, version: '1.2.3', commit: 'a'.repeat(40) }),
+      /Chrome DevTools MCP version mismatch/
+    )
   } finally {
     await fs.rm(root, { recursive: true, force: true })
   }

@@ -6,7 +6,6 @@ from pathlib import Path
 
 from zn_agent.core.browser import BrowserPlane
 from zn_agent.core.provider_bridge import build_resident_runtime
-from zn_agent.core.semantic_managed_browser import SemanticPlaywrightManagedBrowser
 from zn_agent.core.user_browser import AuthorizedCDPUserBrowser
 
 
@@ -27,6 +26,7 @@ class UserBrowserBridgeResidentTests(unittest.TestCase):
                     },
                 )
 
+                research_browser = resident.research_browser
                 authorized = resident.authorize_existing_user_browser(
                     "http://127.0.0.1:9222"
                 )
@@ -35,14 +35,13 @@ class UserBrowserBridgeResidentTests(unittest.TestCase):
                 self.assertEqual(authorized["profile_scope"], "user_existing")
                 self.assertIsInstance(resident.managed_browser, AuthorizedCDPUserBrowser)
                 self.assertTrue(resident.user_browser_authorization()["authorized"])
+                self.assertIs(resident.research_browser, research_browser)
 
                 revoked = resident.revoke_existing_user_browser()
                 self.assertTrue(revoked["revoked"])
                 self.assertFalse(revoked["authorized"])
-                self.assertIsInstance(
-                    resident.managed_browser,
-                    SemanticPlaywrightManagedBrowser,
-                )
+                self.assertIs(resident.managed_browser.plane, BrowserPlane.MANAGED)
+                self.assertIs(resident.research_browser, research_browser)
             finally:
                 resident.store.close()
 

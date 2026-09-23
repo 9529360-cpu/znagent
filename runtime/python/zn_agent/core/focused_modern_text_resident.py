@@ -8,8 +8,8 @@ from typing import Any
 
 from .action import NativeActionIntent
 from .automation_text_state_sense import NativeFocusedAutomationTextSense
+from .browser_provider_registry import build_managed_browser_adapter
 from .focused_text_entry_resident import FocusedTextEntryResidentRuntime
-from .managed_browser import PlaywrightManagedBrowser
 from .models import ExecutionPath
 from .resident import ResidentRunResult
 from .side_effect_body import SideEffectAwareBody
@@ -46,7 +46,7 @@ class FocusedModernTextResidentRuntime(FocusedTextEntryResidentRuntime):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         self.body = SideEffectAwareBody(resident=self)
         self.automation_text_state = NativeFocusedAutomationTextSense()
-        self.managed_browser = PlaywrightManagedBrowser()
+        self.managed_browser = build_managed_browser_adapter()
 
     def status(self) -> dict[str, Any]:
         data = super().status()
