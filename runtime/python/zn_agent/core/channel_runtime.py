@@ -323,18 +323,21 @@ class ResidentChannelSupervisor:
                 duplicates += 1
                 continue
 
+            event_id = stable_external_event_id("channel", source_key)
             payload = {
                 "channel": event.channel,
                 "conversation_id": event.conversation_id,
                 "sender_id": event.sender_id,
                 "message_id": event.message_id,
                 "thread_id": event.thread_id,
-                "channel_event_id": event.event_id,
+                # ChannelEvent.event_id is an in-memory percept id and may change
+                # when the transport replays the same durable source update.
+                # Persist the stable Resident ingress identity instead.
+                "channel_event_id": event_id,
                 "channel_source_key": source_key,
                 "attachments": [asdict(item) for item in event.attachments],
                 "channel_metadata": dict(event.metadata),
             }
-            event_id = stable_external_event_id("channel", source_key)
             work_thread_id = channel_work_thread_id(
                 event.channel,
                 event.conversation_id,
