@@ -3,6 +3,7 @@ from __future__ import annotations
 """Resident-owned provider settings and secure credential editing."""
 
 import copy
+import ipaddress
 import os
 import re
 from pathlib import Path
@@ -21,6 +22,29 @@ from .provider_bridge import apply_zn_cognitive_config
 
 
 _PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def _validated_provider_base_url(value: object) -> str:
+    base_url = str(value or "").strip()
+    if not base_url:
+        return ""
+
+    parsed = urlparse(base_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("base URL must be an http(s) URL with a hostname")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("base URL must not contain embedded credentials")
+    if parsed.scheme == "http":
+        hostname = parsed.hostname.lower()
+        loopback = hostname == "localhost"
+        if not loopback:
+            try:
+                loopback = ipaddress.ip_address(hostname).is_loopback
+            except ValueError:
+                loopback = False
+        if not loopback:
+            raise ValueError("remote provider base URL must use HTTPS")
+    return base_url
 
 
 class ProviderSettingsService:
@@ -72,11 +96,9 @@ class ProviderSettingsService:
         if not model:
             raise ValueError("model is required")
 
-        base_url = str(params.get("base_url") or params.get("baseUrl") or "").strip()
-        if base_url:
-            parsed = urlparse(base_url)
-            if parsed.scheme not in {"http", "https"} or not parsed.hostname:
-                raise ValueError("base URL must be an http(s) URL with a hostname")
+        base_url = _validated_provider_base_url(
+            params.get("base_url") or params.get("baseUrl")
+        )
 
         api_key_value = params.get("api_key") if "api_key" in params else params.get("apiKey")
         api_key = str(api_key_value or "").strip() if api_key_value is not None else ""
