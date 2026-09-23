@@ -14,7 +14,6 @@ import {
   FolderSimple,
   GearSix,
   MagnifyingGlass,
-  Paperclip,
   Plus,
   Pulse,
   SidebarSimple,
@@ -236,6 +235,7 @@ export function ZnWorkbench() {
   })
   const [activeThreadId, setActiveThreadId] = useState(() => threads[0]?.id || '')
   const [selectedArtifactId, setSelectedArtifactId] = useState('')
+  const [artifactOpen, setArtifactOpen] = useState(false)
   const [view, setView] = useState<MainView>('work')
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
@@ -272,17 +272,17 @@ export function ZnWorkbench() {
     ) || null,
     [activeArtifacts]
   )
-  const activePresentation = activeWorkstationArtifact?.kind === 'presentation'
-    ? activeWorkstationArtifact
-    : null
-  const activeDocument = activeWorkstationArtifact?.kind === 'document'
-    ? activeWorkstationArtifact
-    : null
-  const activeRestorePoints = activeThread?.restorePoints
   const selectedArtifact = useMemo(
     () => activeArtifacts.find(artifact => artifact.id === selectedArtifactId) || activeArtifacts[0] || null,
     [activeArtifacts, selectedArtifactId]
   )
+  const selectedWorkstationArtifact = useMemo(
+    () => selectedArtifact && (selectedArtifact.kind === 'presentation' || selectedArtifact.kind === 'document')
+      ? selectedArtifact
+      : activeWorkstationArtifact,
+    [activeWorkstationArtifact, selectedArtifact]
+  )
+  const activeRestorePoints = activeThread?.restorePoints
   const recentThreads = useMemo(() => {
     const normalized = query.trim().toLowerCase()
     return [...threads]
@@ -317,6 +317,10 @@ export function ZnWorkbench() {
         : activeArtifacts[0]?.id || ''
     )
   }, [activeArtifacts])
+
+  useEffect(() => {
+    if (!selectedWorkstationArtifact) setArtifactOpen(false)
+  }, [selectedWorkstationArtifact])
 
   const replaceThread = useCallback((updated: ZnThread) => {
     setThreads(current =>
@@ -419,6 +423,7 @@ export function ZnWorkbench() {
     return window.znDesktop?.shell?.onDeepLink(link => {
       setDeepLinkNotice(link)
       setView('work')
+      setArtifactOpen(false)
     })
   }, [])
 
@@ -434,6 +439,7 @@ export function ZnWorkbench() {
       setWindowMode('compact')
       setView('work')
       setContextOpen(false)
+      setArtifactOpen(false)
       focusComposerInput()
     })
   }, [])
@@ -441,7 +447,10 @@ export function ZnWorkbench() {
   useEffect(() => {
     return window.znDesktop?.shell?.onWindowModeTransition(transition => {
       if (transition.phase === 'prepare') {
-        if (transition.mode === 'compact') setContextOpen(false)
+        if (transition.mode === 'compact') {
+          setContextOpen(false)
+          setArtifactOpen(false)
+        }
         window.requestAnimationFrame(() => {
           void window.znDesktop?.shell?.ackWindowModeTransition({
             transitionId: transition.transitionId,
@@ -451,7 +460,10 @@ export function ZnWorkbench() {
         return
       }
       setWindowMode(transition.mode)
-      if (transition.mode === 'compact') setContextOpen(false)
+      if (transition.mode === 'compact') {
+        setContextOpen(false)
+        setArtifactOpen(false)
+      }
     })
   }, [])
 
@@ -460,6 +472,7 @@ export function ZnWorkbench() {
     setThreads(current => [thread, ...current])
     setActiveThreadId(thread.id)
     setSelectedArtifactId('')
+    setArtifactOpen(false)
     setView('work')
     setDraft('')
     void createZnWorkThread(thread)
@@ -573,6 +586,7 @@ export function ZnWorkbench() {
           if (finalThread.artifacts.length > 0) {
             setSelectedArtifactId(finalThread.artifacts[0].id)
             setContextOpen(false)
+            setArtifactOpen(false)
           }
         }
         setWorkProgress(null)
@@ -678,23 +692,35 @@ export function ZnWorkbench() {
   }
 
   const requestWindowMode = useCallback((mode: WindowMode) => {
-    if (mode === 'compact') setContextOpen(false)
+    if (mode === 'compact') {
+      setContextOpen(false)
+      setArtifactOpen(false)
+    }
     void window.znDesktop?.shell?.setWindowMode?.(mode).catch(error => {
       console.error('[ZN] failed to request resident window mode', error)
     })
   }, [])
 
   useEffect(() => {
-    if (activeWorkstationArtifact && view === 'work') requestWindowMode('expanded')
-  }, [activeWorkstationArtifact?.id, activeThreadId, requestWindowMode, view])
+    if (artifactOpen && selectedWorkstationArtifact && view === 'work') requestWindowMode('expanded')
+  }, [artifactOpen, selectedWorkstationArtifact?.id, activeThreadId, requestWindowMode, view])
 
   const openSettings = useCallback(() => {
+    setArtifactOpen(false)
     setView('settings')
     requestWindowMode('expanded')
   }, [requestWindowMode])
 
   const openDetails = useCallback(() => {
+    setArtifactOpen(false)
     setContextOpen(true)
+    requestWindowMode('expanded')
+  }, [requestWindowMode])
+
+  const openArtifact = useCallback((artifactId?: string) => {
+    if (artifactId) setSelectedArtifactId(artifactId)
+    setContextOpen(false)
+    setArtifactOpen(true)
     requestWindowMode('expanded')
   }, [requestWindowMode])
 
@@ -712,7 +738,7 @@ export function ZnWorkbench() {
   const firstResult = activeArtifacts[0] || null
 
   return (
-    <div className={'zn-app ' + windowMode + (contextOpen ? ' details-open' : '') + (activePresentation && view === 'work' ? ' slides-open' : '') + (activeDocument && view === 'work' ? ' document-open' : '')}>
+    <div className={'zn-app ' + windowMode + (contextOpen ? ' details-open' : '') + (artifactOpen && selectedWorkstationArtifact && view === 'work' ? ' artifact-open' : '')}>
       <aside className="zn-sidebar">
         <div className="zn-brand-row">
           <div className="zn-mark" aria-hidden="true">ZN</div>
@@ -750,6 +776,7 @@ export function ZnWorkbench() {
                   setActiveThreadId(thread.id)
                   setView('work')
                   setContextOpen(false)
+                  setArtifactOpen(false)
                   void refreshRestorePoints(thread.id)
                 }}
               >
@@ -803,9 +830,20 @@ export function ZnWorkbench() {
           </div>
 
           <div className="zn-topbar-copy">
-            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeWorkstationArtifact ? activeWorkstationArtifact.name : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
+            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
             <div className="zn-muted zn-small">{view === 'settings' ? `ZN · ${t('topbar.thisComputer')}` : activeWorkspace?.name || t('topbar.thisComputer')}</div>
           </div>
+
+          {view === 'work' ? (
+            <div className="zn-mode-switch" role="tablist" aria-label={t('topbar.workDetails')}>
+              <button className={!contextOpen ? 'active' : ''} role="tab" aria-selected={!contextOpen} type="button" onClick={() => setContextOpen(false)}>
+                {t('topbar.chat')}
+              </button>
+              <button className={contextOpen ? 'active' : ''} role="tab" aria-selected={contextOpen} type="button" onClick={openDetails}>
+                {t('topbar.work')}
+              </button>
+            </div>
+          ) : null}
 
           <div className="zn-topbar-actions">
             <button type="button" aria-label={t('topbar.recentWork')} title={t('topbar.recentWork')} onClick={() => requestWindowMode('expanded')}>
@@ -925,11 +963,6 @@ export function ZnWorkbench() {
           </main>
         ) : (
           <>
-            {activeDocument ? (
-              <ZnDocumentWorkstation artifact={activeDocument} />
-            ) : activePresentation ? (
-              <ZnSlidesWorkstation artifact={activePresentation} artifacts={activeArtifacts} />
-            ) : (
             <main className="zn-thread-surface">
               {deepLinkNotice ? (
                 <div className="zn-notice">
@@ -1087,28 +1120,17 @@ export function ZnWorkbench() {
                     <strong>{firstResult.name}</strong>
                     <span>{t('result.ready', { count: activeArtifacts.length })}</span>
                   </div>
-                  <button type="button" onClick={openDetails}>{t('result.view')}</button>
+                  <button type="button" onClick={() => activeWorkstationArtifact ? openArtifact(activeWorkstationArtifact.id) : openDetails()}>{t('result.view')}</button>
                 </section>
               ) : null}
             </main>
-            )}
 
             <form className="zn-composer-wrap" onSubmit={submit}>
               <div className="zn-composer">
-                <button
-                  className="zn-composer-tool"
-                  type="button"
-                  aria-label={activeWorkspace ? t('composer.changeAttachedFolder') : t('composer.attachFolder')}
-                  title={activeWorkspace ? t('composer.changeFolder') : t('composer.attachFolder')}
-                  disabled={workspaceBusy || busy || !activeThread}
-                  onClick={() => void attachWorkspace()}
-                >
-                  <Paperclip size={18} />
-                </button>
                 <textarea
                   aria-label={t('composer.messageAria')}
                   placeholder={t('composer.placeholder')}
-                  rows={1}
+                  rows={2}
                   value={draft}
                   onChange={event => setDraft(event.target.value)}
                   onKeyDown={event => {
@@ -1118,17 +1140,61 @@ export function ZnWorkbench() {
                     }
                   }}
                 />
-                <button className="zn-send" type="submit" aria-label={t('composer.sendAria')} disabled={busy || !draft.trim()}>
-                  {busy ? <CircleNotch className="zn-spin" size={18} /> : <ArrowUp size={19} weight="bold" />}
-                </button>
+                <div className="zn-composer-toolbar">
+                  <div className="zn-composer-tools">
+                    <button
+                      className="zn-composer-tool"
+                      type="button"
+                      aria-label={activeWorkspace ? t('composer.changeAttachedFolder') : t('composer.attachFolder')}
+                      title={activeWorkspace ? t('composer.changeFolder') : t('composer.attachFolder')}
+                      disabled={workspaceBusy || busy || !activeThread}
+                      onClick={() => void attachWorkspace()}
+                    >
+                      <Plus size={18} />
+                    </button>
+                    <span className="zn-context-chip" title={activeWorkspace?.path}>
+                      <FolderSimple size={14} />
+                      {activeWorkspace?.name || t('topbar.thisComputer')}
+                    </span>
+                  </div>
+                  <div className="zn-composer-tools">
+                    <span className="zn-model-chip" title={localizedProviderReadinessDetail}>
+                      {providerSettings?.model || 'ZN'}
+                    </span>
+                    <button className="zn-send" type="submit" aria-label={t('composer.sendAria')} disabled={busy || !draft.trim()}>
+                      {busy ? <CircleNotch className="zn-spin" size={18} /> : <ArrowUp size={18} weight="bold" />}
+                    </button>
+                  </div>
+                </div>
               </div>
               <div className="zn-composer-caption">
-                {activeWorkspace ? activeWorkspace.name + ' · ' : ''}{busy ? t('composer.background') : ''}{t('composer.shortcut')}
+                {busy ? t('composer.background') : ''}{t('composer.shortcut')}
               </div>
             </form>
           </>
         )}
       </section>
+
+      {artifactOpen && selectedWorkstationArtifact && view === 'work' ? (
+        <aside className="zn-artifact-pane" aria-label={t('artifact.preview')}>
+          <div className="zn-artifact-pane-header">
+            <div>
+              <span>{artifactKindLabel(selectedWorkstationArtifact.kind, t)}</span>
+              <strong>{selectedWorkstationArtifact.name}</strong>
+            </div>
+            <button type="button" aria-label={t('artifact.closePreview')} onClick={() => setArtifactOpen(false)}>
+              <X size={18} />
+            </button>
+          </div>
+          <div className="zn-artifact-pane-body">
+            {selectedWorkstationArtifact.kind === 'document' ? (
+              <ZnDocumentWorkstation artifact={selectedWorkstationArtifact} />
+            ) : (
+              <ZnSlidesWorkstation artifact={selectedWorkstationArtifact} artifacts={activeArtifacts} />
+            )}
+          </div>
+        </aside>
+      ) : null}
 
       {contextOpen ? <button className="zn-details-backdrop" type="button" aria-label={t('details.closeWorkAria')} onClick={() => setContextOpen(false)} /> : null}
 
@@ -1170,7 +1236,15 @@ export function ZnWorkbench() {
               <div className="zn-context-title">{t('details.results')}</div>
               <div className="zn-artifact-list" aria-label={t('details.artifactsAria')}>
                 {activeArtifacts.map(artifact => (
-                  <button className={'zn-artifact-link' + (artifact.id === selectedArtifact?.id ? ' active' : '')} key={artifact.id} type="button" onClick={() => setSelectedArtifactId(artifact.id)}>
+                  <button
+                    className={'zn-artifact-link' + (artifact.id === selectedArtifact?.id ? ' active' : '')}
+                    key={artifact.id}
+                    type="button"
+                    onClick={() => {
+                      setSelectedArtifactId(artifact.id)
+                      if (artifact.kind === 'presentation' || artifact.kind === 'document') openArtifact(artifact.id)
+                    }}
+                  >
                     <span className="zn-artifact-icon"><FileText size={15} /></span>
                     <span className="zn-artifact-copy">
                       <span className="zn-artifact-kind">{artifactKindLabel(artifact.kind, t)}</span>
