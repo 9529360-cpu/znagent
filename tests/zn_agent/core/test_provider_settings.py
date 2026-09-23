@@ -91,6 +91,78 @@ class ProviderSettingsTests(unittest.TestCase):
             self.assertEqual(route.metadata["api_key"], "zn-secret-value")
             resident.store.close()
 
+    def test_provider_base_url_requires_tls_except_for_explicit_loopback(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            credentials = MemoryCredentialStore()
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+                credential_store=credentials,
+            )
+            service = ProviderSettingsService(
+                resident,
+                config_path=root / "config.yaml",
+                credential_store=credentials,
+                environ={},
+            )
+            try:
+                for base_url in (
+                    "http://127.0.0.1:11434/v1",
+                    "http://localhost:1234/v1",
+                    "http://[::1]:8080/v1",
+                    "https://provider.example/v1",
+                ):
+                    with self.subTest(base_url=base_url):
+                        snapshot = service.update(
+                            {
+                                "provider": "openai",
+                                "model": "gpt-test",
+                                "base_url": base_url,
+                            }
+                        )
+                        self.assertEqual(snapshot["base_url"], base_url)
+
+                with self.assertRaisesRegex(ValueError, "must use HTTPS"):
+                    service.update(
+                        {
+                            "provider": "openai",
+                            "model": "gpt-test",
+                            "base_url": "http://provider.example/v1",
+                            "api_key": "must-not-be-stored",
+                        }
+                    )
+                self.assertNotIn("provider:openai", credentials.values)
+            finally:
+                resident.store.close()
+
+    def test_provider_base_url_rejects_embedded_credentials(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            credentials = MemoryCredentialStore()
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+                credential_store=credentials,
+            )
+            service = ProviderSettingsService(
+                resident,
+                config_path=root / "config.yaml",
+                credential_store=credentials,
+                environ={},
+            )
+            try:
+                with self.assertRaisesRegex(ValueError, "embedded credentials"):
+                    service.update(
+                        {
+                            "provider": "openai",
+                            "model": "gpt-test",
+                            "base_url": "https://user:password@provider.example/v1",
+                        }
+                    )
+            finally:
+                resident.store.close()
+
     def test_referenced_credential_restores_provider_after_resident_reconstruction(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
