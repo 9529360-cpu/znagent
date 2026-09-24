@@ -250,6 +250,143 @@ class ActionExecutionRuntime:
             execution_id=execution.execution_id,
         )
 
+    def reverification_checkpoint(self, execution: ActionExecution) -> dict[str, Any]:
+        """Persist only the safe evidence needed to re-observe an async effect."""
+
+        if execution.status != "pending":
+            raise ValueError("reverification checkpoint requires a pending execution")
+        action_id = execution.request.action_id
+        if action_id not in {
+            "windows.application.launch",
+            "windows.application.activate",
+        }:
+            raise ValueError(
+                f"pending reverification is not durable-safe for action: {action_id}"
+            )
+        if execution.authority_mode != "resident":
+            raise ValueError("generic durable reverification supports resident authority only")
+
+        body_evidence: dict[str, Any] = {}
+        body_action_id = None
+        body_kind = None
+        body_success = None
+        if execution.body_result is not None:
+            body_action_id = execution.body_result.action_id
+            body_kind = execution.body_result.kind
+            body_success = bool(execution.body_result.success)
+            data = dict(execution.body_result.data or {})
+            if action_id == "windows.application.activate":
+                body_evidence = {
+                    "window_handle": int(data.get("window_handle") or 0),
+                    "process_id": int(data.get("process_id") or 0),
+                }
+
+        return {
+            "version": 1,
+            "execution_id": execution.execution_id,
+            "action_id": action_id,
+            "args": dict(execution.request.args),
+            "event_id": execution.request.event_id,
+            "started_at": execution.started_at,
+            "authority_mode": execution.authority_mode,
+            "observations": [
+                {
+                    "source": observation.source,
+                    "data": dict(observation.data or {}),
+                    "observed_at": observation.observed_at,
+                }
+                for observation in execution.observations[-4:]
+            ],
+            "body": {
+                "action_id": body_action_id,
+                "kind": body_kind,
+                "success": body_success,
+                "data": body_evidence,
+            } if execution.body_result is not None else None,
+        }
+
+    def verify_checkpoint(self, checkpoint: Mapping[str, Any]) -> ActionExecution:
+        """Restore one safe pending checkpoint and re-observe without dispatch."""
+
+        raw = dict(checkpoint or {})
+        if int(raw.get("version") or 0) != 1:
+            raise ValueError("unsupported action reverification checkpoint version")
+        action_id = str(raw.get("action_id") or "").strip()
+        if action_id not in {
+            "windows.application.launch",
+            "windows.application.activate",
+        }:
+            raise ValueError("action reverification checkpoint action is unsupported")
+        descriptor = self.fabric.descriptor(action_id)
+        if descriptor is None:
+            raise KeyError(action_id)
+        if action_id not in self._observers:
+            raise ValueError(f"action has no independent reverification observer: {action_id}")
+
+        args = raw.get("args")
+        if not isinstance(args, Mapping):
+            raise ValueError("action reverification checkpoint args are malformed")
+        request = ActionRequest(
+            action_id,
+            dict(args),
+            event_id=str(raw.get("event_id") or "").strip() or None,
+        )
+        execution_id = str(raw.get("execution_id") or "").strip()
+        started_at = str(raw.get("started_at") or "").strip()
+        if not execution_id or not started_at:
+            raise ValueError("action reverification checkpoint identity is incomplete")
+
+        body_result = None
+        body = raw.get("body")
+        if body is not None:
+            if not isinstance(body, Mapping):
+                raise ValueError("action reverification checkpoint Body evidence is malformed")
+            body_data = body.get("data")
+            if not isinstance(body_data, Mapping):
+                raise ValueError("action reverification checkpoint Body data is malformed")
+            body_result = BodyActionResult(
+                action_id=str(body.get("action_id") or "recovered-body-evidence"),
+                kind=str(body.get("kind") or descriptor.body_action_kind or action_id),
+                success=bool(body.get("success")),
+                data=dict(body_data),
+                event_id=request.event_id,
+            )
+
+        raw_observations = raw.get("observations") or []
+        if not isinstance(raw_observations, list):
+            raise ValueError("action reverification checkpoint observations are malformed")
+        observations: list[ActionObservation] = []
+        for item in raw_observations[-4:]:
+            if not isinstance(item, Mapping):
+                raise ValueError("action reverification checkpoint observation is malformed")
+            data = item.get("data")
+            if not isinstance(data, Mapping):
+                raise ValueError("action reverification checkpoint observation data is malformed")
+            observations.append(
+                ActionObservation(
+                    action_id,
+                    str(item.get("source") or "durable_reverification"),
+                    data=dict(data),
+                    observed_at=str(item.get("observed_at") or utc_now()),
+                )
+            )
+
+        restored = ActionExecution(
+            execution_id=execution_id,
+            request=request,
+            descriptor=descriptor,
+            status="pending",
+            verification=ActionVerification(
+                "pending",
+                "restored durable pending action for fresh reverification",
+            ),
+            observations=tuple(observations),
+            body_result=body_result,
+            authority_mode="resident",
+            started_at=started_at,
+        )
+        return self.verify(restored)
+
     def _observe_effect(
         self,
         request: ActionRequest,
@@ -406,18 +543,41 @@ def build_machine_action_execution_runtime(
             verify=_verify_brightness,
         )
 
-    if (
-        device_capabilities is not None
-        and fabric.descriptor("windows.application.launch") is not None
-    ):
+    if device_capabilities is not None:
+        if fabric.descriptor("windows.application.launch") is not None:
+            runtime.register_verification(
+                "windows.application.launch",
+                observe=lambda request, result: _observe_application_launch(
+                    device_capabilities,
+                    request,
+                ),
+                verify=_verify_application_launch,
+            )
+        if fabric.descriptor("windows.application.activate") is not None:
+            runtime.register_verification(
+                "windows.application.activate",
+                observe=lambda request, result: _observe_application_activation(
+                    device_capabilities,
+                    request,
+                ),
+                verify=_verify_application_activation,
+            )
+    if fabric.descriptor("windows.ui.control.type_text") is not None:
         runtime.register_verification(
-            "windows.application.launch",
-            observe=lambda request, result: _observe_application_launch(
-                device_capabilities,
+            "windows.ui.control.type_text",
+            observe=lambda request, result: _observe_ui_control(
+                body,
                 request,
+                _semantic_text_pattern(request),
             ),
-            verify=_verify_application_launch,
+            verify=lambda request, observation, result: _verify_ui_control(
+                request,
+                observation,
+                result,
+                _semantic_text_pattern(request),
+            ),
         )
+
     for action_id, pattern in (
         ("windows.ui.control.set_value", "value"),
         ("windows.ui.control.toggle", "toggle"),
@@ -640,6 +800,17 @@ def _verify_office_word_selection(
     )
 
 
+def _semantic_text_pattern(request: ActionRequest) -> str:
+    control_type = normalize_control_type(request.args.get("control_type"))
+    if control_type == "document":
+        return "text"
+    if control_type == "edit":
+        return "value"
+    raise ValueError(
+        "semantic text input is limited to UI Automation edit/document controls"
+    )
+
+
 def _observe_ui_control(
     body: Any,
     request: ActionRequest,
@@ -694,21 +865,29 @@ def _verify_ui_control(
     )
     verified = False
     target_evidence: dict[str, Any] = {}
-    if selector_matches and pattern == "value":
-        target = request.args.get("value")
+    if selector_matches and pattern in {"value", "text"}:
+        argument_name = "text" if request.action_id == "windows.ui.control.type_text" else "value"
+        target = request.args.get(argument_name)
         if isinstance(target, str):
-            chars = state.get("value_chars")
+            chars_key = "text_chars" if pattern == "text" else "value_chars"
+            hash_key = "text_sha256" if pattern == "text" else "value_sha256"
+            chars = state.get(chars_key)
             expected_hash = text_sha256(target)
             verified = bool(
                 isinstance(chars, int)
                 and chars == len(target)
-                and state.get("value_sha256") == expected_hash
+                and state.get(hash_key) == expected_hash
+            )
+            evidence_prefix = (
+                "text"
+                if request.action_id == "windows.ui.control.type_text"
+                else "value"
             )
             target_evidence = {
-                "expected_value_chars": len(target),
-                "expected_value_sha256": expected_hash,
-                "observed_value_chars": chars,
-                "observed_value_sha256": state.get("value_sha256"),
+                f"expected_{evidence_prefix}_chars": len(target),
+                f"expected_{evidence_prefix}_sha256": expected_hash,
+                f"observed_{evidence_prefix}_chars": chars,
+                f"observed_{evidence_prefix}_sha256": state.get(hash_key),
             }
     elif selector_matches and pattern == "toggle":
         target = str(request.args.get("state") or "").strip().lower()
@@ -964,10 +1143,7 @@ def _observe_application_launch(
     request: ActionRequest,
 ) -> ActionObservation:
     app_id = str(request.args.get("application_id") or "").strip()
-    application = device_capabilities.application_by_id(
-        app_id,
-        force_refresh=True,
-    )
+    application = device_capabilities.application_by_id(app_id)
     processes = ()
     visible = ()
     if application is not None:
@@ -1014,6 +1190,82 @@ def _verify_application_launch(
             else "launch dispatch is not yet proven by fresh process/window evidence"
         ),
         evidence=data,
+        observed_at=observation.observed_at,
+    )
+
+
+def _observe_application_activation(
+    device_capabilities: Any,
+    request: ActionRequest,
+) -> ActionObservation:
+    app_id = str(request.args.get("application_id") or "").strip()
+    application = device_capabilities.application_by_id(app_id)
+    foreground = []
+    if application is not None:
+        processes, windows = device_capabilities.application_runtime(application)
+        process_ids = {
+            int(getattr(row, "process_id", 0))
+            for row in processes
+            if getattr(row, "resolved_app_id", app_id) == app_id
+        }
+        foreground = [
+            {
+                "window_handle": int(getattr(row, "hwnd", 0)),
+                "process_id": int(getattr(row, "process_id", 0)),
+            }
+            for row in windows
+            if bool(getattr(row, "visible", False))
+            and bool(getattr(row, "foreground", False))
+            and getattr(row, "resolved_app_id", app_id) == app_id
+            and int(getattr(row, "process_id", 0)) in process_ids
+        ]
+    return ActionObservation(
+        request.action_id,
+        "device_capability_graph",
+        data={
+            "application_id": app_id,
+            "application_present": application is not None,
+            "foreground_windows": foreground,
+        },
+    )
+
+
+def _verify_application_activation(
+    request: ActionRequest,
+    observation: ActionObservation,
+    body_result: BodyActionResult | None,
+) -> ActionVerification:
+    expected = dict((body_result.data if body_result is not None else {}) or {})
+    expected_hwnd = int(expected.get("window_handle") or 0)
+    expected_pid = int(expected.get("process_id") or 0)
+    observed = dict(observation.data or {})
+    foreground = [
+        row for row in observed.get("foreground_windows") or ()
+        if isinstance(row, dict)
+    ]
+    exact = any(
+        int(row.get("window_handle") or 0) == expected_hwnd
+        and int(row.get("process_id") or 0) == expected_pid
+        for row in foreground
+    )
+    if not expected_hwnd or not expected_pid:
+        status: VerificationStatus = "failed"
+        reason = "activation verification lacks the Body-admitted exact window/process identity"
+    elif exact:
+        status = "verified"
+        reason = "fresh foreground evidence proves the exact admitted application window is active"
+    else:
+        status = "pending"
+        reason = "the exact admitted application window is not yet proven foreground by fresh evidence"
+    return ActionVerification(
+        status,
+        reason,
+        evidence={
+            "application_id": str(request.args.get("application_id") or ""),
+            "expected_window_handle": expected_hwnd,
+            "expected_process_id": expected_pid,
+            "foreground_windows": foreground,
+        },
         observed_at=observation.observed_at,
     )
 

@@ -131,6 +131,78 @@ class MachineCapabilityBodyTests(unittest.TestCase):
             "class_name": "Notepad", "visible": visible, "foreground": foreground,
         }
 
+    def test_application_resolution_returns_only_safe_local_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store, body, app, _ = self._fixture(tmp)
+            try:
+                result = body.act(
+                    "resolve_application",
+                    event_id="evt-resolve",
+                    query="Notepad",
+                )
+                self.assertTrue(result.success)
+                self.assertEqual(result.data["status"], "resolved")
+                self.assertEqual(
+                    result.data["application"]["application_id"],
+                    app.app_id,
+                )
+                self.assertTrue(result.data["application"]["launchable"])
+                self.assertNotIn("executable_path", result.data["application"])
+                self.assertNotIn("launch_target", result.data["application"])
+                self.assertEqual(result.data["candidates"], [])
+            finally:
+                store.close()
+
+    def test_application_resolution_preserves_ambiguity_without_guessing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "notepad-a.exe"
+            second = root / "notepad-b.exe"
+            first.write_bytes(b"")
+            second.write_bytes(b"")
+            graph = DeviceCapabilityGraph(
+                inventory_provider=lambda: [
+                    ApplicationInventoryCandidate(
+                        source="app_paths",
+                        source_id="notepad-a",
+                        display_name="Notepad",
+                        executable_path=str(first),
+                        identity_paths=(str(first),),
+                        launch_kind="executable",
+                        launch_target=str(first),
+                    ),
+                    ApplicationInventoryCandidate(
+                        source="app_paths",
+                        source_id="notepad-b",
+                        display_name="Notepad",
+                        executable_path=str(second),
+                        identity_paths=(str(second),),
+                        launch_kind="executable",
+                        launch_target=str(second),
+                    ),
+                ],
+                process_provider=lambda: [],
+                window_provider=lambda: [],
+                cache_path=root / "apps.json",
+                inventory_ttl_seconds=0,
+            )
+            store = KernelStore(root / "kernel.db")
+            body = _RecordingBody(store=store, device_capabilities=graph)
+            try:
+                result = body.act(
+                    "resolve_application",
+                    event_id="evt-ambiguous-resolve",
+                    query="Notepad",
+                )
+                self.assertTrue(result.success)
+                self.assertEqual(result.data["status"], "ambiguous")
+                self.assertIsNone(result.data["application"])
+                self.assertEqual(result.data["candidate_count"], 2)
+                self.assertEqual(len(result.data["candidates"]), 2)
+                self.assertEqual(body.dispatched, [])
+            finally:
+                store.close()
+
     def test_raw_launch_material_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store, body, app, executable = self._fixture(tmp)

@@ -234,6 +234,28 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
 
     registry = ActionFabricRegistry()
 
+    def resolution_availability(
+        descriptor: ActionDescriptor,
+    ) -> ActionAvailability:
+        try:
+            applications = tuple(device_capabilities.installed_applications())
+        except Exception as exc:
+            return ActionAvailability(
+                descriptor.action_id,
+                "unknown",
+                reason=f"application inventory query failed: {type(exc).__name__}",
+                evidence={"source": "device_capability_graph"},
+            )
+        return ActionAvailability(
+            descriptor.action_id,
+            "available",
+            reason="current application inventory can resolve human-facing names locally",
+            evidence={
+                "source": "device_capability_graph",
+                "installed_application_count": len(applications),
+            },
+        )
+
     def launch_availability(descriptor: ActionDescriptor) -> ActionAvailability:
         applications = tuple(device_capabilities.installed_applications())
         launchable = tuple(
@@ -423,6 +445,45 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             evidence={"source": "office_nativeom", "exact_hwnd_binding": True},
         )
 
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.application.resolve",
+            provider="zn.windows",
+            description=(
+                "Resolve one human-facing Windows application name against fresh "
+                "local inventory without granting launch authority."
+            ),
+            body_action_kind="resolve_application",
+            input_schema={
+                "type": "object",
+                "required": ["query"],
+                "properties": {"query": {"type": "string"}},
+                "additionalProperties": False,
+            },
+            output_schema={
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "status": {"type": "string"},
+                    "application": {"type": ["object", "null"]},
+                    "candidates": {"type": "array"},
+                    "candidate_count": {"type": "integer"},
+                },
+            },
+            effect_class="read_only",
+            sensitivity="local_application_inventory",
+            postconditions=(
+                "fresh local application inventory returns resolved, ambiguous or not-installed evidence",
+            ),
+            verification=(
+                "the local identity-resolution read itself is current machine evidence",
+            ),
+            reversibility="not_applicable",
+            replay_semantics="read_only",
+            tags=("windows", "application", "resolve", "sense", "native", "body"),
+        ),
+        availability_probe=resolution_availability,
+    )
     registry.register(
         ActionDescriptor(
             action_id="windows.application.launch",
@@ -834,6 +895,57 @@ def build_machine_action_fabric(device_capabilities: Any) -> ActionFabricRegistr
             reversibility="set the previously observed value through the same semantic control action",
             replay_semantics="verify_before_replay",
             tags=("windows", "uia", "gui", "value", "semantic_control", "body"),
+        ),
+        availability_probe=uia_availability,
+    )
+    registry.register(
+        ActionDescriptor(
+            action_id="windows.ui.control.type_text",
+            provider="zn.windows.uia",
+            description=(
+                "Type bounded Unicode text into one exact empty foreground Windows "
+                "UI Automation Edit or Document control after verified focus."
+            ),
+            body_action_kind="automation_control_type_text",
+            input_schema={
+                "type": "object",
+                "required": ["application_id", "control_type", "text"],
+                "properties": {
+                    "application_id": {"type": "string"},
+                    "control_type": {"type": "string"},
+                    "control_name": {"type": "string"},
+                    "automation_id": {"type": "string"},
+                    "text": {"type": "string"},
+                },
+                "additionalProperties": False,
+            },
+            effect_class="reversible_side_effect",
+            required_authority=("body_action",),
+            sensitivity="interactive_desktop_text_input",
+            preconditions=(
+                "application_id is the exact current foreground application",
+                "semantic selector resolves to exactly one enabled onscreen non-password Edit or Document control",
+                "target is keyboard-focusable and current text digest proves the control is empty or already satisfied",
+            ),
+            postconditions=(
+                "fresh exact-control ValuePattern/TextPattern digest matches the requested text",
+            ),
+            verification=(
+                "fresh UI Automation text length plus SHA-256 digest readback",
+            ),
+            reversibility=(
+                "application-specific; V1 refuses replacement of non-empty text"
+            ),
+            replay_semantics="verify_before_replay",
+            tags=(
+                "windows",
+                "uia",
+                "gui",
+                "text",
+                "keyboard",
+                "semantic_control",
+                "body",
+            ),
         ),
         availability_probe=uia_availability,
     )
