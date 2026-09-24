@@ -16,3 +16,4 @@ coverage/
 
 .zn-update-signing/
 *.egg-info/
+.venv_check/
