@@ -236,34 +236,39 @@ class ZNResidentRuntime:
         calls without a Thought keep driving the same event to a terminal result,
         while still forming fresh native Thoughts between internal stages.
         """
-        event = (
-            self.store.claim_event(target_event_id)
-            if target_event_id
-            else self.store.claim_next_event()
-        )
-        if event is None:
-            return None
+        # Claiming an event and constructing its durable WorkingState are part
+        # of the same steering boundary. Otherwise an RPC steer could supersede
+        # a just-claimed event and the old runner could subsequently recreate
+        # stale working state before its first real step.
+        with self._cycle_lock:
+            event = (
+                self.store.claim_event(target_event_id)
+                if target_event_id
+                else self.store.claim_next_event()
+            )
+            if event is None:
+                return None
 
-        requested_cancel = self._requested_cancellation_result(event)
-        if requested_cancel is not None:
-            durable_cancel = self.result_for(event.event_id)
-            if durable_cancel is not None and durable_cancel.cancelled:
-                return durable_cancel
-            return self._complete_result(event, requested_cancel)
+            requested_cancel = self._requested_cancellation_result(event)
+            if requested_cancel is not None:
+                durable_cancel = self.result_for(event.event_id)
+                if durable_cancel is not None and durable_cancel.cancelled:
+                    return durable_cancel
+                return self._complete_result(event, requested_cancel)
 
-        drive_to_terminal = thought is None
-        required = self._required_capabilities(event)
-        if readiness is None:
-            readiness = self.kernel.self_model.assess_task(event.task, required)
-        if learning_evidence is None:
-            learning_evidence = self._related_learning_evidence(event, readiness)
+            drive_to_terminal = thought is None
+            required = self._required_capabilities(event)
+            if readiness is None:
+                readiness = self.kernel.self_model.assess_task(event.task, required)
+            if learning_evidence is None:
+                learning_evidence = self._related_learning_evidence(event, readiness)
 
-        state = self._state_for_event(
-            event,
-            thought=thought,
-            readiness=readiness,
-            learning_evidence=learning_evidence,
-        )
+            state = self._state_for_event(
+                event,
+                thought=thought,
+                readiness=readiness,
+                learning_evidence=learning_evidence,
+            )
 
         try:
             while True:
@@ -274,22 +279,40 @@ class ZNResidentRuntime:
                         return durable_cancel
                     return self._complete_result(event, requested_cancel)
 
-                result = self._advance_event_step(
-                    event,
-                    state,
-                    readiness=readiness,
-                    learning_evidence=learning_evidence,
-                    thought=thought,
-                )
+                # One resident step is the concurrency boundary for steering.
+                # RPC threads may queue a plan change while a model/tool/Body step
+                # is running, but steer_active() must acquire this same lock before
+                # it can supersede the current event. Releasing the lock after one
+                # step therefore means an in-flight effect finishes safely and no
+                # second old-plan step can begin once steering has committed.
+                with self._cycle_lock:
+                    durable_transition = self.result_for(event.event_id)
+                    if durable_transition is not None:
+                        return durable_transition
 
-                requested_cancel = self._requested_cancellation_result(event)
-                if requested_cancel is not None:
-                    durable_cancel = self.result_for(event.event_id)
-                    if durable_cancel is not None and durable_cancel.cancelled:
-                        return durable_cancel
-                    return self._complete_result(event, requested_cancel)
-                if result is not None:
-                    return self._complete_result(event, result)
+                    requested_cancel = self._requested_cancellation_result(event)
+                    if requested_cancel is not None:
+                        durable_cancel = self.result_for(event.event_id)
+                        if durable_cancel is not None and durable_cancel.cancelled:
+                            return durable_cancel
+                        return self._complete_result(event, requested_cancel)
+
+                    result = self._advance_event_step(
+                        event,
+                        state,
+                        readiness=readiness,
+                        learning_evidence=learning_evidence,
+                        thought=thought,
+                    )
+
+                    requested_cancel = self._requested_cancellation_result(event)
+                    if requested_cancel is not None:
+                        durable_cancel = self.result_for(event.event_id)
+                        if durable_cancel is not None and durable_cancel.cancelled:
+                            return durable_cancel
+                        return self._complete_result(event, requested_cancel)
+                    if result is not None:
+                        return self._complete_result(event, result)
                 if not drive_to_terminal:
                     return None
 

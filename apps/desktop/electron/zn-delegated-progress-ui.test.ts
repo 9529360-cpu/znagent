@@ -76,17 +76,13 @@ test('completed Work exposes durable execution evidence without inferring model 
 
 test('continuation inspection returns control to the composer without finalizing the durable Work', () => {
   const workbench = read('src/zn/workbench.tsx')
+  const reconnection = read('src/zn/work-reconnection.ts')
 
-  assert.match(workbench, /while \(!current\.terminal && current\.stage !== 'inspection_complete'\)/)
-  assert.match(workbench, /if \(current\.stage === 'inspection_complete'\) \{[\s\S]*?return[\s\S]*?\}/)
-
-  const inspectionBranchStart = workbench.indexOf("if (current.stage === 'inspection_complete')")
-  const inspectionBranchEnd = workbench.indexOf("if (!current.finalized)", inspectionBranchStart)
-  assert.ok(inspectionBranchStart >= 0)
-  assert.ok(inspectionBranchEnd > inspectionBranchStart)
-  const inspectionBranch = workbench.slice(inspectionBranchStart, inspectionBranchEnd)
-  assert.doesNotMatch(inspectionBranch, /terminal\s*=/)
-  assert.doesNotMatch(inspectionBranch, /finalized\s*=/)
+  assert.equal(workbench.includes('while (!current.terminal'), false)
+  assert.ok(workbench.includes('setWorkProgress(started.progress.finalized ? null : started.progress)'))
+  assert.ok(workbench.includes('submissionBusy || stoppingWork || !draft.trim()'))
+  assert.ok(reconnection.includes("current?.stage !== 'inspection_complete'"))
+  assert.ok(reconnection.includes("update.progress.stage === 'inspection_complete'"))
 })
 
 // Like zn-delegated-progress.test.ts, execute the actual renderer bundle rather
@@ -293,7 +289,7 @@ test('actual renderer client normalizes active Work and reconnects through exist
     assert.equal(result.progress.recovery?.replayBlocked, true)
     assert.equal(workStart.mock.calls.length, 0)
     assert.equal(workProgress.mock.calls.length, 1)
-    assert.match(read('src/zn/workbench.tsx'), /const busy = useZnWorkReconnection\(/)
+    assert.match(read('src/zn/workbench.tsx'), /const workActive = useZnWorkReconnection\(/)
     assert.match(read('src/zn/use-work-reconnection.ts'), /if \(submissionBusy \|\| !threadId \|\| !eventId\) return/)
     assert.doesNotMatch(read('src/zn/use-work-reconnection.ts'), /startZnWork|submitZnWork|workStart/)
   } finally { vi.unstubAllGlobals() }

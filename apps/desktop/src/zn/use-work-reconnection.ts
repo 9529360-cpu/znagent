@@ -28,8 +28,10 @@ export function useZnWorkReconnection({
   }, [onProgress, progress, submissionBusy, thread])
 
   useEffect(() => {
-    // The submit handler already follows its accepted event. There must not be
-    // a second observer until it releases control (including on disconnect).
+    // While work_start is crossing the RPC acceptance boundary, do not attach
+    // an observer to the previous activeRun. As soon as submission releases,
+    // this read-only observer becomes the sole progress follower; it never
+    // resubmits Work, including after steering or renderer reconnect.
     if (submissionBusy || !threadId || !eventId) return
     return observeZnWorkProgress(
       { threadId, eventId },
