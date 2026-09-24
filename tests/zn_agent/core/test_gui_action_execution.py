@@ -17,6 +17,7 @@ class _GuiBody:
         self.calls: list[tuple[str, str | None, dict]] = []
         self.toggle_state = "off"
         self.value = ""
+        self.text = ""
         self.read_count = 0
 
     def act(self, kind: str, *, event_id: str | None = None, **args):
@@ -51,6 +52,11 @@ class _GuiBody:
                 "value_chars": len(self.value),
                 "value_sha256": text_sha256(self.value),
                 "read_only": False,
+            }
+        elif pattern == "text":
+            state = {
+                "text_chars": len(self.text),
+                "text_sha256": text_sha256(self.text),
             }
         elif pattern == "expand_collapse":
             state = {"expand_collapse_state": "expanded"}
@@ -149,6 +155,39 @@ class GuiActionExecutionTests(unittest.TestCase):
         self.assertEqual(second.status, "verified")
         self.assertEqual(len(body.calls), 1)
         self.assertEqual(body.read_count, 2)
+
+    def test_document_type_text_verification_uses_textpattern_digest(self) -> None:
+        body = _GuiBody()
+        body.text = "hello from ZN"
+        runtime = build_machine_action_execution_runtime(
+            _registry(
+                "windows.ui.control.type_text",
+                "automation_control_type_text",
+            ),
+            body,
+            device_capabilities=None,
+        )
+        result = runtime.execute(
+            ActionRequest(
+                "windows.ui.control.type_text",
+                {
+                    "application_id": "app.demo",
+                    "control_type": "document",
+                    "automation_id": "TextEditor",
+                    "text": body.text,
+                },
+                event_id="evt-type-text",
+            )
+        )
+        self.assertTrue(result.success)
+        self.assertEqual(result.status, "verified")
+        self.assertEqual(result.verification.evidence["expected_text_chars"], len(body.text))
+        self.assertEqual(
+            result.verification.evidence["expected_text_sha256"],
+            text_sha256(body.text),
+        )
+        self.assertNotIn(body.text, repr(result.verification.evidence))
+        self.assertEqual(body.calls[0][0], "automation_control_type_text")
 
     def test_value_verification_uses_digest_not_raw_text(self) -> None:
         body = _GuiBody()
