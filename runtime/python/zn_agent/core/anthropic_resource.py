@@ -97,6 +97,29 @@ def _block_value(block: Any, name: str, default: Any = None) -> Any:
     return getattr(block, name, default)
 
 
+def _build_anthropic_client(route: ModelRoute, client_builder: "ClientBuilder | None"):
+    builder = client_builder
+    if builder is None:
+        try:
+            from anthropic import Anthropic
+        except ImportError as exc:
+            raise RuntimeError(
+                "Anthropic resource requires the optional 'anthropic' dependency"
+            ) from exc
+        builder = Anthropic
+
+    kwargs: dict[str, Any] = {
+        "api_key": route.metadata["api_key"],
+        # A single durable Worker attempt must not hide SDK retries.
+        "max_retries": 0,
+    }
+    if route.metadata.get("base_url"):
+        kwargs["base_url"] = route.metadata["base_url"]
+    if route.metadata.get("timeout") is not None:
+        kwargs["timeout"] = route.metadata["timeout"]
+    return builder(**kwargs)
+
+
 class AnthropicCognitiveResource:
     """One bounded ZN cognition call over Anthropic's native Messages API."""
 
@@ -110,26 +133,7 @@ class AnthropicCognitiveResource:
         self._client_builder = client_builder
 
     def _client(self):
-        builder = self._client_builder
-        if builder is None:
-            try:
-                from anthropic import Anthropic
-            except ImportError as exc:
-                raise RuntimeError(
-                    "Anthropic resource requires the optional 'anthropic' dependency"
-                ) from exc
-            builder = Anthropic
-
-        kwargs: dict[str, Any] = {
-            "api_key": self.route.metadata["api_key"],
-            # A single durable Worker attempt must not hide SDK retries.
-            "max_retries": 0,
-        }
-        if self.route.metadata.get("base_url"):
-            kwargs["base_url"] = self.route.metadata["base_url"]
-        if self.route.metadata.get("timeout") is not None:
-            kwargs["timeout"] = self.route.metadata["timeout"]
-        return builder(**kwargs)
+        return _build_anthropic_client(self.route, self._client_builder)
 
     def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
         text = str(question or "").strip()
@@ -211,3 +215,112 @@ class AnthropicCognitiveResource:
             usage=_usage_dict(getattr(response, "usage", None)),
             metadata=metadata,
         )
+
+
+class AnthropicToolLoopClient:
+    """Adapts native Anthropic tool-calling to AgenticToolLoop's protocol.
+
+    Unlike AnthropicCognitiveResource.invoke (one bounded question -> one
+    text answer, no tools), this speaks the real multi-turn Messages API
+    with a ``tools`` schema so the model can call tools and see their
+    results across turns, and decides for itself -- via stop_reason -- when
+    it is done. See agentic_tool_loop.AgenticToolLoop for the loop that
+    drives this client turn by turn.
+    """
+
+    def __init__(
+        self,
+        route: ModelRoute,
+        *,
+        client_builder: ClientBuilder | None = None,
+        max_tokens: int | None = None,
+    ) -> None:
+        self.route = resolve_anthropic_route(route)
+        self._client_builder = client_builder
+        self._max_tokens = max_tokens
+
+    def _client(self):
+        return _build_anthropic_client(self.route, self._client_builder)
+
+    def create_turn(
+        self,
+        *,
+        messages: list[Mapping[str, Any]],
+        system: str,
+        tools: tuple[Mapping[str, Any], ...],
+    ) -> dict[str, Any]:
+        anthropic_tools = [
+            {
+                "name": tool["name"],
+                "description": tool["description"],
+                "input_schema": tool["input_schema"],
+            }
+            for tool in tools
+        ]
+        request: dict[str, Any] = {
+            "model": self.route.model,
+            "max_tokens": max(
+                1,
+                int(
+                    self._max_tokens
+                    or self.route.metadata.get("max_tokens")
+                    or 8_192
+                ),
+            ),
+            "messages": [dict(message) for message in messages],
+        }
+        if anthropic_tools:
+            request["tools"] = anthropic_tools
+        bounded_system = str(system or "").strip()
+        if bounded_system:
+            request["system"] = bounded_system
+        if self.route.metadata.get("temperature") is not None:
+            request["temperature"] = float(self.route.metadata["temperature"])
+
+        with _owned_cognitive_client(self._client()) as client:
+            response = client.messages.create(**request)
+
+        blocks = getattr(response, "content", None)
+        if not isinstance(blocks, list):
+            raise RuntimeError("Anthropic resource returned invalid content blocks")
+
+        text_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        raw_content: list[dict[str, Any]] = []
+        for block in blocks:
+            block_type = str(_block_value(block, "type", "") or "")
+            if block_type == "text":
+                value = _block_value(block, "text", "")
+                if isinstance(value, str) and value:
+                    text_parts.append(value)
+                    raw_content.append({"type": "text", "text": value})
+            elif block_type == "tool_use":
+                call_id = str(_block_value(block, "id", "") or "")
+                name = str(_block_value(block, "name", "") or "")
+                raw_input = _block_value(block, "input", {})
+                arguments = dict(raw_input) if isinstance(raw_input, dict) else {}
+                tool_calls.append(
+                    {"id": call_id, "name": name, "arguments": arguments}
+                )
+                raw_content.append(
+                    {
+                        "type": "tool_use",
+                        "id": call_id,
+                        "name": name,
+                        "input": arguments,
+                    }
+                )
+            elif block_type == "thinking":
+                value = _block_value(block, "thinking", "")
+                if isinstance(value, str) and value:
+                    raw_content.append({"type": "thinking", "thinking": value})
+
+        stop_reason = str(getattr(response, "stop_reason", "") or "") or None
+
+        return {
+            "text": "\n".join(text_parts).strip(),
+            "tool_calls": tool_calls,
+            "stop_reason": stop_reason,
+            "raw_content": raw_content or (text_parts[0] if text_parts else ""),
+            "usage": _usage_dict(getattr(response, "usage", None)),
+        }
