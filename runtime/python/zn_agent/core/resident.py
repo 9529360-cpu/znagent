@@ -103,6 +103,51 @@ class ZNResidentRuntime:
             capability_name=outcome.capability_name,
             reason=outcome.reason,
             kernel_result=None,
+            cancelled=outcome.cancelled,
+        )
+
+    def request_event_cancellation(
+        self,
+        event_id: str,
+        *,
+        reason: str = "user requested Work stop",
+    ) -> dict[str, str]:
+        """Persist a cooperative stop request without guessing about in-flight effects."""
+
+        return self.store.request_event_cancellation(event_id, reason=reason)
+
+    def _requested_cancellation_result(
+        self,
+        event: AgentEvent,
+    ) -> ResidentRunResult | None:
+        request = self.store.get_event_cancellation_request(event.event_id)
+        if request is None:
+            return None
+        reason = str(request.get("reason") or "user requested Work stop")
+
+        state = self.store.get_working_state()
+        if (
+            str(state.current_event_id or "") == event.event_id
+            and str(state.stage or "").strip().lower() == "side_effect_recovery"
+            and str(state.blocked_by or "").strip().lower()
+            == "outside_world_effect_uncertain"
+        ):
+            cancel_uncertain = getattr(self, "cancel_uncertain_event", None)
+            if not callable(cancel_uncertain):
+                raise RuntimeError(
+                    "resident cannot safely cancel an uncertain outside-world effect"
+                )
+            run = cancel_uncertain(event.event_id, reason=reason)
+            self.store.clear_event_cancellation_request(event.event_id)
+            return run
+
+        return ResidentRunResult(
+            event=event,
+            execution_path=ExecutionPath.CONTROL,
+            success=False,
+            response="Work stopped.",
+            reason=reason,
+            cancelled=True,
         )
 
     def repair_completion_observations(self, *, limit: int = 128) -> int:
@@ -199,6 +244,13 @@ class ZNResidentRuntime:
         if event is None:
             return None
 
+        requested_cancel = self._requested_cancellation_result(event)
+        if requested_cancel is not None:
+            durable_cancel = self.result_for(event.event_id)
+            if durable_cancel is not None and durable_cancel.cancelled:
+                return durable_cancel
+            return self._complete_result(event, requested_cancel)
+
         drive_to_terminal = thought is None
         required = self._required_capabilities(event)
         if readiness is None:
@@ -215,6 +267,13 @@ class ZNResidentRuntime:
 
         try:
             while True:
+                requested_cancel = self._requested_cancellation_result(event)
+                if requested_cancel is not None:
+                    durable_cancel = self.result_for(event.event_id)
+                    if durable_cancel is not None and durable_cancel.cancelled:
+                        return durable_cancel
+                    return self._complete_result(event, requested_cancel)
+
                 result = self._advance_event_step(
                     event,
                     state,
@@ -222,6 +281,13 @@ class ZNResidentRuntime:
                     learning_evidence=learning_evidence,
                     thought=thought,
                 )
+
+                requested_cancel = self._requested_cancellation_result(event)
+                if requested_cancel is not None:
+                    durable_cancel = self.result_for(event.event_id)
+                    if durable_cancel is not None and durable_cancel.cancelled:
+                        return durable_cancel
+                    return self._complete_result(event, requested_cancel)
                 if result is not None:
                     return self._complete_result(event, result)
                 if not drive_to_terminal:
@@ -336,12 +402,26 @@ class ZNResidentRuntime:
             model_invocations=result.model_invocations,
             capability_name=result.capability_name,
             reason=result.reason,
+            cancelled=result.cancelled,
         )
         result.event = self.store.complete_event(
             outcome,
-            error=None if result.success else (result.reason or "event failed"),
+            error=None if result.success or result.cancelled else (result.reason or "event failed"),
         )
-        self.completion_observations.observe_life(self, result)
+
+        durable = self.store.get_event_outcome(event.event_id)
+        if durable is None:
+            raise RuntimeError("resident terminal transition did not publish a durable outcome")
+        result.success = durable.success
+        result.cancelled = durable.cancelled
+        result.execution_path = durable.execution_path
+        result.response = durable.response
+        result.model_invocations = durable.model_invocations
+        result.capability_name = durable.capability_name
+        result.reason = durable.reason
+
+        if not result.cancelled:
+            self.completion_observations.observe_life(self, result)
         return result
 
     @staticmethod
