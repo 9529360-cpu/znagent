@@ -28,6 +28,11 @@ function znHomeFromEndpoint(endpointPath: string): string {
  * bump, and an old marker must not preserve a stale OS startup command.
  */
 export async function ensureZnResidentAutostart(): Promise<void> {
+  if (!app.isPackaged && process.env.ZN_DESKTOP_DEV === '1') {
+    console.info('[zn-resident] source-development instance skips login autostart installation')
+    return
+  }
+
   const launch = defaultZnResidentLaunch()
   const marker = path.join(
     app.getPath('userData'),

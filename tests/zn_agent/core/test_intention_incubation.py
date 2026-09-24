@@ -93,6 +93,7 @@ class IntentionIncubationTests(unittest.TestCase):
                 config={"model": {}},
                 store_path=Path(tmp) / "kernel.db",
             )
+            capabilities_before = resident.capabilities.names()
             self._seed_writer_schema(resident)
             intention = resident.intend(
                 "understand writer_lock_pattern current behavior",
@@ -120,7 +121,7 @@ class IntentionIncubationTests(unittest.TestCase):
             self.assertIsNone(lived.candidate_step)
             self.assertIsNotNone(lived.current_step)
             self.assertIn("Native intention probe completed", lived.last_outcome)
-            self.assertEqual(resident.capabilities.names(), ())
+            self.assertEqual(resident.capabilities.names(), capabilities_before)
             self.assertEqual(resident.store.get_runtime_metrics().model_invocations, 0)
 
             probe_events = [

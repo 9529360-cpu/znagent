@@ -47,6 +47,7 @@ class KernelStore:
             CREATE TABLE IF NOT EXISTS events(event_id TEXT PRIMARY KEY, status TEXT NOT NULL, priority INTEGER NOT NULL, created_at TEXT NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_events_queue ON events(status, priority DESC, created_at ASC);
             CREATE TABLE IF NOT EXISTS event_outcomes(event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, data TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS event_cancellation_requests(event_id TEXT PRIMARY KEY, requested_at TEXT NOT NULL, reason TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS working_state(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS facts(fact_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, aliases_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS runtime_metrics(id INTEGER PRIMARY KEY CHECK(id=1), tasks_total INTEGER NOT NULL DEFAULT 0, tasks_model INTEGER NOT NULL DEFAULT 0, model_invocations INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
@@ -274,6 +275,91 @@ class KernelStore:
                 (outcome.event_id, outcome.completed_at, self._dump(data)),
             )
 
+    def request_event_cancellation(
+        self,
+        event_id: str,
+        *,
+        reason: str = "user requested Work stop",
+    ) -> dict[str, str]:
+        normalized = str(event_id or "").strip()
+        if not normalized:
+            raise ValueError("event cancellation request requires event_id")
+        normalized_reason = " ".join(str(reason or "").strip().split())[:500]
+        if not normalized_reason:
+            normalized_reason = "user requested Work stop"
+
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT data FROM events WHERE event_id=?",
+                (normalized,),
+            ).fetchone()
+            if not row:
+                raise ValueError(f"unknown resident event: {normalized}")
+            event = self._event_from_data(row["data"])
+            if event.status in {EventStatus.COMPLETED, EventStatus.FAILED}:
+                existing_outcome = self._conn.execute(
+                    "SELECT data FROM event_outcomes WHERE event_id=?",
+                    (normalized,),
+                ).fetchone()
+                if existing_outcome:
+                    data = json.loads(existing_outcome["data"])
+                    if bool(data.get("cancelled")):
+                        return {
+                            "event_id": normalized,
+                            "requested_at": str(data.get("completed_at") or event.updated_at),
+                            "reason": str(data.get("reason") or normalized_reason),
+                        }
+                raise RuntimeError("event cancellation request requires unfinished resident work")
+
+            existing = self._conn.execute(
+                "SELECT requested_at,reason FROM event_cancellation_requests WHERE event_id=?",
+                (normalized,),
+            ).fetchone()
+            if existing:
+                return {
+                    "event_id": normalized,
+                    "requested_at": str(existing["requested_at"]),
+                    "reason": str(existing["reason"]),
+                }
+
+            requested_at = utc_now()
+            self._conn.execute(
+                "INSERT INTO event_cancellation_requests(event_id,requested_at,reason) VALUES(?,?,?)",
+                (normalized, requested_at, normalized_reason),
+            )
+            return {
+                "event_id": normalized,
+                "requested_at": requested_at,
+                "reason": normalized_reason,
+            }
+
+    def get_event_cancellation_request(self, event_id: str) -> dict[str, str] | None:
+        normalized = str(event_id or "").strip()
+        if not normalized:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT requested_at,reason FROM event_cancellation_requests WHERE event_id=?",
+                (normalized,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "event_id": normalized,
+            "requested_at": str(row["requested_at"]),
+            "reason": str(row["reason"]),
+        }
+
+    def clear_event_cancellation_request(self, event_id: str) -> None:
+        normalized = str(event_id or "").strip()
+        if not normalized:
+            return
+        with self._lock, self._conn:
+            self._conn.execute(
+                "DELETE FROM event_cancellation_requests WHERE event_id=?",
+                (normalized,),
+            )
+
     def complete_event(
         self,
         outcome: EventOutcome,
@@ -291,8 +377,6 @@ class KernelStore:
         event_id = str(outcome.event_id or "").strip()
         if not event_id:
             raise ValueError("event outcome requires event_id")
-        if outcome.cancelled:
-            raise ValueError("cancelled outcomes require cancel_uncertain_event")
 
         with self._lock, self._conn:
             row = self._conn.execute(
@@ -316,6 +400,8 @@ class KernelStore:
                     "processing resident event already has a durable outcome"
                 )
 
+            working_stage = ""
+            working_blocked_by = ""
             state_row = self._conn.execute(
                 "SELECT data FROM working_state WHERE id=1"
             ).fetchone()
@@ -330,6 +416,7 @@ class KernelStore:
                     working.get("current_event_id") or ""
                 ).strip()
                 working_stage = str(working.get("stage") or "").strip().lower()
+                working_blocked_by = str(working.get("blocked_by") or "").strip().lower()
                 if working_event_id and working_event_id != event_id:
                     raise RuntimeError(
                         "resident terminal transition cannot clear another event checkpoint"
@@ -342,12 +429,34 @@ class KernelStore:
                         "resident terminal transition found an orphaned non-idle checkpoint"
                     )
 
+            cancel_request = self._conn.execute(
+                "SELECT requested_at,reason FROM event_cancellation_requests WHERE event_id=?",
+                (event_id,),
+            ).fetchone()
+            if cancel_request and not outcome.cancelled:
+                if (
+                    working_stage == "side_effect_recovery"
+                    and working_blocked_by == "outside_world_effect_uncertain"
+                ):
+                    raise RuntimeError(
+                        "uncertain side-effect cancellation requires cancel_uncertain_event"
+                    )
+                outcome = EventOutcome(
+                    event_id=event_id,
+                    success=False,
+                    cancelled=True,
+                    execution_path=ExecutionPath.CONTROL,
+                    response="Work stopped.",
+                    reason=str(cancel_request["reason"] or "user requested Work stop"),
+                    completed_at=utc_now(),
+                )
+
             event.status = (
                 EventStatus.COMPLETED if outcome.success else EventStatus.FAILED
             )
             event.last_error = (
                 None
-                if outcome.success
+                if outcome.success or outcome.cancelled
                 else (str(error or outcome.reason or "event failed"))
             )
             event.updated_at = utc_now()
@@ -400,6 +509,10 @@ class KernelStore:
             self._conn.execute(
                 "INSERT INTO event_outcomes(event_id,created_at,data) VALUES(?,?,?)",
                 (outcome.event_id, outcome.completed_at, self._dump(outcome_data)),
+            )
+            self._conn.execute(
+                "DELETE FROM event_cancellation_requests WHERE event_id=?",
+                (event_id,),
             )
             self._conn.execute(
                 "INSERT OR REPLACE INTO working_state(id,data) VALUES(1,?)",

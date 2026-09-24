@@ -862,10 +862,11 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
     def _complete_result(self, event, result):
         completed = super()._complete_result(event, result)
         summary = self._event_outcome_summary(completed)
-        try:
-            self._perceive_event_outcome(event, completed)
-        except Exception:
-            pass
+        if not completed.cancelled:
+            try:
+                self._perceive_event_outcome(event, completed)
+            except Exception:
+                pass
 
         intention_id = str(event.payload.get("intention_id") or "").strip()
         if intention_id:
@@ -875,6 +876,7 @@ class IntentionalResidentRuntime(EmbodiedResidentRuntime):
                     event_id=completed.event.event_id,
                     success=completed.success,
                     summary=summary,
+                    cancelled=completed.cancelled,
                 )
             except KeyError:
                 pass

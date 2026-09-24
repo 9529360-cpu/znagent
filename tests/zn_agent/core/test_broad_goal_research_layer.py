@@ -109,8 +109,8 @@ class BroadGoalResearchLayerTests(unittest.TestCase):
                     "profile_scope": "ephemeral",
                 }
                 with (
-                    patch.object(resident.managed_browser, "open_session", return_value=session),
-                    patch.object(resident.managed_browser, "close_session", return_value=None),
+                    patch.object(resident.research_browser, "open_session", return_value=session),
+                    patch.object(resident.research_browser, "close_session", return_value=None),
                     patch.object(resident, "_navigate_and_read", return_value=page) as navigate,
                 ):
                     self.assertIsNone(resident.live_once())
@@ -135,8 +135,8 @@ class BroadGoalResearchLayerTests(unittest.TestCase):
             try:
                 session = SimpleNamespace(session_id="research-session")
                 with (
-                    patch.object(resident.managed_browser, "open_session", return_value=session),
-                    patch.object(resident.managed_browser, "close_session", return_value=None),
+                    patch.object(resident.research_browser, "open_session", return_value=session),
+                    patch.object(resident.research_browser, "close_session", return_value=None),
                     patch.object(
                         resident,
                         "_navigate_and_read",

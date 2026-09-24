@@ -26,7 +26,7 @@ Self-hosted Windows is a special resource for workflows that genuinely depend on
 
 Each job verifies that the actual runner is Windows x64 before executing product code.
 
-Path-filtered product E2E should also prefer GitHub-hosted Windows when its real acceptance environment can be reconstructed without persistent user credentials or host-specific state. Current hosted examples include Local Documents/Spreadsheet, Research, Document Research, Memory/Learned Behavior, the primary Windows Interactive Desktop E2E, and Windows Clean Install.
+Path-filtered product integration should also prefer GitHub-hosted Windows when its real acceptance environment can be reconstructed without persistent user credentials or host-specific state. Current hosted examples include Local Documents/Spreadsheet, Research, Document Research, Memory/Learned Behavior, the primary Windows Interactive Desktop Contract, and Windows Clean Install.
 
 Hosted does not mean synthetic-only. The primary Windows Interactive Desktop lane proves a usable interactive Windows desktop before running real Win32/UIA/browser/desktop acceptance, and Windows Clean Install builds and installs the real NSIS candidate in isolated disposable state.
 
@@ -34,7 +34,7 @@ Hosted does not mean synthetic-only. The primary Windows Interactive Desktop lan
 
 ## Hosted interactive desktop boundary
 
-The primary PR/push job in `.github/workflows/zn-windows-interactive-e2e.yml` runs on `windows-latest`.
+The primary PR/push job in `.github/workflows/zn-windows-interactive-contract.yml` runs on `windows-latest`.
 
 Before product acceptance it runs `.github/scripts/test-zn-interactive-desktop-readiness.ps1`, which fails closed unless the runner process is in a non-Session-0, WTS-active user session that can open and switch to the Windows input desktop, observe a same-session foreground window, and acquire foreground for a bounded probe window.
 
@@ -56,7 +56,7 @@ This is install/start verification and a bounded development-evaluation handoff,
 
 Self-hosted `zn-interactive` remains valid only where the current workflow genuinely needs host-specific state that ordinary hosted CI does not provide.
 
-Current examples include guarded real-model or existing-session acceptance, selected long-running real E2E workflows, release/candidate packaging, runner bootstrap/watchdog maintenance, and manually dispatched legacy interactive diagnostics.
+Current examples include guarded real-model or existing-session acceptance, selected long-running real integration workflows, release/candidate packaging, runner bootstrap/watchdog maintenance, and manually dispatched legacy interactive diagnostics.
 
 Where a workflow calls `.github/scripts/test-zn-interactive-user-context.ps1`, acceptance requires all of the following current facts:
 
@@ -74,6 +74,16 @@ Credential-backed model acceptance remains a separate authorization boundary. Cr
 ## Release boundary
 
 Formal release and candidate workflows are separate from ordinary development CI. For example, `.github/workflows/zn-release.yml` currently packages Windows on the specialized `zn-interactive` runner for a formal `zn-v*` tag or an explicitly dispatched package run.
+
+The ordinary builder baseline and hosted Clean Install continue to produce unsigned Windows development candidates. ZN does not require a paid Authenticode certificate for the current product release path. Windows may therefore show normal unsigned-publisher/SmartScreen warnings; that operating-system reputation layer is separate from ZN's own update trust.
+
+Formal ZN updates use a repository-owned Ed25519 trust root instead. The production Electron bundle embeds `ZN_UPDATE_SIGNING_PUBLIC_KEYS` (one or more base64 DER/SPKI Ed25519 public keys). The corresponding private key is stored only in GitHub secret `ZN_UPDATE_SIGNING_PRIVATE_KEY`. During formal publication, `stable.json` is signed after all version, URL, size and SHA-256 metadata is finalized. The packaged updater verifies that signature before it trusts release metadata or starts any download; a packaged build with no trusted public key, an unsigned channel, tampered metadata, or a signature from an unknown key fails closed.
+
+Generate the key pair locally with `node apps/desktop/scripts/generate-zn-update-signing-key.mjs`. Keep the generated private PEM out of the repository and place it in the GitHub secret. Put only the generated public base64 value in repository variable `ZN_UPDATE_SIGNING_PUBLIC_KEYS`. This key pair is free and is not a Windows code-signing certificate.
+
+Key rotation uses an overlap window. First build and ship a release whose embedded public-key list contains both the current and next public keys while the channel is still signed by the current key. After that bridge release is deployed, switch the release signing private key to the new key; keep both public keys embedded until the supported installed population no longer depends on the old key.
+
+HTTPS and the signed channel establish origin/metadata trust; target size and SHA-256 bind the downloaded installer bytes named by that signed metadata. Windows Authenticode can be added later as an optional OS-level reputation/publisher enhancement without becoming a prerequisite for ZN's own update authenticity.
 
 Release signing, publishing, stable update-channel mutation, production installer replacement and related trust changes remain high-risk operations. Green ordinary CI or a green clean-install run does not authorize those effects.
 

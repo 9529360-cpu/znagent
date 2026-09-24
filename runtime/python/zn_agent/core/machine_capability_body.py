@@ -12,6 +12,10 @@ from .browser_form_submit_body import BrowserFormSubmitBody
 from .device_capability_graph import DeviceCapabilityGraph
 from .machine_capability import InstalledApplication
 from .models import utc_now
+from .windows_screen_capture import (
+    ScreenCaptureArtifact,
+    capture_primary_screen_artifact,
+)
 
 
 class MachineCapabilityBody(BrowserFormSubmitBody):
@@ -24,9 +28,12 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
     exact HWND/PID without reopening those identifiers in the public ``act`` API.
     """
 
+    _RESOLVE_KIND = "resolve_application"
     _LAUNCH_KIND = "launch_application"
     _ACTIVATE_KIND = "activate_application_window"
+    _SCREEN_CAPTURE_KIND = "windows_screen_capture"
     _LAUNCH_DISPATCH_MARKER = "__zn_machine_launch_dispatch_admitted"
+    _SCREEN_CAPTURE_DISPATCH_MARKER = "__zn_screen_capture_dispatch_admitted"
     _ACTIVATE_DISPATCH_MARKER = "__zn_machine_activation_dispatch_admitted"
     _ACTIVATE_WINDOW_ARG = "__zn_machine_activation_window_handle"
     _ACTIVATE_PROCESS_ARG = "__zn_machine_activation_process_id"
@@ -42,11 +49,103 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
 
     def act(self, kind: str, *, event_id: str | None = None, **args: Any) -> BodyActionResult:
         normalized = str(kind or "").strip().lower()
+        if normalized == self._RESOLVE_KIND:
+            return self._act_resolve_application(event_id=event_id, args=dict(args))
         if normalized == self._LAUNCH_KIND:
             return self._act_launch(event_id=event_id, args=dict(args))
         if normalized == self._ACTIVATE_KIND:
             return self._act_activate(event_id=event_id, args=dict(args))
+        if normalized == self._SCREEN_CAPTURE_KIND:
+            return self._act_screen_capture(event_id=event_id, args=dict(args))
         return super().act(kind, event_id=event_id, **args)
+
+    def _act_resolve_application(
+        self,
+        *,
+        event_id: str | None,
+        args: dict[str, Any],
+    ) -> BodyActionResult:
+        rejected = sorted(key for key in args if str(key) != "query")
+        query = " ".join(str(args.get("query") or "").split())
+        action = BodyAction(
+            action_id=f"body-{uuid.uuid4().hex[:12]}",
+            kind=self._RESOLVE_KIND,
+            args={"query": query} if query else {},
+            event_id=event_id,
+        )
+        started = utc_now()
+        if rejected:
+            result = BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data={"status": "invalid_request", "rejected_arguments": rejected},
+                error=(
+                    "resolve_application accepts only a human-facing query: "
+                    + ", ".join(rejected)
+                ),
+                event_id=event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+            self._record(action, result)
+            return result
+        if not query:
+            result = BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data={"status": "invalid_request"},
+                error="resolve_application requires a non-empty query",
+                event_id=event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+            self._record(action, result)
+            return result
+
+        resolution = self.device_capabilities.resolve_application(
+            query,
+            force_refresh=True,
+        )
+        application = resolution.application
+        candidates = tuple(resolution.candidates or ())
+        data = {
+            "query": query,
+            "status": resolution.status,
+            "application": (
+                self._safe_application_identity(application)
+                if application is not None
+                else None
+            ),
+            "candidates": [
+                self._safe_application_identity(candidate)
+                for candidate in candidates[:12]
+            ],
+            "candidate_count": len(candidates),
+        }
+        result = BodyActionResult(
+            action_id=action.action_id,
+            kind=action.kind,
+            success=True,
+            output=str(resolution.status),
+            data=data,
+            event_id=event_id,
+            started_at=started,
+            completed_at=utc_now(),
+        )
+        self._record(action, result)
+        return result
+
+    @staticmethod
+    def _safe_application_identity(application: InstalledApplication) -> dict[str, Any]:
+        return {
+            "application_id": application.app_id,
+            "display_name": application.display_name,
+            "canonical_name": application.canonical_name,
+            "launchable": application.launchable,
+            "capabilities": list(application.capabilities)[:24],
+        }
 
     def _act_launch(self, *, event_id: str | None, args: dict[str, Any]) -> BodyActionResult:
         # Never trust a caller-supplied internal marker.
@@ -66,7 +165,10 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
                 error="launch_application requires a resolved application_id",
             )
 
-        application = self.device_capabilities.application_by_id(app_id, force_refresh=True)
+        # Resolve/dispatch owns inventory refresh; this preflight reuses the
+        # bounded TTL identity while application_runtime() reacquires processes
+        # and windows from current machine reality.
+        application = self.device_capabilities.application_by_id(app_id)
         if application is None:
             return self._preflight_result(
                 self._LAUNCH_KIND, event_id, app_id, False,
@@ -133,7 +235,10 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
                 error="activate_application_window requires a resolved application_id",
             )
 
-        application = self.device_capabilities.application_by_id(app_id, force_refresh=True)
+        # Activation authority still comes from freshly observed process/window
+        # identity. Reusing the recent installed-app identity avoids a second
+        # full software inventory scan before that dynamic check.
+        application = self.device_capabilities.application_by_id(app_id)
         if application is None:
             return self._preflight_result(
                 self._ACTIVATE_KIND, event_id, app_id, False,
@@ -216,6 +321,39 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
             expected_window_handle=int(window.hwnd),
             expected_process_id=int(window.process_id),
             observed_at=str(window.observed_at),
+        )
+
+    def _act_screen_capture(
+        self,
+        *,
+        event_id: str | None,
+        args: dict[str, Any],
+    ) -> BodyActionResult:
+        rejected = sorted(str(key) for key in args)
+        if rejected:
+            return self._screen_capture_preflight_result(
+                event_id,
+                False,
+                data={
+                    "dispatch_sent": False,
+                    "rejected_arguments": rejected,
+                },
+                error=(
+                    "windows_screen_capture accepts no caller-controlled "
+                    "arguments; ZN owns the artifact path"
+                ),
+            )
+        if not str(event_id or "").strip():
+            return self._screen_capture_preflight_result(
+                event_id,
+                False,
+                data={"dispatch_sent": False},
+                error="windows_screen_capture requires a stable event_id",
+            )
+        return super().act(
+            self._SCREEN_CAPTURE_KIND,
+            event_id=event_id,
+            **{self._SCREEN_CAPTURE_DISPATCH_MARKER: True},
         )
 
     def activate_admitted_application_window(
@@ -335,6 +473,8 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
             return args.get(cls._LAUNCH_DISPATCH_MARKER) is True
         if kind == cls._ACTIVATE_KIND:
             return args.get(cls._ACTIVATE_DISPATCH_MARKER) is True
+        if kind == cls._SCREEN_CAPTURE_KIND:
+            return args.get(cls._SCREEN_CAPTURE_DISPATCH_MARKER) is True
         return super()._requires_guard(kind, args)
 
     @classmethod
@@ -359,6 +499,8 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
                 self._ACTIVATE_PROCESS_ARG,
                 self._ACTIVATE_OBSERVED_AT_ARG,
             )
+        elif action.kind == self._SCREEN_CAPTURE_KIND:
+            private_args = (self._SCREEN_CAPTURE_DISPATCH_MARKER,)
         if private_args and any(key in action.args for key in private_args):
             safe_args = dict(action.args)
             for key in private_args:
@@ -374,6 +516,8 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
             return self._dispatch_launch(action, started)
         if action.kind == self._ACTIVATE_KIND:
             return self._dispatch_activation(action, started)
+        if action.kind == self._SCREEN_CAPTURE_KIND:
+            return self._dispatch_screen_capture(action, started)
         return super()._dispatch(action, started)
 
     def _dispatch_launch(self, action: BodyAction, started: str) -> BodyActionResult:
@@ -535,9 +679,69 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
             output=f"foreground activation requested for {application.canonical_name}",
         )
 
+    def _dispatch_screen_capture(
+        self,
+        action: BodyAction,
+        started: str,
+    ) -> BodyActionResult:
+        if action.args.get(self._SCREEN_CAPTURE_DISPATCH_MARKER) is not True:
+            raise PermissionError(
+                "windows_screen_capture dispatch did not pass ZN artifact preflight"
+            )
+        event_id = str(action.event_id or "").strip()
+        artifact = self._native_capture_primary_screen(event_id)
+        return self._result(
+            action,
+            started,
+            True,
+            {
+                "artifact_created": True,
+                "dispatch_sent": True,
+                "local_path": artifact.local_path,
+                "width": artifact.width,
+                "height": artifact.height,
+                "size_bytes": artifact.size_bytes,
+                "sha256": artifact.sha256,
+                "source": artifact.source,
+            },
+            output="captured the primary screen to a ZN-owned artifact",
+        )
+
+    @staticmethod
+    def _native_capture_primary_screen(event_id: str) -> ScreenCaptureArtifact:
+        return capture_primary_screen_artifact(event_id)
+
     @staticmethod
     def _native_activate_exact_application_window(hwnd: int, expected_pid: int) -> dict[str, Any]:
         return _activate_exact_application_window(hwnd, expected_pid)
+
+    def _screen_capture_preflight_result(
+        self,
+        event_id: str | None,
+        success: bool,
+        *,
+        data: dict[str, Any],
+        error: str | None = None,
+    ) -> BodyActionResult:
+        action = BodyAction(
+            action_id=f"body-{uuid.uuid4().hex[:12]}",
+            kind=self._SCREEN_CAPTURE_KIND,
+            args={},
+            event_id=event_id,
+        )
+        started = utc_now()
+        result = BodyActionResult(
+            action_id=action.action_id,
+            kind=action.kind,
+            success=success,
+            data=data,
+            error=error,
+            event_id=event_id,
+            started_at=started,
+            completed_at=utc_now(),
+        )
+        self._record(action, result)
+        return result
 
     def _preflight_result(
         self,

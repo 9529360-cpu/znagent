@@ -5,7 +5,65 @@ on-demand cognitive resources rather than the holder of identity or continuity.
 """
 
 from .action import NativeActionIntent, derive_native_action_intent
+from .action_execution import (
+    ActionExecution,
+    ActionExecutionRuntime,
+    ActionObservation,
+    ActionRequest,
+    ActionVerification,
+    build_machine_action_execution_runtime,
+)
+from .action_fabric import (
+    ActionAvailability,
+    ActionDescriptor,
+    ActionFabricRegistry,
+    build_machine_action_fabric,
+)
+from .app_competence import (
+    AppCompetenceBinding,
+    AppCompetenceCompletion,
+    AppCompetencePack,
+    AppCompetenceRegistry,
+    AppCompetenceStage,
+)
+from .app_competence_execution import (
+    AppCompetenceCompletionCheck,
+    AppCompetenceRecipeExecution,
+    AppCompetenceRecipeExecutor,
+    AppCompetenceStageExecution,
+    AppCompetenceStageHandoff,
+    completion_expected_matches,
+)
 from .body import BodyAction, BodyActionResult, NativeBody
+from .visual_action_reasoner import (
+    GeminiVisualActionReasoner,
+    VisualActionDecision,
+    VisualActionInference,
+    parse_visual_action_decision,
+)
+from .desktop_scene import (
+    DesktopScene,
+    DesktopSceneError,
+    DesktopSceneForeground,
+    DesktopSceneForegroundBinding,
+    DesktopSceneRect,
+    DesktopSceneScreenshot,
+    DesktopSceneTarget,
+    DesktopVisualGroundingCandidate,
+    DesktopVisualGroundingProvider,
+    NativeDesktopSceneBuilder,
+    UnavailableDesktopVisualGroundingProvider,
+    desktop_scene_artifact_path,
+    desktop_scene_iou,
+    inspect_desktop_scene_artifact,
+    load_desktop_scene_artifact,
+    merge_desktop_scene_targets,
+)
+from .visual_stage_bridge import (
+    DesktopVisualStageBridge,
+    VisualStageBridgeResult,
+    build_current_visual_stage_bridge,
+)
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry, CallableCapability, ExactTaskCapability
 from .capability_loader import LoadedCapability, PromotedCapabilityLoader
@@ -76,13 +134,49 @@ from .worker import Worker, WorkerFactory
 from .world_sense import NativeWorldSense, WorldFocus, WorldObservation
 
 __all__ = [
+    "ActionAvailability",
+    "ActionDescriptor",
+    "ActionExecution",
+    "ActionExecutionRuntime",
+    "ActionFabricRegistry",
+    "ActionObservation",
+    "ActionRequest",
+    "ActionVerification",
     "AffectiveState",
     "AgentEvent",
     "AgentIdentity",
+    "AppCompetenceBinding",
+    "AppCompetenceCompletion",
+    "AppCompetencePack",
+    "AppCompetenceRegistry",
+    "AppCompetenceStage",
+    "AppCompetenceCompletionCheck",
+    "AppCompetenceRecipeExecution",
+    "AppCompetenceRecipeExecutor",
+    "AppCompetenceStageExecution",
+    "AppCompetenceStageHandoff",
+    "completion_expected_matches",
     "Assessment",
     "BodyAction",
     "BodyActionResult",
+    "GeminiVisualActionReasoner",
     "BodyState",
+    "DesktopScene",
+    "DesktopSceneError",
+    "DesktopSceneForeground",
+    "DesktopSceneForegroundBinding",
+    "DesktopSceneRect",
+    "DesktopSceneScreenshot",
+    "DesktopSceneTarget",
+    "DesktopVisualGroundingCandidate",
+    "DesktopVisualGroundingProvider",
+    "NativeDesktopSceneBuilder",
+    "UnavailableDesktopVisualGroundingProvider",
+    "desktop_scene_artifact_path",
+    "desktop_scene_iou",
+    "inspect_desktop_scene_artifact",
+    "load_desktop_scene_artifact",
+    "merge_desktop_scene_targets",
     "build_resident_runtime",
     "build_resident_runtime_from_existing_stack",
     "build_runtime",
@@ -147,12 +241,17 @@ __all__ = [
     "StructuredMemory",
     "TaskReadiness",
     "ThoughtFrame",
+    "VisualActionDecision",
+    "VisualActionInference",
     "Worker",
     "WorkerFactory",
+    "parse_visual_action_decision",
     "WorkerResult",
     "WorkingState",
     "WorldFocus",
     "WorldObservation",
+    "build_machine_action_execution_runtime",
+    "build_machine_action_fabric",
     "ZNKernelRuntime",
     "ZNLifeCore",
     "ZNResidentRuntime",

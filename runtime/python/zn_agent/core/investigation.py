@@ -216,6 +216,21 @@ class NativeInvestigator:
         state.evidence = (*state.evidence, "remaining gap resolved with external cognition")[-64:]
         self._save(state)
 
+    def reopen_after_external(self, event_id: str, evidence: str) -> None:
+        """Reopen one externally-resolved gap after verified world state changed."""
+
+        state = self._load_for_event(event_id)
+        if state is None:
+            return
+        state.updated_at = utc_now()
+        state.status = "open"
+        state.resolution = None
+        state.unresolved = "fresh action evidence changed current reality; reassess the remaining goal gap"
+        state.next_probe = None
+        item = str(evidence or "fresh verified action evidence changed current reality")[:1000]
+        state.evidence = (*state.evidence, item)[-64:]
+        self._save(state)
+
     def recent(self, limit: int = 20) -> list[InvestigationState]:
         with closing(self._connect()) as conn:
             rows = conn.execute(
@@ -826,7 +841,10 @@ class NativeInvestigator:
             changed = git.get("changed_paths") or []
             return "\n".join(str(item) for item in changed) if changed else "no changed files"
 
-        if paths and any(phrase in text for phrase in ("exist", "exists", "存在", "有没有")):
+        path_existence_query = bool(
+            re.search(r"\b(?:exist|exists|existed|existence)\b", text)
+        ) or any(phrase in text for phrase in ("存在", "有没有"))
+        if paths and path_existence_query:
             if len(paths) == 1:
                 item = paths[0]
                 return f"{item['path']}: {'exists' if item['exists'] else 'does not exist'}"

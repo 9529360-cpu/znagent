@@ -75,6 +75,17 @@ class DelegatedWorkLedgerTests(unittest.TestCase):
             tool_scope=("workspace.read", "terminal.test"),
             authority_scope=("workspace_read", "terminal_verify"),
         )
+        checkpointed = self.ledger.update_worker_run_metrics(
+            run.worker_run_id,
+            metrics={
+                "executor": "veteran-engineer",
+                "mission_id": "mission-123",
+                "base_head": "abc123",
+            },
+        )
+        self.assertEqual(checkpointed.state, "running")
+        self.assertEqual(checkpointed.metrics["mission_id"], "mission-123")
+
         db = Path(self.tmp.name) / "kernel.db"
         self.resident.store.close()
         restored = build_resident_runtime(config={"model": {}}, store_path=db)
@@ -84,6 +95,55 @@ class DelegatedWorkLedgerTests(unittest.TestCase):
         assert persisted is not None
         self.assertEqual(persisted.work_item_id, child.work_item_id)
         self.assertEqual(persisted.state, "running")
+        self.assertEqual(
+            persisted.metrics,
+            {
+                "executor": "veteran-engineer",
+                "mission_id": "mission-123",
+                "base_head": "abc123",
+            },
+        )
+
+    def test_live_worker_metrics_checkpoint_is_bounded_to_current_plan(self) -> None:
+        child = self.ledger.create_child_item(
+            root_work_item_id=self.root.work_item_id,
+            objective="Implement one bounded repository change",
+            acceptance_criteria=["delegated_worker_evidence: coding/repository_change"],
+        )
+        run = self.ledger.start_worker_run(
+            work_item_id=child.work_item_id,
+            executor_kind="coding",
+            tool_scope=("workspace.read", "workspace.write"),
+            authority_scope=("workspace_read", "workspace_write"),
+        )
+        first = self.ledger.update_worker_run_metrics(
+            run.worker_run_id,
+            metrics={"mission_id": "mission-1"},
+        )
+        second = self.ledger.update_worker_run_metrics(
+            run.worker_run_id,
+            metrics={"integration_sha": "deadbeef"},
+        )
+        self.assertEqual(first.metrics, {"mission_id": "mission-1"})
+        self.assertEqual(
+            second.metrics,
+            {
+                "mission_id": "mission-1",
+                "integration_sha": "deadbeef",
+            },
+        )
+
+        completed = self.ledger.complete_worker_run(
+            run.worker_run_id,
+            result_summary="done",
+            metrics=second.metrics,
+        )
+        self.assertEqual(completed.state, "completed")
+        with self.assertRaises(ValueError):
+            self.ledger.update_worker_run_metrics(
+                run.worker_run_id,
+                metrics={"mission_id": "mission-2"},
+            )
 
 
 if __name__ == "__main__":

@@ -7,12 +7,12 @@ import time
 from dataclasses import asdict
 from typing import Any, TextIO
 
+from .outcome_aware_work_control import OutcomeAwareRestoreWorkControl
 from .provider_bridge import build_resident_runtime_from_existing_stack
 from .provider_settings import ProviderSettingsService
 from .recovery_bounded_work import RecoveryBoundedWorkLedger
 from .recovery_control import ResidentRecoveryRequired
 from .service import ResidentService
-from .work_restore_control import RestoreAwareWorkControl
 
 
 class ResidentRpcServer:
@@ -36,7 +36,9 @@ class ResidentRpcServer:
         self.resident = resident or build_resident_runtime_from_existing_stack()
         self.service = ResidentService(self.resident)
         self.work = RecoveryBoundedWorkLedger(self.resident)
-        self.work_control = RestoreAwareWorkControl(self.work)
+        self.work_control = OutcomeAwareRestoreWorkControl(self.work)
+        self.resident.cognitive_delta_handler = self.work.publish_response_delta
+        self.resident.cognitive_response_reset_handler = self.work.reset_response_stream
         self.provider_settings = provider_settings or ProviderSettingsService(self.resident)
         self.input = input_stream or sys.stdin
         self.output = output_stream or sys.stdout
@@ -490,12 +492,19 @@ class ResidentRpcServer:
             if bounded_artifact_limit > 0
             else []
         )
+        # Reconnecting faces discover the existing event rather than submitting
+        # the user's task again. This is identity only, never replay authority.
+        active_run = self.work._active_run_for_thread(thread.thread_id)
         return {
             "id": thread.thread_id,
             "title": thread.title,
             "metadata": thread.metadata,
             "created_at": thread.created_at,
             "updated_at": thread.updated_at,
+            "active_run": (
+                {"thread_id": active_run.thread_id, "event_id": active_run.event_id}
+                if active_run is not None else None
+            ),
             "messages": [
                 {
                     "id": message.message_id,

@@ -18,6 +18,7 @@ from .browser import (
     BrowserTarget,
     BrowserTargetKind,
     BrowserTargetQuery,
+    BrowserTargetStaleError,
     BrowserTargetQueryKind,
 )
 from .browser_causal_popup import PlaywrightBrowserCausalPopupMixin
@@ -249,15 +250,15 @@ class SemanticPlaywrightManagedBrowser(
             count = int(locator.count())
             if count != 1:
                 if count == 0:
-                    raise ManagedBrowserError(
+                    raise BrowserTargetStaleError(
                         f"browser semantic {label} target changed before dispatch: target was not found"
                     )
-                raise ManagedBrowserError(
+                raise BrowserTargetStaleError(
                     f"browser semantic {label} target changed before dispatch: target is ambiguous"
                 )
             fresh = locator.element_handle()
             if fresh is None:
-                raise ManagedBrowserError(
+                raise BrowserTargetStaleError(
                     f"browser semantic {label} target changed before dispatch"
                 )
             raw = fresh.evaluate(evidence_script)
@@ -266,13 +267,15 @@ class SemanticPlaywrightManagedBrowser(
                 binding.handle.evaluate(_EXACT_NODE_EQUAL_SCRIPT, fresh)
             )
             if not same_exact_node:
-                raise ManagedBrowserError(
+                raise BrowserTargetStaleError(
                     f"browser semantic {label} target changed before dispatch"
                 )
+        except BrowserTargetStaleError:
+            raise
         except ManagedBrowserError:
             raise
         except Exception as exc:
-            raise ManagedBrowserError(
+            raise BrowserTargetStaleError(
                 f"browser semantic {label} target changed before dispatch: {type(exc).__name__}: {exc}"
             ) from exc
         finally:

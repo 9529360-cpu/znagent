@@ -274,20 +274,8 @@ def build_resident_runtime(
 ):
     """Build the normal product Resident around the ZN-owned kernel."""
     from .budget import CognitiveBudgetManager
-    from .browser_desktop_record_transfer_behavior import (
-        install_browser_desktop_record_transfer_behavior,
-    )
-    from .browser_file_desktop_handoff_behavior import (
-        install_browser_file_desktop_handoff_behavior,
-    )
-    from .desktop_modal_recovery_behavior import (
-        install_desktop_modal_recovery_behavior,
-    )
     from .research_information_product_resident import (
         ProductResearchInformationResidentRuntime,
-    )
-    from .user_browser_causal_popup_behavior import (
-        install_user_browser_causal_popup_behavior,
     )
     from .web_resource import build_zn_web_resource
 
@@ -323,10 +311,6 @@ def build_resident_runtime(
         research_web_resource=research_web_resource,
         research_web_error=research_web_error,
     )
-    install_user_browser_causal_popup_behavior(resident)
-    install_browser_file_desktop_handoff_behavior(resident)
-    install_browser_desktop_record_transfer_behavior(resident)
-    install_desktop_modal_recovery_behavior(resident)
     return resident
 
 

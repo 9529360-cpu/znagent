@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-"""Deterministic bounded DOCX inspection and run-aware copy mutation.
+"""Deterministic bounded DOCX inspection and run-aware document mutation.
 
-The model is intentionally absent from this module. It accepts already-bound
-source identity and explicit deterministic replacement authority, mutates only
-ordinary WordprocessingML body/table-cell run spans plus explicitly active
-header/footer stories, reopens the package, and proves source/destination
-invariants before reporting success.
+The model is intentionally absent from this module. Generic completion mutation
+accepts already-bound source identity and explicit replacement authority for
+ordinary WordprocessingML body/table-cell run spans, reopens the package, and
+proves source/destination invariants before reporting success.
 """
 
 import hashlib
@@ -24,6 +23,7 @@ from docx.document import Document as _Document
 from docx.text.paragraph import Paragraph
 
 from .file_identity import compare_file_identities, observe_file_identity
+from .document_spec import document_visible_texts, normalize_document_spec
 
 MAX_FILE_BYTES = 8 * 1024 * 1024
 MAX_PARAGRAPHS = 512
@@ -33,8 +33,6 @@ MAX_COMPLETION_QUESTION_CHARS = 300
 MAX_COMPLETION_CONTEXT_CHARS = 800
 MAX_COMPLETION_REPLACEMENT_CHARS = 2_000
 
-_DATE = r"(?:\d{4}年\d{1,2}月\d{1,2}日|\d{4}[-/.]\d{1,2}[-/.]\d{1,2})"
-PAYMENT_DATE_RE = re.compile(rf"(?P<label>付款日期\s*[:：]?\s*)(?P<date>{_DATE})")
 COMPLETION_PLACEHOLDER_RE = re.compile(r"【待补充：(?P<question>[^】]*)】")
 _COMPLETION_PREFIX = "【待补充"
 
@@ -120,26 +118,6 @@ def _xml_visible_text(payload: bytes) -> str:
     return "".join(chunks)
 
 
-def _xml_payment_occurrence_count(payload: bytes) -> int:
-    """Count payment targets per WordprocessingML paragraph without story joins."""
-    root = _xml_root(payload)
-    count = 0
-    for paragraph in root.iter():
-        if _localname(paragraph.tag) != "p":
-            continue
-        chunks: list[str] = []
-        for element in paragraph.iter():
-            local = _localname(element.tag)
-            if local == "t":
-                chunks.append(element.text or "")
-            elif local == "tab":
-                chunks.append("\t")
-            elif local in {"br", "cr"}:
-                chunks.append("\n")
-        count += len(list(PAYMENT_DATE_RE.finditer("".join(chunks))))
-    return count
-
-
 def _preflight(path: Path, identity: dict[str, Any]) -> tuple[bool, str | None]:
     if path.suffix.casefold() != ".docx":
         return False, "only standard .docx is supported"
@@ -175,45 +153,6 @@ def _preflight(path: Path, identity: dict[str, Any]) -> tuple[bool, str | None]:
     except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError) as exc:
         return False, f"DOCX package preflight failed: {type(exc).__name__}: {exc}"
     return True, None
-
-
-def _header_footer_payment_story_info(path: Path) -> tuple[int, str | None]:
-    """Return bounded header/footer target count and reject complex target stories.
-
-    Existing body-only documents keep their prior behavior. Header/footer XML is
-    admitted only when the target-bearing story itself contains ordinary text
-    structures that python-docx can round-trip without us claiming authority over
-    fields, drawings, content controls, tracked changes, or text boxes.
-    """
-    count = 0
-    try:
-        with zipfile.ZipFile(path, "r") as package:
-            for name in sorted(package.namelist()):
-                if not (
-                    name.startswith("word/header") or name.startswith("word/footer")
-                ) or not name.endswith(".xml"):
-                    continue
-                payload = package.read(name)
-                story_count = _xml_payment_occurrence_count(payload)
-                if not story_count:
-                    continue
-                root = _xml_root(payload)
-                bad = sorted(
-                    {_localname(el.tag) for el in root.iter()}
-                    & _UNSUPPORTED_XML_LOCALNAMES
-                )
-                if bad:
-                    return count, (
-                        f"payment-date header/footer story {name} contains unsupported "
-                        "WordprocessingML structures: " + ", ".join(bad)
-                    )
-                count += story_count
-    except (OSError, KeyError, zipfile.BadZipFile, ET.ParseError) as exc:
-        return count, (
-            "DOCX header/footer payment-story inspection failed: "
-            f"{type(exc).__name__}: {exc}"
-        )
-    return count, None
 
 
 def _completion_story_blocker(path: Path) -> str | None:
@@ -349,27 +288,6 @@ def _structure_fingerprint(records: list[dict[str, Any]]) -> str:
     ).hexdigest()
 
 
-def _target_occurrences(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    occurrences: list[dict[str, Any]] = []
-    for record in records:
-        text = str(record["text"])
-        run_visible = "".join(str(value) for value in record["run_text"])
-        for match in PAYMENT_DATE_RE.finditer(text):
-            occurrences.append(
-                {
-                    "location": record["location"],
-                    "date": match.group("date"),
-                    "date_start": match.start("date"),
-                    "date_end": match.end("date"),
-                    "paragraph_sha256": hashlib.sha256(
-                        text.encode("utf-8")
-                    ).hexdigest(),
-                    "run_mappable": run_visible == text,
-                }
-            )
-    return occurrences
-
-
 def _completion_context(text: str, start: int, end: int) -> str:
     budget = MAX_COMPLETION_CONTEXT_CHARS
     if len(text) <= budget:
@@ -467,39 +385,20 @@ def _completion_targets(
 
 
 def inspect_docx(path: str | Path) -> dict[str, Any]:
+    """Inspect a bounded DOCX package without task-specific business semantics."""
+
     source = Path(path).resolve(strict=False)
     identity = observe_file_identity(source, max_hash_bytes=MAX_FILE_BYTES)
     ok, detail = _preflight(source, identity)
     if not ok:
         return _block(identity, detail or "unsupported DOCX")
-    header_footer_target_count, story_detail = _header_footer_payment_story_info(source)
-    if story_detail:
-        return _block(identity, story_detail)
     try:
         document = Document(source)
-        records = _records(
-            document,
-            include_header_footer=header_footer_target_count > 0,
-        )
-        occurrences = _target_occurrences(records)
+        records = _records(document)
     except Exception as exc:
         return _block(
             identity,
             f"DOCX parse/structure inspection failed: {type(exc).__name__}: {exc}",
-        )
-    supported_story_count = sum(
-        str(item["location"]).startswith(("header:", "footer:"))
-        for item in occurrences
-    )
-    if supported_story_count != header_footer_target_count:
-        return _block(
-            identity,
-            "payment-date target occurs in an inactive, unowned, or unsupported header/footer story",
-        )
-    if any(not item["run_mappable"] for item in occurrences):
-        return _block(
-            identity,
-            "payment-date target crosses unsupported paragraph children such as hyperlinks",
         )
     return {
         "ready": True,
@@ -507,8 +406,6 @@ def inspect_docx(path: str | Path) -> dict[str, Any]:
         "identity": identity,
         "paragraph_count": len(records),
         "table_count": len(document.tables),
-        "payment_date_occurrence_count": len(occurrences),
-        "payment_date_occurrences": occurrences,
         "structure_fingerprint": _structure_fingerprint(records),
     }
 
@@ -674,179 +571,6 @@ def _normalized_completion_replacements(
             raise ValueError("completion replacement must not create another placeholder")
         normalized[target_id] = text
     return normalized
-
-
-def write_docx_copy(
-    source_path: str | Path,
-    destination_path: str | Path,
-    *,
-    replacement_date: str,
-    precondition_identity: dict[str, Any],
-) -> dict[str, Any]:
-    source = Path(source_path).resolve(strict=True)
-    destination = Path(destination_path).resolve(strict=False)
-    if source == destination:
-        raise ValueError("DOCX copy destination must differ from source")
-    if destination.exists():
-        raise FileExistsError("destination already exists; refusing overwrite")
-    if not destination.parent.is_dir():
-        raise ValueError("destination parent is unavailable")
-
-    current = observe_file_identity(source, max_hash_bytes=MAX_FILE_BYTES)
-    if compare_file_identities(precondition_identity, current).get("exact") is not True:
-        raise RuntimeError(
-            "stale_source_evidence: exact DOCX identity changed before mutation"
-        )
-    inspection = inspect_docx(source)
-    if inspection.get("ready") is not True:
-        raise RuntimeError(
-            f"{inspection.get('blocker')}: {inspection.get('detail')}"
-        )
-    occurrences = list(inspection.get("payment_date_occurrences") or ())
-    if len(occurrences) != 1:
-        raise ValueError(
-            "DOCX mutation requires exactly one payment-date occurrence"
-        )
-    target = occurrences[0]
-    old_date = str(target["date"])
-    if old_date == replacement_date:
-        raise ValueError("replacement date already equals the current payment date")
-
-    include_header_footer = str(target["location"]).startswith(("header:", "footer:"))
-    document = Document(source)
-    before_records = _records(
-        document,
-        include_header_footer=include_header_footer,
-    )
-    paragraph = _find_paragraph(document, str(target["location"]))
-    before_target_text = paragraph.text
-    if (
-        hashlib.sha256(before_target_text.encode("utf-8")).hexdigest()
-        != target["paragraph_sha256"]
-    ):
-        raise RuntimeError(
-            "stale_source_evidence: bound paragraph changed before mutation"
-        )
-    replace_visible_span_across_runs(
-        paragraph,
-        int(target["date_start"]),
-        int(target["date_end"]),
-        replacement_date,
-    )
-    expected_target_text = (
-        before_target_text[: int(target["date_start"])]
-        + replacement_date
-        + before_target_text[int(target["date_end"]) :]
-    )
-
-    fd, raw_temp = tempfile.mkstemp(
-        prefix=f".{destination.name}.",
-        suffix=".tmp",
-        dir=destination.parent,
-    )
-    os.close(fd)
-    temp_path = Path(raw_temp)
-    try:
-        document.save(temp_path)
-        temp_document = Document(temp_path)
-        after_records = _records(
-            temp_document,
-            include_header_footer=include_header_footer,
-        )
-        if len(after_records) != len(before_records):
-            raise RuntimeError(
-                "DOCX verification failed: paragraph topology changed"
-            )
-        changed = 0
-        for before, after in zip(before_records, after_records):
-            if before["location"] != after["location"]:
-                raise RuntimeError(
-                    "DOCX verification failed: paragraph location order changed"
-                )
-            if before["run_format"] != after["run_format"]:
-                raise RuntimeError("DOCX verification failed: run formatting changed")
-            expected_text = (
-                expected_target_text
-                if before["location"] == target["location"]
-                else before["text"]
-            )
-            if after["text"] != expected_text:
-                raise RuntimeError(
-                    "DOCX verification failed: unrelated or target paragraph text changed unexpectedly"
-                )
-            changed += int(before["text"] != after["text"])
-        if changed != 1:
-            raise RuntimeError(
-                "DOCX verification failed: expected exactly one paragraph text change"
-            )
-        temp_occurrences = _target_occurrences(after_records)
-        if (
-            len(temp_occurrences) != 1
-            or temp_occurrences[0]["date"] != replacement_date
-        ):
-            raise RuntimeError(
-                "DOCX verification failed: replacement date was not uniquely re-parsed"
-            )
-
-        source_after_temp = observe_file_identity(
-            source,
-            max_hash_bytes=MAX_FILE_BYTES,
-        )
-        if (
-            compare_file_identities(current, source_after_temp).get("exact")
-            is not True
-        ):
-            raise RuntimeError(
-                "DOCX source changed while destination was being prepared"
-            )
-        if destination.exists():
-            raise FileExistsError(
-                "destination appeared during mutation; refusing overwrite"
-            )
-        _publish_no_overwrite(temp_path, destination)
-
-        final_inspection = inspect_docx(destination)
-        destination_identity = final_inspection.get("identity") or {}
-        source_after = observe_file_identity(source, max_hash_bytes=MAX_FILE_BYTES)
-        if compare_file_identities(current, source_after).get("exact") is not True:
-            raise RuntimeError("DOCX source changed before final verification")
-        if final_inspection.get("ready") is not True:
-            raise RuntimeError("DOCX final reopen/inspection failed")
-        final_occurrences = final_inspection.get("payment_date_occurrences") or []
-        if (
-            len(final_occurrences) != 1
-            or final_occurrences[0].get("date") != replacement_date
-        ):
-            raise RuntimeError(
-                "DOCX final verification did not find exactly the expected payment date"
-            )
-        if final_inspection.get("structure_fingerprint") != _structure_fingerprint(
-            after_records
-        ):
-            raise RuntimeError(
-                "DOCX final structure fingerprint changed after publication"
-            )
-        return {
-            "source_identity_before": current,
-            "source_identity_after": source_after,
-            "destination_identity": destination_identity,
-            "source_unchanged": True,
-            "destination_reopened": True,
-            "old_date": old_date,
-            "new_date": replacement_date,
-            "target_location": target["location"],
-            "target_count_before": 1,
-            "target_count_after": 1,
-            "format_preserved": True,
-            "surrounding_structure_preserved": True,
-            "expected_structure_fingerprint": final_inspection[
-                "structure_fingerprint"
-            ],
-        }
-    except Exception:
-        if temp_path.exists():
-            temp_path.unlink(missing_ok=True)
-        raise
 
 
 def write_docx_completion_copy(
@@ -1073,6 +797,87 @@ def write_docx_completion_copy(
                 target_verification,
                 key=lambda value: str(value["target_id"]),
             ),
+        }
+    except Exception:
+        if temp_path.exists():
+            temp_path.unlink(missing_ok=True)
+        raise
+
+def create_docx_from_spec(
+    destination_path: str | Path,
+    *,
+    spec: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Create one verified DOCX export from the current native DocumentSpec v1."""
+
+    destination = Path(destination_path).resolve(strict=False)
+    if destination.suffix.casefold() != ".docx":
+        raise ValueError("DOCX destination must use the .docx extension")
+    if not destination.parent.exists() or not destination.parent.is_dir():
+        raise FileNotFoundError("DOCX destination parent directory does not exist")
+    if destination.exists():
+        raise FileExistsError("output_collision: destination already exists; refusing overwrite")
+
+    normalized = normalize_document_spec(spec)
+    expected_texts = document_visible_texts(normalized)
+
+    document = Document()
+    document.add_heading(normalized["title"], level=0)
+    if normalized["subtitle"]:
+        subtitle = document.add_paragraph()
+        run = subtitle.add_run(normalized["subtitle"])
+        run.italic = True
+    for section in normalized["sections"]:
+        document.add_heading(section["heading"], level=1)
+        for paragraph in section["paragraphs"]:
+            document.add_paragraph(paragraph)
+        for bullet in section["bullets"]:
+            document.add_paragraph(bullet, style="List Bullet")
+
+    fd, raw_temp = tempfile.mkstemp(
+        prefix=f".{destination.name}.",
+        suffix=".docx",
+        dir=destination.parent,
+    )
+    os.close(fd)
+    temp_path = Path(raw_temp)
+    try:
+        document.save(temp_path)
+        temp_inspection = inspect_docx(temp_path)
+        if temp_inspection.get("ready") is not True:
+            raise RuntimeError(
+                f"DOCX generated package failed reopen: {temp_inspection.get('detail')}"
+            )
+        if int(temp_inspection.get("table_count") or 0) != 0:
+            raise RuntimeError("DocumentSpec v1 export unexpectedly contains a table")
+        temp_records = _records(Document(temp_path))
+        observed_texts = [str(record["text"]) for record in temp_records]
+        if observed_texts != expected_texts:
+            raise RuntimeError("DOCX generated visible text differs from the current DocumentSpec")
+        if destination.exists():
+            raise FileExistsError("output_collision: destination appeared during DOCX generation")
+        _publish_no_overwrite(temp_path, destination)
+
+        final_inspection = inspect_docx(destination)
+        if final_inspection.get("ready") is not True:
+            raise RuntimeError("DOCX final fresh reopen/inspection failed")
+        final_records = _records(Document(destination))
+        final_texts = [str(record["text"]) for record in final_records]
+        if final_texts != expected_texts:
+            raise RuntimeError("DOCX final visible text differs from the current DocumentSpec")
+        if final_records != temp_records:
+            raise RuntimeError("DOCX final fresh reopen changed verified paragraph/run state")
+        if final_inspection.get("structure_fingerprint") != temp_inspection.get(
+            "structure_fingerprint"
+        ):
+            raise RuntimeError("DOCX final structure fingerprint differs from verified temp output")
+        return {
+            "verified": True,
+            "destination": str(destination),
+            "identity": final_inspection["identity"],
+            "paragraph_count": len(final_records),
+            "visible_text_chars": sum(len(text) for text in final_texts),
+            "structure_fingerprint": final_inspection["structure_fingerprint"],
         }
     except Exception:
         if temp_path.exists():

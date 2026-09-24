@@ -26,6 +26,7 @@ from .browser import (
     BrowserTarget,
     BrowserTargetKind,
     BrowserTargetQuery,
+    BrowserTargetStaleError,
     BrowserTargetQueryKind,
 )
 from .managed_browser_select import perform_select_option
@@ -386,6 +387,15 @@ class PlaywrightManagedBrowser:
             return self._failure(
                 action,
                 error=f"managed browser action is not implemented yet: {action.kind.value}",
+            )
+        except BrowserTargetStaleError as exc:
+            return self._failure(
+                action,
+                error=f"{type(exc).__name__}: {exc}",
+                data={
+                    "dispatch_state": "not_started",
+                    "requires_fresh_resense": True,
+                },
             )
         except Exception as exc:
             return self._failure(
@@ -1526,11 +1536,11 @@ class PlaywrightManagedBrowser:
                 observed_at=target.observed_at,
             )
         except Exception as exc:
-            raise ManagedBrowserError(
+            raise BrowserTargetStaleError(
                 f"browser target changed before dispatch: {exc}"
             ) from exc
         if current.target_id != target.target_id:
-            raise ManagedBrowserError("browser target changed before dispatch")
+            raise BrowserTargetStaleError("browser target changed before dispatch")
         return binding
 
     def _validate_authority(
@@ -1721,7 +1731,12 @@ class PlaywrightManagedBrowser:
         return session
 
     @staticmethod
-    def _failure(action: BrowserAction, *, error: str) -> BrowserEffectEvidence:
+    def _failure(
+        action: BrowserAction,
+        *,
+        error: str,
+        data: dict[str, Any] | None = None,
+    ) -> BrowserEffectEvidence:
         return BrowserEffectEvidence(
             action_id=action.action_id,
             session_id=action.session_id,
@@ -1729,6 +1744,7 @@ class PlaywrightManagedBrowser:
             success=False,
             page_id=action.page_id,
             target_id=action.target.target_id if action.target is not None else "",
+            data=dict(data or {}),
             error=str(error or "managed browser action failed")[:2000],
         )
 
