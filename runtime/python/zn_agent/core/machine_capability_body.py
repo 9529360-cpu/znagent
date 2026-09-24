@@ -28,6 +28,7 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
     exact HWND/PID without reopening those identifiers in the public ``act`` API.
     """
 
+    _RESOLVE_KIND = "resolve_application"
     _LAUNCH_KIND = "launch_application"
     _ACTIVATE_KIND = "activate_application_window"
     _SCREEN_CAPTURE_KIND = "windows_screen_capture"
@@ -48,6 +49,8 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
 
     def act(self, kind: str, *, event_id: str | None = None, **args: Any) -> BodyActionResult:
         normalized = str(kind or "").strip().lower()
+        if normalized == self._RESOLVE_KIND:
+            return self._act_resolve_application(event_id=event_id, args=dict(args))
         if normalized == self._LAUNCH_KIND:
             return self._act_launch(event_id=event_id, args=dict(args))
         if normalized == self._ACTIVATE_KIND:
@@ -55,6 +58,94 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
         if normalized == self._SCREEN_CAPTURE_KIND:
             return self._act_screen_capture(event_id=event_id, args=dict(args))
         return super().act(kind, event_id=event_id, **args)
+
+    def _act_resolve_application(
+        self,
+        *,
+        event_id: str | None,
+        args: dict[str, Any],
+    ) -> BodyActionResult:
+        rejected = sorted(key for key in args if str(key) != "query")
+        query = " ".join(str(args.get("query") or "").split())
+        action = BodyAction(
+            action_id=f"body-{uuid.uuid4().hex[:12]}",
+            kind=self._RESOLVE_KIND,
+            args={"query": query} if query else {},
+            event_id=event_id,
+        )
+        started = utc_now()
+        if rejected:
+            result = BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data={"status": "invalid_request", "rejected_arguments": rejected},
+                error=(
+                    "resolve_application accepts only a human-facing query: "
+                    + ", ".join(rejected)
+                ),
+                event_id=event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+            self._record(action, result)
+            return result
+        if not query:
+            result = BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=False,
+                data={"status": "invalid_request"},
+                error="resolve_application requires a non-empty query",
+                event_id=event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+            self._record(action, result)
+            return result
+
+        resolution = self.device_capabilities.resolve_application(
+            query,
+            force_refresh=True,
+        )
+        application = resolution.application
+        candidates = tuple(resolution.candidates or ())
+        data = {
+            "query": query,
+            "status": resolution.status,
+            "application": (
+                self._safe_application_identity(application)
+                if application is not None
+                else None
+            ),
+            "candidates": [
+                self._safe_application_identity(candidate)
+                for candidate in candidates[:12]
+            ],
+            "candidate_count": len(candidates),
+        }
+        result = BodyActionResult(
+            action_id=action.action_id,
+            kind=action.kind,
+            success=True,
+            output=str(resolution.status),
+            data=data,
+            event_id=event_id,
+            started_at=started,
+            completed_at=utc_now(),
+        )
+        self._record(action, result)
+        return result
+
+    @staticmethod
+    def _safe_application_identity(application: InstalledApplication) -> dict[str, Any]:
+        return {
+            "application_id": application.app_id,
+            "display_name": application.display_name,
+            "canonical_name": application.canonical_name,
+            "launchable": application.launchable,
+            "capabilities": list(application.capabilities)[:24],
+        }
 
     def _act_launch(self, *, event_id: str | None, args: dict[str, Any]) -> BodyActionResult:
         # Never trust a caller-supplied internal marker.
@@ -74,7 +165,10 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
                 error="launch_application requires a resolved application_id",
             )
 
-        application = self.device_capabilities.application_by_id(app_id, force_refresh=True)
+        # Resolve/dispatch owns inventory refresh; this preflight reuses the
+        # bounded TTL identity while application_runtime() reacquires processes
+        # and windows from current machine reality.
+        application = self.device_capabilities.application_by_id(app_id)
         if application is None:
             return self._preflight_result(
                 self._LAUNCH_KIND, event_id, app_id, False,
@@ -141,7 +235,10 @@ class MachineCapabilityBody(BrowserFormSubmitBody):
                 error="activate_application_window requires a resolved application_id",
             )
 
-        application = self.device_capabilities.application_by_id(app_id, force_refresh=True)
+        # Activation authority still comes from freshly observed process/window
+        # identity. Reusing the recent installed-app identity avoids a second
+        # full software inventory scan before that dynamic check.
+        application = self.device_capabilities.application_by_id(app_id)
         if application is None:
             return self._preflight_result(
                 self._ACTIVATE_KIND, event_id, app_id, False,
