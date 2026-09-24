@@ -452,6 +452,10 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
             raise RuntimeError("active Work lost its resident event")
         if event.status in {EventStatus.COMPLETED, EventStatus.FAILED}:
             raise RuntimeError("active Work completed before steering could be applied")
+        if self.resident.store.get_event_cancellation_request(event_id) is not None:
+            raise RuntimeError(
+                "active Work has a pending stop request; steering is blocked until cancellation settles"
+            )
 
         working = self.resident.store.get_working_state()
         stage = str(working.stage or "").strip().lower()
