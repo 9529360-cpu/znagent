@@ -39,6 +39,12 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
         payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
         if payload.get("body_action") is not None or payload.get("native_action") is not None:
             return False
+        # An explicit cognition_question is a caller-owned isolation boundary:
+        # do not silently append a machine-action catalog to that bounded
+        # question. Active Work steering is the exception because its
+        # cognition_question is Resident-authored plan context for the new event.
+        if payload.get("cognition_question") and not isinstance(payload.get("work_steering"), dict):
+            return False
         bounded = context if isinstance(context, dict) else {}
         if any(str(key).endswith("_contract") for key in bounded):
             return False
