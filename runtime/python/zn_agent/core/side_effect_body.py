@@ -300,9 +300,15 @@ class SideEffectAwareBody(KeyboardTextBody):
             "side_effect_dispatch_observed": True,
         }
         if (
-            normalized_kind in {"keyboard_key", "keyboard_chord"}
-            and result.data.get("dispatch_sent") is False
-            and result.data.get("side_effect_uncertain") is False
+            (
+                normalized_kind in {"keyboard_key", "keyboard_chord"}
+                and result.data.get("dispatch_sent") is False
+                and result.data.get("side_effect_uncertain") is False
+            )
+            or (
+                result.data.get("side_effect_absence_proven") is True
+                and result.data.get("side_effect_uncertain") is False
+            )
         ):
             resolved = self.resolve_uncertain_attempt(
                 attempt_id,
@@ -317,7 +323,7 @@ class SideEffectAwareBody(KeyboardTextBody):
                     attempt_id=attempt_id,
                     signature_hash=signature_hash,
                     error=(
-                        "keyboard dispatch was proven absent but its durable replay "
+                        "guarded side-effect dispatch was proven absent but its durable replay "
                         "attempt could not be closed safely"
                     ),
                 )

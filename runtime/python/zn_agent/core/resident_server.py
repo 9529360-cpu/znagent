@@ -23,6 +23,7 @@ from .visual_sense import NativeVisualSense, VisualCaptureFn
 
 _RESIDENT_ENDPOINT_VERSION = 2
 _RESIDENT_AUTH_SCHEME = "session-secret-v1"
+_RESIDENT_MAX_REQUEST_BYTES = 1_048_576
 
 
 def _process_runtime_id(
@@ -157,8 +158,18 @@ class _ResidentTcpHandler(socketserver.StreamRequestHandler):
         rpc = self.server.rpc  # type: ignore[attr-defined]
         authenticated = False
         while True:
-            raw = self.rfile.readline()
+            raw = self.rfile.readline(_RESIDENT_MAX_REQUEST_BYTES + 1)
             if not raw:
+                return
+            if len(raw) > _RESIDENT_MAX_REQUEST_BYTES:
+                self._write_response(
+                    self,
+                    {
+                        "id": None,
+                        "ok": False,
+                        "error": "request too large",
+                    },
+                )
                 return
             request: dict[str, Any] | None = None
             try:
@@ -339,10 +350,6 @@ class ResidentSocketService:
     def serve_forever(self) -> int:
         try:
             self.rpc.service.acquire()
-            self.rpc.resident.live_once()
-            self.rpc._start_life_loop()
-            self._start_visual_loop()
-            self.channels.start()
             with _ResidentTcpServer(
                 (self.host, self.port),
                 _ResidentTcpHandler,
@@ -351,7 +358,17 @@ class ResidentSocketService:
             ) as server:
                 self._server = server
                 host, port = server.server_address[:2]
+                # Establish real life readiness without dispatching saved Work.
+                # A published endpoint must not report an uninitialized subject.
+                self.rpc.resident.pulse()
                 self._write_endpoint(str(host), int(port))
+                # Restored Work may immediately enter slow cognition or Body IO.
+                # Only the existing life thread drives it, after transport bind
+                # and endpoint publication succeed. Reconnection must not wait
+                # for the first recovered task step to finish.
+                self.rpc._start_life_loop()
+                self._start_visual_loop()
+                self.channels.start()
                 server.serve_forever(poll_interval=0.25)
         finally:
             self._server = None

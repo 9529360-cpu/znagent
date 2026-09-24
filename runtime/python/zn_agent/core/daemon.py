@@ -37,6 +37,8 @@ class ResidentRpcServer:
         self.service = ResidentService(self.resident)
         self.work = RecoveryBoundedWorkLedger(self.resident)
         self.work_control = OutcomeAwareRestoreWorkControl(self.work)
+        self.resident.cognitive_delta_handler = self.work.publish_response_delta
+        self.resident.cognitive_response_reset_handler = self.work.reset_response_stream
         self.provider_settings = provider_settings or ProviderSettingsService(self.resident)
         self.input = input_stream or sys.stdin
         self.output = output_stream or sys.stdout
@@ -490,12 +492,19 @@ class ResidentRpcServer:
             if bounded_artifact_limit > 0
             else []
         )
+        # Reconnecting faces discover the existing event rather than submitting
+        # the user's task again. This is identity only, never replay authority.
+        active_run = self.work._active_run_for_thread(thread.thread_id)
         return {
             "id": thread.thread_id,
             "title": thread.title,
             "metadata": thread.metadata,
             "created_at": thread.created_at,
             "updated_at": thread.updated_at,
+            "active_run": (
+                {"thread_id": active_run.thread_id, "event_id": active_run.event_id}
+                if active_run is not None else None
+            ),
             "messages": [
                 {
                     "id": message.message_id,

@@ -42,8 +42,8 @@ test('desktop localization resolves supported Windows language families with Eng
 })
 
 test('English and Simplified Chinese resources cover the same typed UI keys', () => {
-  assert.equal(translateZnDesktop('en-US', 'sidebar.newWork'), 'New work')
-  assert.equal(translateZnDesktop('zh-CN', 'sidebar.newWork'), '新任务')
+  assert.equal(translateZnDesktop('en-US', 'sidebar.newWork'), 'New chat')
+  assert.equal(translateZnDesktop('zh-CN', 'sidebar.newWork'), '新对话')
   assert.equal(translateZnDesktop('en-US', 'tray.quit'), 'Quit ZN')
   assert.equal(translateZnDesktop('zh-CN', 'tray.quit'), '退出 ZN')
   assert.equal(
