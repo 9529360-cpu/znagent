@@ -8,7 +8,7 @@ from unittest import mock
 from zn_agent.core.automation_text_state_sense import NativeFocusedAutomationTextSense
 from zn_agent.core.completion_observation import CompletionObservationJournal
 from zn_agent.core.focused_modern_text_resident import FocusedModernTextResidentRuntime
-from zn_agent.core.managed_browser import PlaywrightManagedBrowser
+from zn_agent.core.browser import BrowserPlane
 from zn_agent.core.provider_bridge import build_resident_runtime
 
 
@@ -46,7 +46,7 @@ class ModernTextResidentOwnershipTests(unittest.TestCase):
                     resident.automation_text_state,
                     NativeFocusedAutomationTextSense,
                 )
-                self.assertIsInstance(resident.managed_browser, PlaywrightManagedBrowser)
+                self.assertIs(resident.managed_browser.plane, BrowserPlane.MANAGED)
                 # Browser ownership is lazy: zero-model resident construction
                 # must not start a browser or require the optional Playwright
                 # package merely to stay alive.

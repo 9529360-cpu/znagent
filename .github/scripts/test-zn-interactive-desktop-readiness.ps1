@@ -183,7 +183,7 @@ if ($activeConsoleSessionId -eq [uint32]::MaxValue) {
 }
 
 if ($currentSessionId -eq 0) {
-    throw 'Interactive runner is executing in Session 0; real desktop E2E requires a logged-on user session.'
+    throw 'Interactive runner is executing in Session 0; real interactive desktop validation requires a logged-on user session.'
 }
 
 $currentWtsState = Get-WtsConnectState -SessionId ([uint32]$currentSessionId)

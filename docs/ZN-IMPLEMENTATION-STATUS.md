@@ -1,203 +1,83 @@
 # ZN Implementation Status
 
-这是一份当前实现事实表，不是 roadmap。真实代码、真实 Git、真实测试和真实 E2E 高于本文件。
+This is a current architecture/status snapshot. Real code, Git state and contract/integration evidence are authoritative.
 
-Updated: 2026-09-13
+## Product control plane
 
-## 仓库状态规则
+ZN has one product control plane:
 
-- 唯一长期集成 / canonical / release 分支：`main`。
-- 新开发从最新 `main` 拉短命 `work/*`，PR 以 `main` 为 base；适用 CI/E2E 在 PR 阶段通过后再合并。
-- `dev/zn-agent` 仅为历史兼容，不再接收新产品开发。
-- 文档里的 SHA 和 CI run 只能当历史 evidence；接手时必须重新查询 current `main` 和 live PR head。
-- Git/CI/main 合并属于工程证据，不等于产品能力自动闭环。
+- one Resident lineage;
+- one durable Work/Root completion truth;
+- one action-authority system;
+- one Body/effect boundary;
+- one replay/recovery discipline;
+- one completion decision owned by ZN.
 
-## 状态语言
+External model or tool success is evidence only.
 
-```text
-Exists
-Connected
-Verified
-Product-closed
-```
+## Capability status
 
-`VERIFIED NARROW` / `representative path closed` 表示真实代表性路径已经验证，但不代表整个 capability 类别已经 product-closed。
-
-## 当前能力事实
-
-| 区域 | 当前状态 | 当前边界 / 仍需扩大 |
+| Capability | Current state | Boundary |
 | --- | --- | --- |
-| Resident Self / Body / Senses / Situation / Thought / Will | CONNECTED + VERIFIED | 真实任务广度仍需扩大 |
-| Durable Work / restart recovery | CONNECTED + VERIFIED | 更长周期、跨天和更多真实任务上的连续体验仍需扩大 |
-| Research & Information Work | VERIFIED NARROW; E2E-01/02/03 representative paths closed | bounded public-web research + provenance/conflict/grounding/restart continuation；不是 arbitrary Deep Research |
-| Uncertain outside-world side effects | VERIFIED NARROW; E2E-36 representative path closed | exact replay-sensitive attempt 跨 restart fail closed；不是通用 exactly-once |
-| Work continuity / steering | VERIFIED NARROW; E2E-27/33/35 representative paths closed | 更广长期使用仍开放 |
-| Managed Browser / BrowserScene | CONNECTED + VERIFIED NARROW | complex frames/dialogs/general keyboard/OCR/任意网页仍未覆盖 |
-| User Browser Bridge | CONNECTED + VERIFIED NARROW | E2E-05/07/08 representative paths 已关闭；真实网站和更复杂认证/导航仍需扩大 |
-| Local Documents & Spreadsheet Work | VERIFIED NARROW; E2E-09/10 representative paths closed | 复杂 Office structures 仍开放；不是 Word/Excel/Office complete |
-| Browser -> Spreadsheet | VERIFIED NARROW; E2E-11 representative path closed; PR #251 merged as `5dbc663c7035dc523e34477501fee59914a8cff4` | MANAGED Browser simple-table -> exact XLSX append-copy；不是 arbitrary website/Excel |
-| Document Research Completion | VERIFIED NARROW; E2E-12 representative path closed | bounded public-Web evidence -> 1–3 DOCX placeholders；不是 arbitrary DOCX/Deep Research/Word complete |
-| Windows machine/application awareness | CONNECTED + VERIFIED NARROW | 更多应用/系统语义继续扩大 |
-| **Windows current-app content cleanup** | **VERIFIED NARROW; E2E-13 representative path closed; PR #252 merged as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`** | current foreground non-browser process/HWND + unique multiline ValuePattern Edit + deterministic cleanup + guarded replacement + restart/no-replay reconciliation + one Save + fresh same-process read-only result verification；不是 Desktop complete / arbitrary app automation / Office / general RPA |
-| Windows unexpected-modal recovery | VERIFIED NARROW; E2E-15 representative path closed | exact same-process safe-modal slice；任意 dialog/UAC/credentials/business decisions 不在 closure 内 |
-| Browser + File + Desktop | VERIFIED NARROW; E2E-24 representative path closed | bounded three-surface path；更复杂任务仍需扩大 |
-| Cognitive resources / routing | CONNECTED + VERIFIED | one ModelRouter, hard eligibility, route provenance, health-aware scoring；多-provider breadth继续扩大 |
-| Delegated Work / WorkerRun lifecycle | CONNECTED + VERIFIED NARROW | bounded delegation/supervision/restart/readiness；不是 general scheduler / recursive orchestration |
-| Long-task supervision | VERIFIED NARROW; E2E-28/34 representative paths closed | 更长、更复杂任务仍需扩大 |
-| One-model multi-worker | VERIFIED; E2E-29 CLOSED | 一个实际 route 服务多个隔离 WorkerRun 已证明 |
-| Delegated user progress | CONNECTED + VERIFIED NARROW / PARTIAL UX | 复杂 multi-workstream UX/解释质量继续扩大 |
-| WorkItem dependency/readiness | CONNECTED + VERIFIED NARROW | bounded flat current-plan sibling graph；不是 general DAG scheduler |
-| Memory / learned behavior | VERIFIED NARROW / PARTIAL | E2E-37/38/39 representative slice；不是 arbitrary workflow learning |
-| Installed N -> N+1 continuity | PARTIAL / OPEN | 真实升级中的 identity/data/Work/uncertain effects 尚未 product-close |
+| Durable Work / Root completion | CONNECTED | Root status is ZN-owned; child/tool success cannot independently complete the Root |
+| Side-effect journaling / no-blind-replay | CONNECTED | replay-sensitive effects preserve durable dispatch identity and fail closed when outcome is uncertain |
+| Work recovery / continuation | CONNECTED + VERIFIED NARROW | durable plan/progress/recovery are reusable; broader long-horizon UX remains open |
+| Managed Browser | CONNECTED + VERIFIED NARROW | pinned Chrome DevTools MCP is the mature default where its declared capability fits; Playwright remains a fallback for contracts such as stricter file transfer |
+| USER Browser bridge | CONNECTED + VERIFIED NARROW | explicit current-tab authorization/generation ownership; no silent attachment to arbitrary user tabs |
+| Browser semantic grounding | CONNECTED + VERIFIED NARROW | provider-neutral fresh semantic actions pin page URL, re-resolve stale targets only after explicit pre-dispatch proof, and never replay dispatched/uncertain effects |
+| Windows application awareness | CONNECTED | installed-app/process/window identity and bounded activation use fresh machine evidence |
+| Windows interactive actions | CONNECTED + VERIFIED NARROW | pointer/keyboard/UIA movements remain Body-owned and authority-gated |
+| Atomic file overwrite | CONNECTED + VERIFIED | staged write, identity checks, durable attempt tracking and recovery contracts |
+| Document/presentation primitives | CONNECTED + PARTIAL | generic document/presentation behaviors remain; scenario-owned document completion paths were retired |
+| Spreadsheet primitives | CONNECTED + PARTIAL | generic workbook operations remain; no task-specific browser-to-sheet product route owns the architecture |
+| Public research primitives | CONNECTED + PARTIAL | search/extract/evidence mechanisms remain; no dedicated representative-task completion path owns the product |
+| Delegated Work / routing | CONNECTED + PARTIAL | generic routing, progress, health and authority remain; fixed story phase orchestration was retired |
+| Memory / learned behavior | CONNECTED + VERIFIED NARROW | saved facts, explicit response preferences and same-Work conversation compose in bounded product cognition; automatic personal-memory writing, semantic search and arbitrary workflow learning remain open |
+| Packaging / clean install | CONNECTED | packaged runtime and clean-install verification remain release boundaries |
 
-## E2E-13 implementation facts
+## Saved memory in ordinary conversation
 
-Representative natural-language task:
+The active product path is Work route-policy binding -> anchored same-Work conversation -> `StructuredMemory.bind_cognition_context` -> existing CognitionRequest / Kernel / cognitive adapter. The existing `facts` table and `remember` / `forget` RPC remain the owners; no second memory database, identity migration or external agent runtime is introduced.
 
-> 把我现在开的工作记录整理一下：去掉每行前后空格，删掉空行，重复内容只保留第一次，然后保存。
+Saved keys and explicit aliases are matched conservatively, with Unicode normalization, most-specific-cue ranking and stable tie-breaking. Values are never searched for cues. A directly named topic takes precedence; otherwise the last two user messages from the existing bounded Work transcript may supply reference cues. Assistant claims, tools and other threads do not supply these cues. Records carry their saved key, update timestamp and match provenance; they are data, not execution authority or completion evidence.
 
-Implementation PR #252 final head was `fd6a7a576d8e0dbc466f36e2633298de638d2eca`. It was squash-merged to canonical `main` as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`. Post-merge canonical ZN CI #1875 / run `34756719969` completed successfully.
+Explicitly saved response language, style and verbosity are bounded default preferences. Examples of existing fact keys are `response language`, `response style`, `response verbosity`, and their supported Chinese reply-language/style equivalents. Values must be nonempty strings no longer than 200 characters. Other preferences require relevant cues; permission, credential and route-policy fields are not ambient preferences. Current user instructions take precedence over defaults. Saving/inference of preferences from arbitrary chat is not implemented by this projection.
 
-The merged implementation reuses the existing Product Resident / Root Work / Body. No DesktopAgent, AppAgent, DialogAgent, second Router/Store or RPA engine was introduced.
+The projection selects at most five facts, preserves whole values rather than generating lossy summaries, and caps the actual nested UTF-8 context at 8 KiB. Opt-out (`allow_memory` not exactly true when explicitly supplied) and explicit isolated cognition questions exclude both saved memory and conversation. New requests read current SQLite values without a projection cache; updates and deletions survive reconstruction. An already prepared durable cognition request remains its original snapshot across restart. Forgetting a fact does not erase earlier transcript disclosures or already prepared request snapshots.
 
-### Goal / transform
+Narrow executed evidence in `test_memory_conversation_product.py` exercises the real Product Resident, Work/RPC, Kernel, SQLite and cognitive adapter, including authenticated TCP disconnect/reconnect, two resident lifetimes, follow-up reference retrieval, update/forget, policy/isolation and pre-dispatch continuation without duplicated messages/calls. Provider responses are controlled test boundaries, not live-model quality evidence. Full installed daily-use acceptance and unified knowledge-graph/semantic retrieval remain open.
 
-`current_app_text_cleanup_goal.py` defines the bounded foreground-desktop text-cleanup goal. The representative transform is deterministic:
+## Recently retired scenario-owned surfaces
 
-```text
-split lines
--> trim each line
--> drop blank lines
--> stable exact dedupe
--> join CRLF
-```
+The cleanup removes product code whose primary owner was a narrow representative task rather than a reusable capability contract, including:
 
-Source/result are bounded to 4096 characters and empty output fails closed.
+- current-app cleanup story modules;
+- local-service repair story modules;
+- long-running terminal story behavior;
+- local Office representative behavior;
+- document-research-completion story behavior;
+- managed-reference browser research story runtime;
+- browser-result-to-file story route;
+- fixed delegated-worker story orchestration;
+- File-to-Desktop composite goal / semantic grounding route;
+- task-specific desktop modal sensing/recovery stack;
+- payment-date-specific DOCX inspection and mutation path.
 
-### UIA content authority
+Their removal does not revoke the generic Work, Body, authority, browser, file, research, Office, delegation or recovery mechanisms they previously composed.
 
-`automation_text_content.py` provides the bounded native UIA ValuePattern read/replace seam. The mutation requires:
+## CI shape
 
-- current foreground non-browser process/HWND；
-- exactly one named multiline Edit；
-- enabled / onscreen / not password / writable ValuePattern；
-- fresh process/HWND/name/control type/RuntimeId checks；
-- current source chars/SHA-256 match；
-- reacquisition immediately before `SetValue`；
-- fresh reread after dispatch。
+Automatic gates are contract-first and use contract-named workflows. Real-system capability checks live under `tests/zn_agent/integration`; ordinary deterministic/unit contracts remain under `tests/zn_agent/core`.
 
-Raw application text is transient. Durable audit/state stores bounded semantic identity, counts and hashes only.
+The repository policy test prevents retired scenario namespaces and numbered story identifiers from becoming active architecture again.
 
-### Durable replacement ownership / crash-window repair
+## Current major gaps
 
-`CurrentAppTextAwareBody` keeps `automation_value_replace` inside the existing side-effect attempt journal. E2E-13 does **not** assume `ValuePattern.SetValue` is idempotent.
+1. Managed Browser breadth is still split by provider capability; Chrome DevTools MCP does not yet replace every stricter Playwright contract.
+2. Generic semantic fresh-re-ground currently covers exact named text/button action paths; arbitrary web interaction remains open.
+3. USER Browser support remains intentionally explicit and bounded.
+4. Windows/application automation is not general RPA.
+5. Document/spreadsheet capabilities are not complete Office automation.
+6. Long-horizon autonomous Work, broader delegation and learning remain partial.
 
-The restart repair closes the crash window where outside-world text may already equal result R but WorkingState still reflects source S. Before ordinary source-content drift is considered, the E2E-13 behavior queries durable replacement ownership by current event + action kind. Attempts in `started`, `observed`, or `verified_effect` remain authoritative across restart even if fresh content would form different replacement arguments/signature.
-
-Recovery is observation-only:
-
-```text
-existing replacement attempt owns dispatch boundary
--> fresh exact foreground/process/window/Edit bind
--> fresh ValuePattern read
--> compare prior expected result chars/SHA-256
--> exact match: resolve/retain old attempt as verified_effect
--> continue with fresh replacement verification
-
-mismatch / lost authority / ambiguity
--> fail closed
--> no new replacement signature
--> no additional SetValue
-```
-
-This also closes the second crash window after `verified_effect` is persisted but before WorkingState advances.
-
-Persistent SQLite + Resident rebuild regressions cover:
-
-- durable `started` + outside-world value already changed;
-- Body `observed` before WorkingState checkpoint;
-- `verified_effect` persisted before WorkingState stage advances;
-- mismatch after restart / user edit;
-- zero additional `automation_value_replace` dispatch on recovery.
-
-### Save / final verification
-
-Save reuses the existing durable pointer-click lifecycle. The exact Save Button is freshly revalidated immediately before input. Once a Save dispatch crosses its non-replayable boundary, E2E-13 never clicks Save again.
-
-Final success discards old HWND/RuntimeIds and requires:
-
-- same expected process identity；
-- fresh replacement HWND；
-- saved-semantics title；
-- exact read-only Edit `保存内容`；
-- result chars/SHA-256 equal the deterministic expected value；
-- independent Root Work acceptance。
-
-## E2E-07 Windows regression handling
-
-PR #252's Windows suite exposed an E2E-07 failure. A zero-code same-head rerun reproduced the same failure, so it was treated as a stable regression rather than runner/browser timing variance.
-
-Two speculative production stabilizations were reviewed and reverted because neither established the missing causal proof:
-
-- extending the post-click observation window；
-- broadly re-enumerating candidate tabs after the action。
-
-The representative fixture keeps `target="_blank" rel="opener"` so the web-level intent is explicit, but Chromium's extension Tabs metadata still did not reliably expose `chrome.tabs.Tab.openerTabId` for this popup/new-window shape.
-
-A first narrow repair tried to read CDP `Target.getTargets` / `TargetInfo.openerId` through the already attached root debugger session. Bounded diagnostic evidence then exposed the real first failure: **before any click was sent**, Edge returned CDP `-32000 Not allowed` for `Target.getTargets`, with action evidence `click_sent=false`. The later refusal to issue another click was the existing no-blind-replay guard doing its job; it was not the root cause.
-
-The final narrow repair therefore does not add permissions and does not use a Target-domain discovery command. Its causal proof path is:
-
-- fresh extension-level `chrome.debugger.getTargets()` snapshot identifies the exact authorized root debugger target and records a pre-click target-ID baseline；
-- one exact button click is dispatched；
-- the exact root debugger session must emit exactly one `Page.windowOpen` event with the expected child URL；
-- the bounded action window records created tabs and rejects more than one new tab as ambiguous；
-- a fresh `chrome.debugger.getTargets()` reread must map that single created tab to exactly one new `page` target whose target ID was absent from the pre-click baseline and whose URL equals the exact expected child URL；
-- immediately before deriving child authority, another fresh debugger-target reread must prove the exact root target ID/tab/URL and exact child target ID/tab/URL are unchanged；
-- existing task-scoped child debugger authority, exact child URL/title verification, root authorization-generation preservation, return to the exact root, fresh root re-ground and child detach requirements remain mandatory；
-- ambiguity, missing/mismatched evidence, target replacement, authorization drift or any post-click uncertainty fails closed and never causes a blind click replay。
-
-No `webNavigation` permission or other new extension permission was added. The causal child/root contract, fresh reread requirement and no-blind-replay policy were not weakened.
-
-The separate authorization setup helper remains test-only and bounded: at most three real extension shortcuts, each only while fresh evidence proves explicit authorization is absent.
-
-## Browser / Windows current boundary
-
-Browser verified-narrow substrate includes BrowserScene sensing, tab/history, exact scene actions, causal popup attribution, file transfer and bounded command/control clicks. It is not arbitrary web automation.
-
-Windows verified-narrow substrate now includes machine/application awareness, exact existing-window activation, E2E-13 current-app cleanup and E2E-15 same-process modal recovery. It is not arbitrary Windows application lifecycle, arbitrary dialog automation or general RPA.
-
-## Current remaining product gaps
-
-1. Research breadth beyond E2E-01/02/03/12.
-2. Local Office breadth beyond E2E-09/10/11/12.
-3. Cross-surface real tasks beyond E2E-24 and the bounded E2E-13 current-app slice.
-4. Browser/User Browser breadth on real sites, complex frames/navigation/popups/user-presence boundaries.
-5. Long-horizon/multi-workstream UX on top of existing continuity/supervision substrate.
-6. Windows/application breadth beyond E2E-13 and E2E-15, driven by concrete real E2E failures.
-7. Installed-version continuity only when explicitly authorized as a product problem.
-
-## Do not misread as complete
-
-Current implementation does **not** mean:
-
-- Desktop complete；
-- arbitrary Windows application automation；
-- general RPA；
-- arbitrary rich-text/document editing；
-- arbitrary Windows dialog recovery；
-- Word complete / Excel complete / Office Suite complete；
-- arbitrary web automation；
-- all MFA；
-- arbitrary third-party exactly-once；
-- full DLP / OS sandbox；
-- general multi-agent platform or general DAG scheduler；
-- all long-running/cross-day work solved；
-- two real provider families fully production-validated；
-- Memory/credential/installer/updater/release-trust granted expanded authority。
-
-## Closure truth
-
-E2E-13 status is **VERIFIED NARROW / representative path closed**. Implementation PR #252 final head `fd6a7a576d8e0dbc466f36e2633298de638d2eca` was squash-merged to canonical `main` as `cc3fd3edc25b436a5c42ec1e2d13d4b786fb18b3`. The post-merge `main` push ZN CI #1875 / run `34756719969` is completed / success.
-
-This status remains a narrow representative closure, not `PRODUCT-CLOSED`. Any later docs-only synchronization PR must be judged from its own live head and applicable exact-head CI; PR #252's old checks are historical implementation evidence only.
+Browser expansion now proceeds from the cleaned capability-owned substrate rather than from retired representative-task stories.

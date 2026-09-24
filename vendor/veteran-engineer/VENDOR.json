@@ -1,0 +1,10 @@
+{
+  "name": "veteran-engineer",
+  "sourceRepository": "https://github.com/9529360-cpu/veteran-engineer.git",
+  "sourceCommit": "edc883fba7e4805c28a5e3b9275bf95535667dc2",
+  "sourceVersion": "0.5.0",
+  "vendoredPaths": ["src/", "mcp/server.mjs", "package.json"],
+  "excludedPaths": ["src/installer/"],
+  "integrationProfile": "standalone-fallback-stdio",
+  "protocolVersion": "2025-11-25"
+}

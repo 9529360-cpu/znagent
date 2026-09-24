@@ -152,6 +152,7 @@ class PersistentNervousSystemTests(unittest.TestCase):
                 config={"model": {}},
                 store_path=db,
             )
+            capabilities_before = resident.capabilities.names()
             resident.perceive_world(
                 "SQLite writer contention appeared in an upstream issue report",
                 features=("sqlite_lock", "database", "contention"),
@@ -187,7 +188,7 @@ class PersistentNervousSystemTests(unittest.TestCase):
             )
             self.assertEqual(len(schemas), 1)
             self.assertGreaterEqual(schemas[0].metadata.get("support_count", 0), 3)
-            self.assertEqual(resident.capabilities.names(), ())
+            self.assertEqual(resident.capabilities.names(), capabilities_before)
             activated = resident.nervous.activate("sqlite_lock", limit=8)
             self.assertTrue(
                 any(item.trace.trace_id == schemas[0].trace_id for item in activated)

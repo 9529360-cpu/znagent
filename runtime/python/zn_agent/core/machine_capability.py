@@ -176,6 +176,13 @@ _PROFILES = (
     _ApplicationProfile("WeChat", ("wechat.exe", "weixin.exe"), aliases=("wechat", "weixin", "微信"), capabilities=("generic_application", "communication", "messaging")),
     _ApplicationProfile("Windows Terminal", ("windowsterminal.exe", "wt.exe"), ("microsoft.windowsterminal",), ("terminal", "windows terminal", "wt"), ("generic_application", "terminal", "shell")),
     _ApplicationProfile("PowerShell", ("powershell.exe", "pwsh.exe"), aliases=("powershell", "pwsh"), capabilities=("generic_application", "terminal", "shell")),
+    _ApplicationProfile(
+        "Windows PowerShell ISE",
+        ("powershell_ise.exe",),
+        ("windowspowershell\\v1.0\\powershell_ise.exe",),
+        ("powershell ise", "windows powershell ise"),
+        ("generic_application", "terminal", "shell", "ide"),
+    ),
     _ApplicationProfile("Command Prompt", ("cmd.exe",), aliases=("cmd", "command prompt", "命令提示符"), capabilities=("generic_application", "terminal", "shell")),
     _ApplicationProfile("Adobe Acrobat Reader", ("acrord32.exe", "acrobat.exe"), aliases=("acrobat", "adobe reader", "acrobat reader"), capabilities=("generic_application", "pdf_reader")),
     _ApplicationProfile("SumatraPDF", ("sumatrapdf.exe",), aliases=("sumatrapdf", "sumatra pdf"), capabilities=("generic_application", "pdf_reader")),
@@ -510,6 +517,9 @@ class DeviceCapabilityGraph:
         if len(exact) == 1:
             return ApplicationResolution(raw, "resolved", exact[0])
         if len(exact) > 1:
+            representative = _preferred_profile_representative(exact)
+            if representative is not None:
+                return ApplicationResolution(raw, "resolved", representative)
             return ApplicationResolution(raw, "ambiguous", candidates=tuple(exact))
         partial: list[InstalledApplication] = []
         if len(wanted) >= 2:
@@ -520,6 +530,9 @@ class DeviceCapabilityGraph:
         if len(partial) == 1:
             return ApplicationResolution(raw, "resolved", partial[0])
         if len(partial) > 1:
+            representative = _preferred_profile_representative(partial)
+            if representative is not None:
+                return ApplicationResolution(raw, "resolved", representative)
             return ApplicationResolution(raw, "ambiguous", candidates=tuple(partial))
         return ApplicationResolution(raw, "not_installed")
 
@@ -761,6 +774,70 @@ def _aliases(app: InstalledApplication) -> set[str]:
     return {alias for alias in aliases if alias}
 
 
+def _preferred_profile_representative(
+    apps: Sequence[InstalledApplication],
+) -> InstalledApplication | None:
+    """Choose one runtime-bindable identity only inside one known app profile."""
+
+    rows = tuple(apps)
+    if len(rows) < 2:
+        return rows[0] if rows else None
+
+    profiles = [
+        _profile(app.executable_path, app.aumid, app.package_identity)
+        for app in rows
+    ]
+    if any(profile is None for profile in profiles):
+        return None
+    canonical = {
+        str(profile.canonical_name).casefold()
+        for profile in profiles
+        if profile is not None
+    }
+    if len(canonical) != 1:
+        return None
+
+    source_rank = {
+        "app_paths": 0,
+        "start_menu": 1,
+        "apps_folder": 2,
+        "program_files_fallback": 3,
+        "path": 4,
+        "uninstall_registry": 5,
+    }
+    launch_rank = {"executable": 0, "aumid": 1, "shell_item": 2, "unavailable": 9}
+
+    def score(app: InstalledApplication) -> tuple[int, int, int, int]:
+        profile = _profile(app.executable_path, app.aumid, app.package_identity)
+        executable_name = (
+            Path(app.executable_path).name.casefold()
+            if app.executable_path
+            else ""
+        )
+        runtime_bindable = bool(
+            profile is not None
+            and executable_name
+            and executable_name in {
+                name.casefold() for name in profile.executable_names
+            }
+        )
+        best_source = min(
+            (source_rank.get(source, 8) for source in app.evidence_source),
+            default=8,
+        )
+        return (
+            0 if app.launchable else 1,
+            0 if runtime_bindable else 1,
+            best_source,
+            launch_rank.get(app.launch_kind, 8),
+        )
+
+    ranked = sorted(rows, key=lambda app: (score(app), app.app_id))
+    if len(ranked) > 1 and score(ranked[0]) == score(ranked[1]):
+        return None
+    return ranked[0]
+
+
 def _process_app(apps: Sequence[InstalledApplication], executable: str | None, aumid: str | None, package: str | None) -> InstalledApplication | None:
     normalized = _normalize_path(executable)
     if normalized:
@@ -858,22 +935,42 @@ def _native_gpus() -> tuple[GpuObservation, ...]:
     if platform.system() != "Windows":
         return ()
     try:
-        from comtypes.client import GetObject
-        service = GetObject(r"winmgmts:root\cimv2", dynamic=True)
-        controllers = list(service.ExecQuery("SELECT Name, PNPDeviceID FROM Win32_VideoController"))
+        from comtypes.client import CoGetObject
+        service = CoGetObject(r"winmgmts:root\cimv2", dynamic=True)
+        controllers = list(
+            service.ExecQuery(
+                "SELECT Name, PNPDeviceID FROM Win32_VideoController"
+            )
+        )
     except Exception:
         return ()
     observed = utc_now()
     rows: list[GpuObservation] = []
     for controller in controllers:
-        try:
-            name = str(getattr(controller, "Name", "") or "").strip()
-            pnp = str(getattr(controller, "PNPDeviceID", "") or "").strip() or None
-        except Exception:
-            continue
+        name = _wmi_property_text(controller, "Name")
+        pnp = _wmi_property_text(controller, "PNPDeviceID") or None
         if name:
             rows.append(GpuObservation(name, pnp, observed))
     return tuple(rows)
+
+
+def _wmi_property_text(row: Any, name: str) -> str:
+    """Read one SWbemObject property across comtypes dynamic-binding versions."""
+
+    try:
+        value = getattr(row, name)
+    except Exception:
+        value = None
+    text = str(value or "").strip()
+    if text:
+        return text
+    try:
+        for prop in row.Properties_:
+            if str(getattr(prop, "Name", "") or "").casefold() == name.casefold():
+                return str(getattr(prop, "Value", "") or "").strip()
+    except Exception:
+        return ""
+    return ""
 
 
 def _application_from_dict(raw: dict[str, Any]) -> InstalledApplication:

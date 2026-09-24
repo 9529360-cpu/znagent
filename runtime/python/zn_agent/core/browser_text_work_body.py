@@ -15,6 +15,7 @@ from .browser import (
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
+from .browser_semantic_action import execute_fresh_semantic_action
 from .browser_work_body import BrowserSideEffectAwareBody
 from .models import utc_now
 
@@ -213,32 +214,26 @@ class BrowserTextWorkBody(BrowserSideEffectAwareBody):
                     navigation_evidence.data.get("provider") or session.provider
                 )
 
-            observed = browser.observe_target(
-                session.session_id,
-                BrowserTargetQuery(
+            semantic_action = execute_fresh_semantic_action(
+                browser,
+                session_id=session.session_id,
+                permission=permission,
+                query=BrowserTargetQuery(
                     kind=BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
                     value=target_name,
                 ),
+                kind=BrowserActionKind.TYPE_TEXT,
                 page_id=current_page_id,
+                args={"text": text},
+                expected_url_before=current_url,
+                max_regrounds=1,
             )
+            observed = semantic_action.observation
             if observed.target is None or observed.target.role != "textbox":
                 raise ValueError(
                     "browser_type_named_text requires a visible writable textbox target"
                 )
-
-            mutation = BrowserAction.create(
-                session_id=session.session_id,
-                kind=BrowserActionKind.TYPE_TEXT,
-                page_id=observed.page_id,
-                target=observed.target,
-                args={"text": text},
-            )
-            mutation_authority = BrowserActionAuthority.from_observation(
-                mutation,
-                observed,
-                permission,
-            )
-            mutation_evidence = browser.act(mutation, mutation_authority)
+            mutation_evidence = semantic_action.effect
             text = ""
             if not mutation_evidence.success:
                 browser.close_session(session.session_id)
@@ -252,6 +247,7 @@ class BrowserTextWorkBody(BrowserSideEffectAwareBody):
                         "target_id": observed.target.target_id,
                         "target_role": observed.target.role,
                         "target_name": observed.target.name,
+                        "semantic_regrounds": semantic_action.regrounds,
                         "browser_evidence": asdict(mutation_evidence),
                         "closed": True,
                     },
@@ -305,6 +301,7 @@ class BrowserTextWorkBody(BrowserSideEffectAwareBody):
                     "authorization_attached_at": str(
                         evidence_data.get("authorization_attached_at") or ""
                     ),
+                    "semantic_regrounds": semantic_action.regrounds,
                     "browser_evidence": asdict(mutation_evidence),
                     "closed": True,
                 },

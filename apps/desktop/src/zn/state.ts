@@ -14,7 +14,7 @@ export type ZnWorkspace = {
   attachedAt?: number
 }
 
-export type ZnArtifactKind = 'file' | 'diff' | 'terminal' | 'other'
+export type ZnArtifactKind = 'file' | 'diff' | 'terminal' | 'presentation' | 'document' | 'other'
 
 export type ZnArtifact = {
   id: string
@@ -80,6 +80,11 @@ export type ZnRestoreApplication = {
   completedAt?: number
 }
 
+export type ZnActiveWorkRun = {
+  threadId: string
+  eventId: string
+}
+
 export type ZnThread = {
   id: string
   title: string
@@ -89,6 +94,7 @@ export type ZnThread = {
   artifacts: ZnArtifact[]
   workspace?: ZnWorkspace
   restorePoints?: ZnRestorePoint[]
+  activeRun?: ZnActiveWorkRun
 }
 
 const STORAGE_KEY = 'zn.desktop.thread-cache.v1'
@@ -155,6 +161,8 @@ function isThread(value: unknown): value is ZnThread {
 function withoutTransientRestorePoints(thread: ZnThread): ZnThread {
   const cached = { ...thread }
   delete cached.restorePoints
+  // Active event identity is discovered from the Resident, never localStorage.
+  delete cached.activeRun
   return cached
 }
 

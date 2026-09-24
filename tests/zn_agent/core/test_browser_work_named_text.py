@@ -29,7 +29,7 @@ _TYPED_DIGEST = hashlib.sha256(_TYPED_TEXT.encode("utf-8")).hexdigest()
 
 
 class _FakeNamedTextBrowser:
-    def __init__(self) -> None:
+    def __init__(self, *, stale_once: bool = False) -> None:
         self.identity = BrowserSessionIdentity.create(
             plane=BrowserPlane.MANAGED,
             provider="fake-named-text-browser",
@@ -43,6 +43,8 @@ class _FakeNamedTextBrowser:
         self.queries = []
         self.close_calls = 0
         self.typed_text = ""
+        self.stale_once = stale_once
+        self.semantic_attempts = 0
 
     def open_session(self, *, permission=None, headless=True):
         self.permission = permission
@@ -71,7 +73,7 @@ class _FakeNamedTextBrowser:
             session_id=self.identity.session_id,
             page_id=page_id or self.page_id,
             kind=BrowserTargetKind.ACCESSIBILITY_NODE,
-            target_id="a11y-search",
+            target_id=f"a11y-search-{len(self.queries)}",
             observed_at=observed_at,
             url=self.url,
             frame_id="main",
@@ -111,6 +113,25 @@ class _FakeNamedTextBrowser:
             )
         if action.kind is not BrowserActionKind.TYPE_TEXT:
             raise AssertionError(action.kind)
+        self.semantic_attempts += 1
+        if self.stale_once and self.semantic_attempts == 1:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=utc_now(),
+                success=False,
+                page_id=action.page_id,
+                url_before=before,
+                url_after=self.url,
+                target_id=action.target.target_id if action.target else "",
+                data={
+                    "provider": "fake-named-text-browser",
+                    "dispatch_state": "not_started",
+                    "requires_fresh_resense": True,
+                    "input_sent": False,
+                },
+                error="browser target changed before dispatch",
+            )
         text = str(action.args["text"])
         self.typed_text = text
         digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
@@ -218,6 +239,39 @@ class BrowserWorkNamedTextTests(unittest.TestCase):
                 self.assertEqual(browser.close_calls, 1)
                 self.assertNotIn(_TYPED_TEXT, result.response)
                 self.assertTrue(any(message.role == "zn" for message in messages))
+            finally:
+                resident.store.close()
+
+    def test_named_text_regrounds_same_semantic_target_once_before_input(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            browser = _FakeNamedTextBrowser(stale_once=True)
+            resident.managed_browser = browser
+            try:
+                result = resident.body.act(
+                    "browser_type_named_text",
+                    event_id="evt-browser-text-reground",
+                    url="https://example.com/form",
+                    target_name="Search",
+                    text=_TYPED_TEXT,
+                )
+
+                self.assertTrue(result.success, result.error)
+                self.assertEqual(result.data["semantic_regrounds"], 1)
+                self.assertEqual(browser.typed_text, _TYPED_TEXT)
+                self.assertEqual(len(browser.queries), 2)
+                self.assertEqual(browser.semantic_attempts, 2)
+                self.assertEqual(
+                    browser.actions,
+                    [
+                        BrowserActionKind.NAVIGATE,
+                        BrowserActionKind.TYPE_TEXT,
+                        BrowserActionKind.TYPE_TEXT,
+                    ],
+                )
             finally:
                 resident.store.close()
 

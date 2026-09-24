@@ -120,9 +120,22 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
         )
 
     def _resolve_cognitive_resource_health(self, route: ModelRoute) -> dict[str, Any] | None:
-        """Return only the durable observation for Router-owned eligibility."""
+        """Return resident-owned health/runtime evidence for Router eligibility."""
 
-        return self.health.get(self._cognitive_resource_health_organ(route))
+        durable = self.health.get(self._cognitive_resource_health_organ(route))
+        discovery = getattr(self, "local_inference", None)
+        route_health = getattr(discovery, "route_health", None)
+        dynamic = None
+        if callable(route_health):
+            try:
+                dynamic = route_health(route)
+            except Exception:
+                dynamic = None
+        if not isinstance(dynamic, dict):
+            return durable
+        if not isinstance(durable, dict):
+            return dict(dynamic)
+        return {**durable, **dynamic}
 
     @staticmethod
     def _cognitive_resource_health_organ(route: ModelRoute) -> str:

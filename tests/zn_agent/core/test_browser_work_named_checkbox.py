@@ -21,7 +21,7 @@ from zn_agent.core.work import ResidentWorkLedger
 
 
 class _FakeNamedCheckboxBrowser:
-    def __init__(self) -> None:
+    def __init__(self, *, stale_once: bool = False) -> None:
         self.identity = BrowserSessionIdentity.create(
             plane=BrowserPlane.MANAGED,
             provider="fake-named-checkbox-browser",
@@ -35,6 +35,8 @@ class _FakeNamedCheckboxBrowser:
         self.queries = []
         self.actions = []
         self.close_calls = 0
+        self.stale_once = stale_once
+        self.semantic_attempts = 0
 
     def open_session(self, *, permission=None, headless=True):
         self.permission = permission
@@ -64,7 +66,7 @@ class _FakeNamedCheckboxBrowser:
             session_id=self.identity.session_id,
             page_id=page_id or self.page_id,
             kind=BrowserTargetKind.ACCESSIBILITY_NODE,
-            target_id="a11y-email-updates",
+            target_id=f"a11y-email-updates-{len(self.queries)}",
             observed_at=observed_at,
             url=self.url,
             frame_id="main",
@@ -104,6 +106,24 @@ class _FakeNamedCheckboxBrowser:
             )
         if action.kind not in {BrowserActionKind.CHECK, BrowserActionKind.UNCHECK}:
             raise AssertionError(action.kind)
+        self.semantic_attempts += 1
+        if self.stale_once and self.semantic_attempts == 1:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=utc_now(),
+                success=False,
+                page_id=action.page_id,
+                url_before=before_url,
+                url_after=self.url,
+                target_id=action.target.target_id if action.target else "",
+                data={
+                    "provider": "fake-named-checkbox-browser",
+                    "dispatch_state": "not_started",
+                    "requires_fresh_resense": True,
+                },
+                error="browser target changed before dispatch",
+            )
         before_checked = self.checked
         self.checked = action.kind is BrowserActionKind.CHECK
         return BrowserEffectEvidence(
@@ -229,6 +249,39 @@ class BrowserWorkNamedCheckboxTests(unittest.TestCase):
                         and message.text == 'checkbox "Email updates" is checked'
                         for message in messages
                     )
+                )
+            finally:
+                resident.store.close()
+
+    def test_named_checkbox_regrounds_same_semantic_target_once_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            browser = _FakeNamedCheckboxBrowser(stale_once=True)
+            resident.managed_browser = browser
+            try:
+                result = resident.body.act(
+                    "browser_set_named_checkbox",
+                    event_id="evt-named-checkbox-reground",
+                    url="https://example.com/settings",
+                    target_name="Email updates",
+                    checked=True,
+                )
+
+                self.assertTrue(result.success, result.error)
+                self.assertEqual(result.data["semantic_regrounds"], 1)
+                self.assertTrue(browser.checked)
+                self.assertEqual(len(browser.queries), 2)
+                self.assertEqual(browser.semantic_attempts, 2)
+                self.assertEqual(
+                    browser.actions,
+                    [
+                        BrowserActionKind.NAVIGATE,
+                        BrowserActionKind.CHECK,
+                        BrowserActionKind.CHECK,
+                    ],
                 )
             finally:
                 resident.store.close()

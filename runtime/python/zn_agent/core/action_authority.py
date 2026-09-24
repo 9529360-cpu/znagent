@@ -82,10 +82,14 @@ class WorkerActionAuthorityEnforcer:
         authorities = set(context.authority_scope)
 
         if normalized in cls._WRITE_KINDS:
-            if context.executor_kind != "coding" or context.expected_action != "write_file":
-                raise WorkerActionAuthorityError("worker is not authorized for workspace mutation")
+            if context.expected_action != "write_file":
+                raise WorkerActionAuthorityError(
+                    "workspace mutation is outside the admitted action contract"
+                )
             if "workspace.write" not in tools or "workspace_write" not in authorities:
-                raise WorkerActionAuthorityError("workspace write capability is outside WorkerRun scope")
+                raise WorkerActionAuthorityError(
+                    "workspace write capability is outside WorkerRun scope"
+                )
             cls._require_workspace_target(args.get("path"), context)
             return
 
@@ -96,15 +100,19 @@ class WorkerActionAuthorityEnforcer:
             if ActionAuthorityContext.command_digest(command) != context.allowed_command_sha256:
                 raise WorkerActionAuthorityError("worker command differs from the admitted action")
             if context.expected_action != "run_python":
-                raise WorkerActionAuthorityError("worker command is outside the expected action contract")
-            if context.executor_kind == "coding":
-                if "terminal.python" not in tools or "terminal_execute" not in authorities:
-                    raise WorkerActionAuthorityError("coding terminal authority is outside WorkerRun scope")
-            elif context.executor_kind == "review":
-                if "terminal.test" not in tools or "terminal_verify" not in authorities:
-                    raise WorkerActionAuthorityError("review terminal authority is outside WorkerRun scope")
-            else:
-                raise WorkerActionAuthorityError("research WorkerRun cannot execute Terminal actions")
+                raise WorkerActionAuthorityError(
+                    "worker command is outside the admitted action contract"
+                )
+            can_execute = (
+                "terminal.python" in tools and "terminal_execute" in authorities
+            )
+            can_verify = (
+                "terminal.test" in tools and "terminal_verify" in authorities
+            )
+            if not (can_execute or can_verify):
+                raise WorkerActionAuthorityError(
+                    "terminal capability is outside WorkerRun scope"
+                )
             workdir = args.get("workdir")
             if workdir is not None:
                 cls._require_workspace_target(workdir, context, allow_root=True)

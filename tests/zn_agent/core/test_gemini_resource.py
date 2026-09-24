@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import unittest
 
 from zn_agent.core.cognitive_factory import (
@@ -108,6 +109,88 @@ class GeminiResourceTests(unittest.TestCase):
         self.assertEqual(increment.metadata["thought_signatures"], ["sig"])
         self.assertEqual(increment.usage["reasoning_tokens"], 4)
         self.assertEqual(increment.usage["cached_tokens"], 3)
+
+    def test_native_image_call_uses_inline_media_and_structured_output(self):
+        response_text = '{"action":"WAIT","x_fraction":null,"y_fraction":null}'
+        client = _Client(
+            [
+                _Response(
+                    {
+                        "candidates": [
+                            {
+                                "content": {"parts": [{"text": response_text}]},
+                                "finishReason": "STOP",
+                            }
+                        ],
+                        "usageMetadata": {"promptTokenCount": 5, "candidatesTokenCount": 4},
+                    }
+                )
+            ]
+        )
+        resource = GeminiCognitiveResource(
+            route(metadata={"api_key": "k", "max_tokens": 64}),
+            client=client,
+        )
+        image = b"\x89PNG\r\nvisual-test"
+        schema = {
+            "type": "object",
+            "properties": {"action": {"type": "string"}},
+            "required": ["action"],
+        }
+
+        increment = resource.invoke_image(
+            question="classify one stage",
+            context="bounded visual context",
+            image_bytes=image,
+            mime_type="image/png",
+            response_schema=schema,
+        )
+
+        _url, call = client.calls[0]
+        parts = call["json"]["contents"][0]["parts"]
+        self.assertEqual(parts[0]["inlineData"]["mimeType"], "image/png")
+        self.assertEqual(
+            parts[0]["inlineData"]["data"],
+            base64.b64encode(image).decode("ascii"),
+        )
+        self.assertEqual(parts[1], {"text": "classify one stage"})
+        generation = call["json"]["generationConfig"]
+        self.assertEqual(generation["responseMimeType"], "application/json")
+        self.assertEqual(generation["responseJsonSchema"], schema)
+        self.assertEqual(increment.text, response_text)
+        self.assertEqual(increment.metadata["input_media_bytes"], len(image))
+        self.assertEqual(increment.metadata["input_media_mime_type"], "image/png")
+        self.assertTrue(increment.metadata["structured_output"])
+        self.assertNotIn(parts[0]["inlineData"]["data"], repr(increment.metadata))
+
+    def test_native_image_call_rejects_unbounded_or_unsupported_media_before_request(self):
+        resource = GeminiCognitiveResource(
+            route(metadata={"api_key": "k"}),
+            client=_Client([]),
+        )
+
+        with self.assertRaisesRegex(ValueError, "must not be empty"):
+            resource.invoke_image(
+                question="q",
+                context="",
+                image_bytes=b"",
+                mime_type="image/png",
+            )
+        with self.assertRaisesRegex(ValueError, "mime_type"):
+            resource.invoke_image(
+                question="q",
+                context="",
+                image_bytes=b"x",
+                mime_type="application/octet-stream",
+            )
+        with self.assertRaisesRegex(ValueError, "response_schema"):
+            resource.invoke_image(
+                question="q",
+                context="",
+                image_bytes=b"x",
+                mime_type="image/png",
+                response_schema={},
+            )
 
     def test_factory_dispatches_gemini_without_openai_compat_or_old_agent(self):
         client = _Client(

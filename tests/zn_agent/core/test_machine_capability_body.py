@@ -10,12 +10,14 @@ from zn_agent.core.machine_capability_body import (
     _activate_exact_application_window,
 )
 from zn_agent.core.store import KernelStore
+from zn_agent.core.windows_screen_capture import ScreenCaptureArtifact
 
 
 class _RecordingBody(MachineCapabilityBody):
     def __init__(self, *args, **kwargs):
         self.dispatched: list[str] = []
         self.activations: list[tuple[int, int]] = []
+        self.captures: list[str] = []
         self.activation_result = {
             "success": True,
             "dispatch_sent": True,
@@ -34,6 +36,16 @@ class _RecordingBody(MachineCapabilityBody):
     def _native_activate_exact_application_window(self, hwnd, expected_pid):
         self.activations.append((int(hwnd), int(expected_pid)))
         return dict(self.activation_result)
+
+    def _native_capture_primary_screen(self, event_id):
+        self.captures.append(str(event_id))
+        return ScreenCaptureArtifact(
+            local_path=r"C:\zn-test\screen.png",
+            width=320,
+            height=200,
+            size_bytes=1234,
+            sha256="a" * 64,
+        )
 
 
 class _SequencedProvider:
@@ -119,6 +131,78 @@ class MachineCapabilityBodyTests(unittest.TestCase):
             "class_name": "Notepad", "visible": visible, "foreground": foreground,
         }
 
+    def test_application_resolution_returns_only_safe_local_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store, body, app, _ = self._fixture(tmp)
+            try:
+                result = body.act(
+                    "resolve_application",
+                    event_id="evt-resolve",
+                    query="Notepad",
+                )
+                self.assertTrue(result.success)
+                self.assertEqual(result.data["status"], "resolved")
+                self.assertEqual(
+                    result.data["application"]["application_id"],
+                    app.app_id,
+                )
+                self.assertTrue(result.data["application"]["launchable"])
+                self.assertNotIn("executable_path", result.data["application"])
+                self.assertNotIn("launch_target", result.data["application"])
+                self.assertEqual(result.data["candidates"], [])
+            finally:
+                store.close()
+
+    def test_application_resolution_preserves_ambiguity_without_guessing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            first = root / "notepad-a.exe"
+            second = root / "notepad-b.exe"
+            first.write_bytes(b"")
+            second.write_bytes(b"")
+            graph = DeviceCapabilityGraph(
+                inventory_provider=lambda: [
+                    ApplicationInventoryCandidate(
+                        source="app_paths",
+                        source_id="notepad-a",
+                        display_name="Notepad",
+                        executable_path=str(first),
+                        identity_paths=(str(first),),
+                        launch_kind="executable",
+                        launch_target=str(first),
+                    ),
+                    ApplicationInventoryCandidate(
+                        source="app_paths",
+                        source_id="notepad-b",
+                        display_name="Notepad",
+                        executable_path=str(second),
+                        identity_paths=(str(second),),
+                        launch_kind="executable",
+                        launch_target=str(second),
+                    ),
+                ],
+                process_provider=lambda: [],
+                window_provider=lambda: [],
+                cache_path=root / "apps.json",
+                inventory_ttl_seconds=0,
+            )
+            store = KernelStore(root / "kernel.db")
+            body = _RecordingBody(store=store, device_capabilities=graph)
+            try:
+                result = body.act(
+                    "resolve_application",
+                    event_id="evt-ambiguous-resolve",
+                    query="Notepad",
+                )
+                self.assertTrue(result.success)
+                self.assertEqual(result.data["status"], "ambiguous")
+                self.assertIsNone(result.data["application"])
+                self.assertEqual(result.data["candidate_count"], 2)
+                self.assertEqual(len(result.data["candidates"]), 2)
+                self.assertEqual(body.dispatched, [])
+            finally:
+                store.close()
+
     def test_raw_launch_material_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             store, body, app, executable = self._fixture(tmp)
@@ -190,6 +274,49 @@ class MachineCapabilityBodyTests(unittest.TestCase):
                 self.assertFalse(result.success)
                 self.assertEqual(result.data["disposition"], "not_installed")
                 self.assertEqual(body.dispatched, [])
+            finally:
+                store.close()
+
+    def test_screen_capture_uses_zn_owned_path_and_existing_replay_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store, body, _app, _executable = self._fixture(tmp)
+            try:
+                first = body.act(
+                    "windows_screen_capture",
+                    event_id="evt-screen",
+                )
+                self.assertTrue(first.success)
+                self.assertEqual(first.data["width"], 320)
+                self.assertEqual(first.data["height"], 200)
+                self.assertEqual(first.data["sha256"], "a" * 64)
+                self.assertEqual(body.captures, ["evt-screen"])
+
+                second = body.act(
+                    "windows_screen_capture",
+                    event_id="evt-screen",
+                )
+                self.assertFalse(second.success)
+                self.assertTrue(second.data["replay_blocked"])
+                self.assertEqual(body.captures, ["evt-screen"])
+            finally:
+                store.close()
+
+    def test_screen_capture_rejects_caller_path_and_requires_event_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store, body, _app, _executable = self._fixture(tmp)
+            try:
+                raw_path = body.act(
+                    "windows_screen_capture",
+                    event_id="evt-path",
+                    path=r"C:\Users\Public\shot.png",
+                )
+                self.assertFalse(raw_path.success)
+                self.assertIn("path", raw_path.data["rejected_arguments"])
+
+                missing_event = body.act("windows_screen_capture")
+                self.assertFalse(missing_event.success)
+                self.assertIn("stable event_id", missing_event.error or "")
+                self.assertEqual(body.captures, [])
             finally:
                 store.close()
 

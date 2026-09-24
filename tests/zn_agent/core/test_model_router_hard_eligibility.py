@@ -171,6 +171,32 @@ class ModelRouterHardEligibilityTests(unittest.TestCase):
         selected = self._router(unavailable, unhealthy, healthy).select(self._goal("general"))
         self.assertEqual(selected.route_id, "healthy")
 
+    def test_dynamic_runtime_unavailability_is_a_hard_filter(self) -> None:
+        local = self._route(
+            "local-runtime-down",
+            provider="ollama",
+            reliability=1.0,
+            metadata={"local": True},
+        )
+        fallback = self._route(
+            "cloud-fallback",
+            provider="cloud-a",
+            reliability=0.1,
+        )
+        router = ModelRouter(
+            [local, fallback],
+            _SelfModel(),
+            health_resolver=lambda route: (
+                {"available": False, "runtime_observed": True}
+                if route.route_id == "local-runtime-down"
+                else None
+            ),
+        )
+
+        selected = router.select(self._goal("general"))
+
+        self.assertEqual(selected.route_id, "cloud-fallback")
+
     def test_zero_model_sentinel_preserves_local_resident_no_model_semantics(self) -> None:
         sentinel = ModelRoute(
             route_id="system2-unavailable",

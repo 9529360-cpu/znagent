@@ -49,6 +49,15 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
     _SEMANTIC_LOOKUP_STATE_KEY = "resident_user_browser_semantic_lookup"
     _USER_PRESENCE_BLOCKER_STATE_KEY = "resident_user_browser_user_presence_blocker"
     _MAX_SEMANTIC_REGROUNDS = 3
+    _USER_BROWSER_TASK_CONTEXT_KEY = "resident_user_browser_task_context"
+    _USER_BROWSER_TASK_CONTEXT_EVENT_KEY = "_resident_user_browser_task_context"
+    _USER_BROWSER_CONTEXT_ACTIONS = frozenset(
+        {
+            "browser_type_named_text",
+            "browser_click_named_button_to_url",
+            "browser_fill_named_text_and_click_named_button_to_url",
+        }
+    )
 
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
@@ -143,6 +152,109 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
         self._restore_browser_after_extension()
         return result
 
+    def _begin_native_action_cycle(self, event, state, intent):
+        context = state.data.get(self._USER_BROWSER_TASK_CONTEXT_KEY)
+        if (
+            isinstance(context, dict)
+            and str(intent.kind or "").strip().lower() in self._USER_BROWSER_CONTEXT_ACTIONS
+        ):
+            args = dict(intent.args or {})
+            args["authorized_tab_id"] = int(context["tab_id"])
+            args["authorization_attached_at"] = str(context["attached_at"])
+            intent = NativeActionIntent(
+                intent_id=intent.intent_id,
+                event_id=intent.event_id,
+                kind=intent.kind,
+                args=args,
+                expected_outcome=(
+                    dict(intent.expected_outcome)
+                    if isinstance(intent.expected_outcome, dict)
+                    else intent.expected_outcome
+                ),
+                reason=intent.reason,
+                source=intent.source,
+                created_at=intent.created_at,
+            )
+        return super()._begin_native_action_cycle(event, state, intent)
+
+    def _ensure_user_browser_task_context(self, event, state) -> dict[str, Any]:
+        raw = state.data.get(self._USER_BROWSER_TASK_CONTEXT_KEY)
+        if not isinstance(raw, dict):
+            raw = (event.payload or {}).get(self._USER_BROWSER_TASK_CONTEXT_EVENT_KEY)
+        current = self.user_browser_extension.authorized_tab()
+        if current is None:
+            raise UserBrowserExtensionRelayError(
+                "the browser tab explicitly authorized for this Work is no longer available"
+            )
+
+        if isinstance(raw, dict):
+            try:
+                expected_tab_id = int(raw.get("tab_id"))
+            except (TypeError, ValueError) as exc:
+                raise UserBrowserExtensionRelayError(
+                    "stored browser task context has invalid tab identity"
+                ) from exc
+            expected_attached_at = str(raw.get("attached_at") or "").strip()
+            expected_origin = str(raw.get("origin") or "").strip()
+            if (
+                expected_tab_id != current.tab_id
+                or not expected_attached_at
+                or expected_attached_at != current.attached_at
+            ):
+                raise UserBrowserExtensionRelayError(
+                    "current browser authorization is not the authorization that owns this Work"
+                )
+            fresh = self.probe_user_browser_extension_tab()
+            after = self.user_browser_extension.authorized_tab()
+            if (
+                after is None
+                or after.tab_id != expected_tab_id
+                or after.attached_at != expected_attached_at
+                or int(fresh.get("tab_id") or 0) != expected_tab_id
+            ):
+                raise UserBrowserExtensionRelayError(
+                    "browser task authorization changed while fresh context evidence was being observed"
+                )
+            fresh_origin = self._origin_url(str(fresh.get("url") or ""))
+            if expected_origin and fresh_origin != expected_origin:
+                raise UserBrowserExtensionRelayError(
+                    "authorized browser task context left its original origin"
+                )
+            context = {
+                "tab_id": expected_tab_id,
+                "attached_at": expected_attached_at,
+                "origin": expected_origin or fresh_origin,
+                "initial_url": str(raw.get("initial_url") or fresh.get("url") or ""),
+            }
+        else:
+            before_tab_id = current.tab_id
+            before_attached_at = current.attached_at
+            fresh = self.probe_user_browser_extension_tab()
+            after = self.user_browser_extension.authorized_tab()
+            if (
+                after is None
+                or after.tab_id != before_tab_id
+                or after.attached_at != before_attached_at
+                or int(fresh.get("tab_id") or 0) != before_tab_id
+            ):
+                raise UserBrowserExtensionRelayError(
+                    "browser authorization changed while the Work was binding its task context"
+                )
+            context = {
+                "tab_id": before_tab_id,
+                "attached_at": before_attached_at,
+                "origin": self._origin_url(str(fresh.get("url") or "")),
+                "initial_url": str(fresh.get("url") or ""),
+            }
+
+        state.data[self._USER_BROWSER_TASK_CONTEXT_KEY] = dict(context)
+        event.payload = dict(event.payload or {})
+        event.payload[self._USER_BROWSER_TASK_CONTEXT_EVENT_KEY] = dict(context)
+        self.store._save_event(event)
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return context
+
     @classmethod
     def _natural_current_page_search(cls, event) -> str | None:
         payload = event.payload or {}
@@ -217,6 +329,14 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
                     "through the ZN browser bridge"
                 ),
             )
+        try:
+            self._ensure_user_browser_task_context(event, state)
+        except Exception as exc:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=f"current-page search lost browser Work authority: {type(exc).__name__}: {exc}",
+            )
         self._adopt_authorized_extension_browser()
         try:
             evidence = self._discover_unique_search_form(query)
@@ -260,6 +380,17 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
         readiness,
         thought=None,
     ):
+        try:
+            self._ensure_user_browser_task_context(event, state)
+        except Exception as exc:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=(
+                    "authorized browser Work lost its exact tab authorization before fresh Sense: "
+                    f"{type(exc).__name__}: {exc}"
+                ),
+            )
         blocker = state.data.get(self._USER_PRESENCE_BLOCKER_STATE_KEY)
         if isinstance(blocker, dict):
             return self._user_presence_wait_step(event, state, blocker)
@@ -723,6 +854,14 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
                     state,
                     reason="the explicitly authorized current browser tab is no longer available",
                 )
+            try:
+                self._ensure_user_browser_task_context(event, state)
+            except Exception as exc:
+                return self._fail_composite_goal_investigation(
+                    event,
+                    state,
+                    reason=f"current-page search lost browser Work authority: {type(exc).__name__}: {exc}",
+                )
             self._adopt_authorized_extension_browser()
             evidence = state.data.get(self._NATURAL_SEARCH_STATE_KEY)
             if not isinstance(evidence, dict):
@@ -798,6 +937,14 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
                     "the explicitly authorized browser tab was revoked or closed before the next "
                     "semantic movement; ZN will not transfer authority to another tab"
                 ),
+            )
+        try:
+            self._ensure_user_browser_task_context(event, state)
+        except Exception as exc:
+            return self._fail_composite_goal_investigation(
+                event,
+                state,
+                reason=f"semantic browser Work lost exact authorization: {type(exc).__name__}: {exc}",
             )
         self._adopt_authorized_extension_browser()
         raw = state.data.get(self._SEMANTIC_LOOKUP_STATE_KEY)
@@ -1382,6 +1529,19 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
         if parsed.scheme.lower() not in {"http", "https"} or not parsed.hostname:
             raise UserBrowserExtensionRelayError(f"{label} is not an HTTP(S) URL")
         return url
+
+    @staticmethod
+    def _origin_url(value: str) -> str:
+        parsed = urlsplit(str(value or "").strip())
+        host = parsed.hostname or ""
+        scheme = parsed.scheme.lower()
+        if not host or scheme not in {"http", "https"}:
+            raise UserBrowserExtensionRelayError("browser Work URL must be HTTP(S)")
+        if ":" in host and not host.startswith("["):
+            host = f"[{host}]"
+        default = 80 if scheme == "http" else 443
+        netloc = host if parsed.port in {None, default} else f"{host}:{parsed.port}"
+        return f"{scheme}://{netloc}"
 
     @staticmethod
     def _origin(value: str) -> tuple[str, str, int | None]:

@@ -1,4 +1,6 @@
-import { app, ipcMain } from 'electron'
+import { app } from 'electron'
+
+import { handleZnDesktopIpc } from './zn-ipc-trust'
 
 import { ensureZnResidentAutostart } from './zn-resident-autostart'
 import { ZnResidentProcess, defaultZnResidentLaunch } from './zn-resident-process'
@@ -139,19 +141,19 @@ export function registerZnResidentIpc(): void {
   if (registered) return
   registered = true
 
-  ipcMain.handle('zn:resident:start', async () => {
+  handleZnDesktopIpc('zn:resident:start', async () => {
     const residentProcess = getZnResidentProcess()
     return withDesktopRuntime(await residentProcess.start(), residentProcess)
   })
-  ipcMain.handle('zn:resident:status', async () => {
+  handleZnDesktopIpc('zn:resident:status', async () => {
     const residentProcess = getZnResidentProcess()
     return withDesktopRuntime(await residentProcess.request('status'), residentProcess)
   })
-  ipcMain.handle('zn:resident:self', async () => getZnResidentProcess().request('self'))
-  ipcMain.handle('zn:resident:provider-settings', async () => {
+  handleZnDesktopIpc('zn:resident:self', async () => getZnResidentProcess().request('self'))
+  handleZnDesktopIpc('zn:resident:provider-settings', async () => {
     return getZnResidentProcess().request('provider_settings')
   })
-  ipcMain.handle('zn:resident:provider-settings-update', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:provider-settings-update', async (_event, payload) => {
     const provider = String(payload?.provider || '').trim()
     const model = String(payload?.model || '').trim()
     if (!provider) throw new Error('provider is required')
@@ -164,20 +166,20 @@ export function registerZnResidentIpc(): void {
       clear_credential: payload?.clearCredential === true
     })
   })
-  ipcMain.handle('zn:resident:work-list', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:work-list', async (_event, payload) => {
     return getZnResidentProcess().request('work_list', {
       limit: Number(payload?.limit || 24),
       message_limit: Number(payload?.messageLimit || payload?.message_limit || 120)
     })
   })
-  ipcMain.handle('zn:resident:work-create', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:work-create', async (_event, payload) => {
     return getZnResidentProcess().request('work_create', {
       thread_id: String(payload?.threadId || payload?.thread_id || ''),
       title: String(payload?.title || 'New work'),
       metadata: payload?.metadata && typeof payload.metadata === 'object' ? payload.metadata : {}
     })
   })
-  ipcMain.handle('zn:resident:work-get', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:work-get', async (_event, payload) => {
     const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
     if (!threadId) throw new Error('threadId is required')
     return getZnResidentProcess().request('work_get', {
@@ -185,10 +187,10 @@ export function registerZnResidentIpc(): void {
       message_limit: Number(payload?.messageLimit || payload?.message_limit || 120)
     })
   })
-  ipcMain.handle('zn:resident:work-start', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:work-start', async (_event, payload) => {
     return getZnResidentProcess().request('work_start', normalizedWorkPayload(payload))
   })
-  ipcMain.handle('zn:resident:work-progress', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:work-progress', async (_event, payload) => {
     const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
     const eventId = String(payload?.eventId || payload?.event_id || '').trim()
     if (!threadId) throw new Error('threadId is required')
@@ -199,7 +201,7 @@ export function registerZnResidentIpc(): void {
       message_limit: Number(payload?.messageLimit || payload?.message_limit || 120)
     })
   })
-  ipcMain.handle('zn:resident:work-cancel', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:work-cancel', async (_event, payload) => {
     const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
     const eventId = String(payload?.eventId || payload?.event_id || '').trim()
     if (!threadId) throw new Error('threadId is required')
@@ -210,10 +212,10 @@ export function registerZnResidentIpc(): void {
       message_limit: Number(payload?.messageLimit || payload?.message_limit || 120)
     })
   })
-  ipcMain.handle('zn:resident:work-submit', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:work-submit', async (_event, payload) => {
     return getZnResidentProcess().request('work_submit', normalizedWorkPayload(payload))
   })
-  ipcMain.handle('zn:resident:work-restore-prepare', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:work-restore-prepare', async (_event, payload) => {
     const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
     const restorePointId = String(payload?.restorePointId || payload?.restore_point_id || '').trim()
     if (!threadId) throw new Error('threadId is required')
@@ -223,7 +225,7 @@ export function registerZnResidentIpc(): void {
       restore_point_id: restorePointId
     })
   })
-  ipcMain.handle('zn:resident:work-restore-approve', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:work-restore-approve', async (_event, payload) => {
     const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
     const applicationId = String(payload?.applicationId || payload?.application_id || '').trim()
     if (!threadId) throw new Error('threadId is required')
@@ -233,20 +235,20 @@ export function registerZnResidentIpc(): void {
       application_id: applicationId
     })
   })
-  ipcMain.handle('zn:resident:work-restore-application', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:work-restore-application', async (_event, payload) => {
     const applicationId = String(payload?.applicationId || payload?.application_id || '').trim()
     if (!applicationId) throw new Error('applicationId is required')
     return getZnResidentProcess().request('work_restore_application', {
       application_id: applicationId
     })
   })
-  ipcMain.handle('zn:resident:pulses', async (_event, limit) => history('pulses', limit))
-  ipcMain.handle('zn:resident:situations', async (_event, limit) => history('situations', limit))
-  ipcMain.handle('zn:resident:thoughts', async (_event, limit) => history('thoughts', limit))
-  ipcMain.handle('zn:resident:impasses', async (_event, limit) => history('impasses', limit))
-  ipcMain.handle('zn:resident:learning', async (_event, limit) => history('learning', limit))
-  ipcMain.handle('zn:resident:neural', async (_event, limit) => history('neural', limit))
-  ipcMain.handle('zn:resident:perceive', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:pulses', async (_event, limit) => history('pulses', limit))
+  handleZnDesktopIpc('zn:resident:situations', async (_event, limit) => history('situations', limit))
+  handleZnDesktopIpc('zn:resident:thoughts', async (_event, limit) => history('thoughts', limit))
+  handleZnDesktopIpc('zn:resident:impasses', async (_event, limit) => history('impasses', limit))
+  handleZnDesktopIpc('zn:resident:learning', async (_event, limit) => history('learning', limit))
+  handleZnDesktopIpc('zn:resident:neural', async (_event, limit) => history('neural', limit))
+  handleZnDesktopIpc('zn:resident:perceive', async (_event, payload) => {
     const summary = String(payload?.summary || '').trim()
     if (!summary) throw new Error('summary is required')
     return getZnResidentProcess().request('perceive', {
@@ -260,7 +262,7 @@ export function registerZnResidentIpc(): void {
       metadata: payload?.metadata && typeof payload.metadata === 'object' ? payload.metadata : {}
     })
   })
-  ipcMain.handle('zn:resident:world-follow', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:world-follow', async (_event, payload) => {
     const topic = String(payload?.topic || '').trim()
     if (!topic) throw new Error('topic is required')
     return getZnResidentProcess().request('world_follow', {
@@ -270,13 +272,13 @@ export function registerZnResidentIpc(): void {
       source: String(payload?.source || 'self')
     })
   })
-  ipcMain.handle('zn:resident:world-focuses', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:world-focuses', async (_event, payload) => {
     return getZnResidentProcess().request('world_focuses', {
       limit: Number(payload?.limit || 20),
       enabled_only: payload?.enabledOnly !== false
     })
   })
-  ipcMain.handle('zn:resident:world-observe', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:world-observe', async (_event, payload) => {
     const focusId = String(payload?.focusId || payload?.focus_id || '').trim()
     if (!focusId) throw new Error('focusId is required')
     return getZnResidentProcess().request('world_observe', {
@@ -284,7 +286,7 @@ export function registerZnResidentIpc(): void {
       limit: Number(payload?.limit || 5)
     })
   })
-  ipcMain.handle('zn:resident:submit', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:submit', async (_event, payload) => {
     const task = String(payload?.task || '').trim()
     if (!task) throw new Error('task is required')
     return getZnResidentProcess().request('submit', {
@@ -294,7 +296,7 @@ export function registerZnResidentIpc(): void {
       payload: payload?.payload && typeof payload.payload === 'object' ? payload.payload : {}
     })
   })
-  ipcMain.handle('zn:resident:remember', async (_event, payload) => {
+  handleZnDesktopIpc('zn:resident:remember', async (_event, payload) => {
     const key = String(payload?.key || '').trim()
     if (!key) throw new Error('key is required')
     return getZnResidentProcess().request('remember', {
@@ -303,12 +305,12 @@ export function registerZnResidentIpc(): void {
       aliases: Array.isArray(payload?.aliases) ? payload.aliases : []
     })
   })
-  ipcMain.handle('zn:resident:forget', async (_event, key) => {
+  handleZnDesktopIpc('zn:resident:forget', async (_event, key) => {
     const normalized = String(key || '').trim()
     if (!normalized) throw new Error('key is required')
     return getZnResidentProcess().request('forget', { key: normalized })
   })
-  ipcMain.handle('zn:resident:stop', async () => {
+  handleZnDesktopIpc('zn:resident:stop', async () => {
     clearRuntimeHandoffTimer()
     if (!resident) return { stopped: true }
     await resident.stop()

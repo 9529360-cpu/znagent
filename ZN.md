@@ -33,7 +33,7 @@ inspect main + open PRs + CI
 → run focused verification
 → commit / push
 → open PR with base=main
-→ run required CI / applicable real E2E on the PR head
+→ run required CI / applicable real integration on the PR head
 → fix failures on the same work branch until the required gates pass
 → inspect diff / authority / continuity / regression risk
 → merge normally into main
@@ -51,7 +51,7 @@ A coherent engineering slice may merge to `main` only when all applicable gates 
 ```text
 implementation complete for the claimed slice
 → relevant focused tests pass
-→ required PR CI / applicable real E2E pass on the current PR head
+→ required PR CI / applicable real integration pass on the current PR head
 → diff reviewed
 → no unresolved merge blocker
 → no high-risk boundary requiring human approval
@@ -61,7 +61,7 @@ implementation complete for the claimed slice
 
 A normal low-risk merge that satisfies these repository gates does not require an extra chat-only approval sentence. High-risk boundaries still require explicit human approval, including identity, long-term memory, destructive data migration, credentials/permissions, updater/rollback/signing trust, and replacement of the user's currently installed formal version.
 
-The merge gate must be exercised before merge. `main` is not the place where a product branch first discovers whether it passes core CI or a required product E2E. Post-merge CI is a canonical verification pass, not a substitute for PR validation.
+The merge gate must be exercised before merge. `main` is not the place where a product branch first discovers whether it passes core CI or a required product integration contract. Post-merge CI is a canonical verification pass, not a substitute for PR validation.
 
 Normal development must never use force push, Git history rewrite, disabled CI, bypassed failed checks, or false completion claims on `main`.
 
@@ -224,7 +224,7 @@ Its identity, Work, relevant memory and learned experience should support user e
 
 Restarting the Resident or closing an application should not automatically erase task continuity. When enough current evidence exists to safely resume, ZN should continue from the real state instead of blindly replaying old actions or restarting everything from zero.
 
-### 1.7 The product is judged by real tasks and real E2E completion
+### 1.7 The product is judged by real tasks and real-task completion
 
 The meaningful measure of ZN maturity is not how many modules, providers, state machines, tests, installers or CI workflows exist.
 
@@ -232,7 +232,7 @@ The meaningful question is:
 
 > If an ordinary user installs ZN on their computer and simply tells it what they want in normal language, how many real tasks can ZN independently, continuously and reliably complete?
 
-For ZN, an E2E (End-to-End) is not merely a chain of primitives. It begins from a normal user goal and ends only when the user's requested real-world outcome has been independently verified.
+For ZN, an real-task integration is not merely a chain of primitives. It begins from a normal user goal and ends only when the user's requested real-world outcome has been independently verified.
 
 ```text
 normal user request
@@ -264,9 +264,9 @@ Examples of the product-level task space include:
 - safe handling of permissions and sensitive fields;
 - independent verification that the requested result really exists.
 
-The E2E acceptance set must stay broad enough to protect the general-assistant identity. It must not drift into an office-only, browser-only or coding-only benchmark. Over time it should cover information/research, authenticated web work, documents/files, desktop applications, coding/repositories, terminal/system work, cross-surface tasks, long-term continuation, permission/user-presence boundaries, failure/replanning and independent result verification.
+The real-task integration acceptance set must stay broad enough to protect the general-assistant identity. It must not drift into an office-only, browser-only or coding-only benchmark. Over time it should cover information/research, authenticated web work, documents/files, desktop applications, coding/repositories, terminal/system work, cross-surface tasks, long-term continuation, permission/user-presence boundaries, failure/replanning and independent result verification.
 
-The following are explicitly not equivalent to product E2E success:
+The following are explicitly not equivalent to product real-task success:
 
 ```text
 primitive action succeeded
@@ -651,8 +651,8 @@ The browser subsystem should be designed for the eventual real product rather th
 - observable provider/session health and actionable failure reasons;
 - anti-stale target checks and independent post-action evidence;
 - replaceable providers without changing ZN identity or resident semantics;
-- real-browser E2E evidence for supported user-browser integrations;
-- managed-browser E2E evidence for supported autonomous browser integrations.
+- real-browser integration evidence for supported user-browser integrations;
+- managed-browser integration evidence for supported autonomous browser integrations.
 
 A product slice may implement only part of this at one time, but status documents must name the missing product requirements explicitly. Passing a narrow test is evidence for that slice, not evidence that the browser product is complete.
 
@@ -822,7 +822,7 @@ At minimum protect:
 - retired dedicated self-maintenance/reporting control planes must not become active dependencies again;
 - managed-browser lifecycle/evidence contracts once implemented;
 - real user-browser integration and privacy/permission boundaries once implemented;
-- representative product E2Es must start from ordinary user goals and verify the final user outcome, not merely primitive/provider success;
-- the E2E acceptance set must remain cross-domain so ZN does not silently collapse into office-only, browser-only or coding-only behavior.
+- representative product integrations must start from ordinary user goals and verify the final user outcome, not merely primitive/provider success;
+- the real-task integration acceptance set must remain cross-domain so ZN does not silently collapse into office-only, browser-only or coding-only behavior.
 
 Tests retained in the active tree must describe ZN behavior or guard ZN ownership boundaries. Optional Linux/macOS checks remain supplementary unless restored as product targets.

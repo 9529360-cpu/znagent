@@ -11,7 +11,26 @@ const runtimeProject = path.join(repoRoot, 'runtime', 'python')
 const runtimeRoot = path.join(desktopRoot, 'build', 'zn-runtime')
 const pythonInstallDir = path.join(runtimeRoot, 'python')
 const browserInstallDir = path.join(runtimeRoot, 'playwright-browsers')
+const chromeDevtoolsMcpVersion = '1.9.0'
+const chromeDevtoolsMcpRuntimeDir = path.join(runtimeRoot, 'browser-runtimes', 'chrome-devtools-mcp')
+const veteranSourceRoot = path.join(repoRoot, 'vendor', 'veteran-engineer')
+const veteranRuntimeDir = path.join(runtimeRoot, 'veteran-engineer')
 const retiredPackageName = Buffer.from('6865726d65735f636c69', 'hex').toString('utf8')
+function resolveNpmCli() {
+  const candidates = [
+    String(process.env.npm_execpath || '').trim(),
+    path.join(path.dirname(process.execPath), 'node_modules', 'npm', 'bin', 'npm-cli.js')
+  ].filter(Boolean)
+  const found = candidates.find(candidate => {
+    try { return fs.statSync(candidate).isFile() } catch { return false }
+  })
+  if (!found) {
+    throw new Error(
+      'npm-cli.js is unavailable beside the active Node runtime; install a complete Node/npm distribution before staging ZN'
+    )
+  }
+  return found
+}
 
 function run(command, args, options = {}) {
   execFileSync(command, args, {
@@ -94,6 +113,18 @@ function gitHead() {
 fs.rmSync(runtimeRoot, { recursive: true, force: true })
 fs.mkdirSync(pythonInstallDir, { recursive: true })
 
+const veteranServer = path.join(veteranSourceRoot, 'mcp', 'server.mjs')
+const veteranManifest = path.join(veteranSourceRoot, 'VENDOR.json')
+if (!fs.existsSync(veteranServer) || !fs.existsSync(veteranManifest)) {
+  throw new Error(`Vendored Veteran runtime is incomplete under ${veteranSourceRoot}`)
+}
+console.log('[zn-runtime] staging Veteran engineering runtime')
+fs.cpSync(veteranSourceRoot, veteranRuntimeDir, {
+  recursive: true,
+  force: true,
+  verbatimSymlinks: true
+})
+
 console.log('[zn-runtime] installing portable CPython 3.11')
 run('uv', ['python', 'install', '3.11', '--install-dir', pythonInstallDir, '--no-bin'])
 const pythonPath = findPortablePython(pythonInstallDir)
@@ -115,20 +146,60 @@ if (fs.readdirSync(browserInstallDir).length === 0) {
   throw new Error(`Playwright Chromium installation produced an empty browser root: ${browserInstallDir}`)
 }
 
+console.log(`[zn-runtime] installing chrome-devtools-mcp@${chromeDevtoolsMcpVersion}`)
+fs.mkdirSync(chromeDevtoolsMcpRuntimeDir, { recursive: true })
+const npmCli = resolveNpmCli()
+run(process.execPath, [
+  npmCli,
+  'install',
+  '--prefix',
+  chromeDevtoolsMcpRuntimeDir,
+  '--no-save',
+  '--package-lock=false',
+  '--omit=dev',
+  '--ignore-scripts',
+  `chrome-devtools-mcp@${chromeDevtoolsMcpVersion}`
+])
+const chromeDevtoolsMcpPackageRoot = path.join(
+  chromeDevtoolsMcpRuntimeDir,
+  'node_modules',
+  'chrome-devtools-mcp'
+)
+const chromeDevtoolsMcpManifestPath = path.join(chromeDevtoolsMcpPackageRoot, 'package.json')
+const chromeDevtoolsMcpServer = path.join(
+  chromeDevtoolsMcpPackageRoot,
+  'build',
+  'src',
+  'bin',
+  'chrome-devtools-mcp.js'
+)
+if (!fs.existsSync(chromeDevtoolsMcpManifestPath) || !fs.existsSync(chromeDevtoolsMcpServer)) {
+  throw new Error(`Pinned Chrome DevTools MCP runtime is incomplete under ${chromeDevtoolsMcpRuntimeDir}`)
+}
+const chromeDevtoolsMcpManifest = JSON.parse(fs.readFileSync(chromeDevtoolsMcpManifestPath, 'utf8'))
+if (
+  chromeDevtoolsMcpManifest.name !== 'chrome-devtools-mcp'
+  || chromeDevtoolsMcpManifest.version !== chromeDevtoolsMcpVersion
+) {
+  throw new Error(
+    `Chrome DevTools MCP version mismatch: expected ${chromeDevtoolsMcpVersion}, got ${chromeDevtoolsMcpManifest.version || '<missing>'}`
+  )
+}
+
 // Ask the staged interpreter where zn_agent was actually installed instead of
 // assuming a platform-specific site-packages layout. uv's portable Windows
 // CPython's generic site-package discovery can report the runtime root, while
 // the installed package itself lives under Lib/site-packages.
-const backendRoot = capture(pythonPath, [
+const backendRoot = JSON.parse(capture(pythonPath, [
   '-c',
   [
-    'import importlib.util',
+    'import importlib.util, json',
     'from pathlib import Path',
     "spec = importlib.util.find_spec('zn_agent')",
     "assert spec is not None and spec.origin is not None, 'installed zn_agent package not found'",
-    'print(Path(spec.origin).resolve().parent.parent)'
+    'print(json.dumps(str(Path(spec.origin).resolve().parent.parent)))'
   ].join('; ')
-])
+]))
 const residentEntry = path.join(backendRoot, 'zn_agent', 'resident.py')
 const residentCore = path.join(backendRoot, 'zn_agent', 'core', 'browser_resident_server.py')
 if (!fs.existsSync(residentEntry)) throw new Error(`Installed runtime is missing zn_agent/resident.py under ${backendRoot}`)
@@ -177,7 +248,10 @@ const manifest = {
   python_version: pythonVersion,
   python: portableRelative(runtimeRoot, pythonPath),
   backend_root: portableRelative(runtimeRoot, backendRoot),
-  browser_root: portableRelative(runtimeRoot, browserInstallDir)
+  browser_root: portableRelative(runtimeRoot, browserInstallDir),
+  chrome_devtools_mcp_runtime: portableRelative(runtimeRoot, chromeDevtoolsMcpRuntimeDir),
+  chrome_devtools_mcp_version: chromeDevtoolsMcpVersion,
+  veteran_runtime: portableRelative(runtimeRoot, veteranRuntimeDir)
 }
 fs.writeFileSync(path.join(runtimeRoot, 'runtime.json'), `${JSON.stringify(manifest, null, 2)}\n`, 'utf8')
 console.log(`[zn-runtime] staged ${runtimeId} at ${runtimeRoot}`)

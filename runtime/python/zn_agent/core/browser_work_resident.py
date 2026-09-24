@@ -10,7 +10,7 @@ from urllib.parse import urlsplit
 from .action import NativeActionIntent
 from .browser_work_body import BrowserSideEffectAwareBody
 from .recovery_bounded_resident import RecoveryBoundedResidentRuntime
-from .semantic_managed_browser import SemanticPlaywrightManagedBrowser
+from .browser_provider_registry import build_managed_browser_adapter
 
 
 _URL_RE = re.compile(r"https?://[^\s<>{}\[\]\"']+", re.IGNORECASE)
@@ -67,12 +67,16 @@ class BrowserWorkResidentRuntime(RecoveryBoundedResidentRuntime):
     guessing whether the outside-world mutation happened.
     """
 
+    def _new_managed_browser_adapter(self):
+        """Create the capability-routed MANAGED browser owner for this Resident."""
+        return build_managed_browser_adapter()
+
     def __init__(self, *, kernel, capabilities=None, budget=None):
         super().__init__(kernel=kernel, capabilities=capabilities, budget=budget)
         # The inherited managed-browser owner is lazy and has not launched a
-        # provider during construction. Replace only its adapter implementation;
-        # resident ownership and lifecycle remain unchanged.
-        self.managed_browser = SemanticPlaywrightManagedBrowser()
+        # provider during construction. Select the adapter through one overridable
+        # capability seam; session pinning still begins only when a session opens.
+        self.managed_browser = self._new_managed_browser_adapter()
         self.body = BrowserSideEffectAwareBody(resident=self)
 
     @staticmethod

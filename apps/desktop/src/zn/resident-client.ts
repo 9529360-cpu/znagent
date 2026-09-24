@@ -1,3 +1,4 @@
+import { normalizeZnActiveWorkRun } from './work-reconnection'
 import type {
   ZnArtifact,
   ZnArtifactKind,
@@ -78,7 +79,11 @@ export type ZnWorkProgress = {
   terminal: boolean
   finalized: boolean
   updatedAt: number
+  executionPath?: string
+  modelInvocations?: number
   error?: string
+  assistantResponse?: string
+  responseSequence?: number
   recovery?: ZnWorkRecovery
   delegation?: ZnDelegatedProgress
   thought?: {
@@ -181,7 +186,7 @@ function role(value: unknown): ZnThreadRole {
 }
 
 function artifactKind(value: unknown): ZnArtifactKind {
-  return value === 'file' || value === 'diff' || value === 'terminal' ? value : 'other'
+  return value === 'file' || value === 'diff' || value === 'terminal' || value === 'presentation' || value === 'document' ? value : 'other'
 }
 
 function restorePointCurrentStatus(value: unknown): ZnRestorePointCurrentStatus {
@@ -248,6 +253,12 @@ function boundedCount(value: unknown): number {
   const count = Number(value)
   if (!Number.isFinite(count) || count < 0) return 0
   return Math.min(256, Math.floor(count))
+}
+
+function optionalNonNegativeInteger(value: unknown): number | undefined {
+  const count = Number(value)
+  if (!Number.isSafeInteger(count) || count < 0) return undefined
+  return count
 }
 
 export function normalizeDelegatedProgress(value: unknown): ZnDelegatedProgress | undefined {
@@ -352,12 +363,13 @@ function normalizeMessage(value: unknown): ZnThreadMessage | null {
   const text = String(item.text || '')
   if (!id) return null
   const detail = record(item.detail)
+  const hasDetail = detail !== null && Object.keys(detail).length > 0
   return {
     id,
     role: role(item.role),
     text,
     at: timestamp(item.created_at || item.at),
-    ...(detail ? { detail } : {})
+    ...(hasDetail ? { detail: detail as Record<string, unknown> } : {})
   }
 }
 
@@ -450,6 +462,7 @@ function normalizeThread(value: unknown): ZnThread {
     .filter((artifact): artifact is ZnArtifact => Boolean(artifact))
   const metadata = record(item.metadata)
   const workspace = normalizeWorkspace(metadata)
+  const activeRun = normalizeZnActiveWorkRun(item.active_run, id)
   const rawRestorePoints = Array.isArray(metadata?.restore_points)
     ? metadata.restore_points
     : Array.isArray(metadata?.restorePoints)
@@ -468,7 +481,8 @@ function normalizeThread(value: unknown): ZnThread {
     messages,
     artifacts,
     ...(workspace ? { workspace } : {}),
-    ...(restorePoints ? { restorePoints } : {})
+    ...(restorePoints ? { restorePoints } : {}),
+    ...(activeRun ? { activeRun } : {})
   }
 }
 
@@ -534,7 +548,11 @@ function normalizeWorkProgress(value: unknown): ZnWorkProgress {
       }]
     })
   const error = String(item.error || '').trim()
+  const assistantResponse = String(item.assistant_response || item.assistantResponse || '')
+  const responseSequence = optionalNonNegativeInteger(item.response_sequence ?? item.responseSequence)
   const blockedBy = String(item.blocked_by || item.blockedBy || '').trim()
+  const executionPath = String(item.execution_path || item.executionPath || '').trim()
+  const modelInvocations = optionalNonNegativeInteger(item.model_invocations ?? item.modelInvocations)
   return {
     eventId,
     threadId,
@@ -545,7 +563,11 @@ function normalizeWorkProgress(value: unknown): ZnWorkProgress {
     terminal: item.terminal === true,
     finalized: item.finalized === true,
     updatedAt: timestamp(item.updated_at || item.updatedAt),
+    ...(executionPath ? { executionPath } : {}),
+    ...(modelInvocations !== undefined ? { modelInvocations } : {}),
     ...(error ? { error } : {}),
+    ...(assistantResponse ? { assistantResponse } : {}),
+    ...(responseSequence !== undefined ? { responseSequence } : {}),
     ...(recovery ? { recovery } : {}),
     ...(delegation ? { delegation } : {}),
     ...(thought ? { thought } : {}),

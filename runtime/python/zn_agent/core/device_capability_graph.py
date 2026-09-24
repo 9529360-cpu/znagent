@@ -8,12 +8,12 @@ accepted merely because it starts with a shorter installed alias.  Exact aliases
 are resolved before bounded prefix/substring matching; fuzzy candidates can never
 make an otherwise unique exact application ambiguous.
 
-The public graph also owns read-only Windows companion, display and foreground
-senses. This keeps session/power/network/multi-monitor/current-window facts in the
-existing Resident device graph instead of creating a parallel OS agent or context
-store. A companion frame is only privacy-bounded optimistic-precondition evidence
-over internally stabilized fresh reads; it is not a second source of truth or an
-action authority.
+The public graph also owns read-only Windows companion, display, foreground and
+Explorer-selection senses. This keeps session/power/network/multi-monitor/current-
+window/selection facts in the existing Resident device graph instead of creating a
+parallel OS agent or context store. A companion frame is only privacy-bounded
+optimistic-precondition evidence over internally stabilized fresh reads; it is not
+a second source of truth or an action authority.
 """
 
 from dataclasses import dataclass
@@ -26,6 +26,7 @@ from .machine_capability import (
     InstalledApplication,
     _aliases,
     _normalize_name,
+    _preferred_profile_representative,
 )
 from .models import utc_now
 from .windows_companion_context import (
@@ -39,6 +40,10 @@ from .windows_companion_frame import (
 from .windows_display_context import (
     NativeWindowsDisplayContextSense,
     WindowsDisplayObservation,
+)
+from .windows_explorer_selection import (
+    NativeWindowsExplorerSelectionSense,
+    WindowsExplorerSelectionObservation,
 )
 from .windows_foreground_companion import (
     NativeWindowsForegroundCompanionSense,
@@ -64,6 +69,7 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         companion_context_sense: NativeWindowsCompanionContextSense | None = None,
         display_context_sense: NativeWindowsDisplayContextSense | None = None,
         foreground_companion_sense: NativeWindowsForegroundCompanionSense | None = None,
+        explorer_selection_sense: NativeWindowsExplorerSelectionSense | None = None,
         **kwargs: Any,
     ) -> None:
         super().__init__(*args, **kwargs)
@@ -75,6 +81,12 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         )
         self._foreground_companion_sense = (
             foreground_companion_sense or NativeWindowsForegroundCompanionSense()
+        )
+        self._explorer_selection_sense = (
+            explorer_selection_sense
+            or NativeWindowsExplorerSelectionSense(
+                foreground_sense=self._foreground_companion_sense,
+            )
         )
 
     def companion_context(self) -> WindowsCompanionContextSnapshot:
@@ -91,6 +103,11 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         """Fresh current-window identity with raw title/class content redacted."""
 
         return self._foreground_companion_sense.probe()
+
+    def explorer_selection(self) -> WindowsExplorerSelectionObservation:
+        """Fresh read-only exact-foreground File Explorer selection evidence."""
+
+        return self._explorer_selection_sense.probe()
 
     def companion_frame(self) -> WindowsCompanionFrame:
         """Return one bounded, internally stabilized Windows evidence frame."""
@@ -148,6 +165,9 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         if len(exact_candidates) == 1:
             return ApplicationResolution(raw, "resolved", exact_candidates[0])
         if len(exact_candidates) > 1:
+            representative = _preferred_profile_representative(exact_candidates)
+            if representative is not None:
+                return ApplicationResolution(raw, "resolved", representative)
             return ApplicationResolution(raw, "ambiguous", candidates=exact_candidates)
 
         if len(wanted) < 2:
@@ -165,5 +185,8 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         if len(partial_candidates) == 1:
             return ApplicationResolution(raw, "resolved", partial_candidates[0])
         if len(partial_candidates) > 1:
+            representative = _preferred_profile_representative(partial_candidates)
+            if representative is not None:
+                return ApplicationResolution(raw, "resolved", representative)
             return ApplicationResolution(raw, "ambiguous", candidates=partial_candidates)
         return ApplicationResolution(raw, "not_installed")

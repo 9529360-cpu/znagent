@@ -21,7 +21,8 @@ class SideEffectAwareBody(KeyboardTextBody):
     Pointer clicks and focused keyboard text already own richer resident-level
     non-replayable lifecycles. This body deliberately leaves those contracts
     unchanged. It adds a durable pre-dispatch boundary around generic command
-    execution, interactive terminal input, and append-style text writes.
+    execution, interactive terminal input, structured fallback input gestures,
+    and append-style text writes.
 
     A ``started`` attempt is committed before dispatch. If the process dies after
     that commit, the next resident refuses the same event/action signature rather
@@ -41,6 +42,9 @@ class SideEffectAwareBody(KeyboardTextBody):
         {"terminal_input", "terminal_write", "command_input"}
     )
     _TEXT_WRITE_KINDS = frozenset({"write_text", "write_file"})
+    _INPUT_GESTURE_KINDS = frozenset(
+        {"pointer_scroll", "pointer_drag", "keyboard_key", "keyboard_chord"}
+    )
     _IDENTITY_BOUND_READ_KINDS = frozenset({"read_text", "read_file"})
     _APPEND_KINDS = _TEXT_WRITE_KINDS
     _RECOVERY_STATUSES = frozenset({"verified_effect", "verified_absent"})
@@ -207,6 +211,14 @@ class SideEffectAwareBody(KeyboardTextBody):
     ) -> BodyActionResult:
         normalized_kind = str(kind or "").strip().lower()
         normalized_event = str(event_id or "").strip()
+        if normalized_kind in {"keyboard_key", "keyboard_chord"}:
+            try:
+                args = self.normalize_keyboard_action_args(normalized_kind, dict(args))
+            except (TypeError, ValueError):
+                # Deterministic argument rejection is pre-dispatch truth. Do not
+                # create a replay-blocking side-effect attempt for an action that
+                # cannot possibly reach the input boundary.
+                return super().act(kind, event_id=event_id, **args)
         if not normalized_event or not self._requires_guard(normalized_kind, args):
             return super().act(kind, event_id=event_id, **args)
 
@@ -287,12 +299,47 @@ class SideEffectAwareBody(KeyboardTextBody):
             "side_effect_attempt_id": attempt_id,
             "side_effect_dispatch_observed": True,
         }
+        if (
+            (
+                normalized_kind in {"keyboard_key", "keyboard_chord"}
+                and result.data.get("dispatch_sent") is False
+                and result.data.get("side_effect_uncertain") is False
+            )
+            or (
+                result.data.get("side_effect_absence_proven") is True
+                and result.data.get("side_effect_uncertain") is False
+            )
+        ):
+            resolved = self.resolve_uncertain_attempt(
+                attempt_id,
+                event_id=normalized_event,
+                status="verified_absent",
+                evidence_action_id=result.action_id,
+            )
+            if not resolved:
+                return self._uncertain_result(
+                    normalized_kind,
+                    normalized_event,
+                    attempt_id=attempt_id,
+                    signature_hash=signature_hash,
+                    error=(
+                        "guarded side-effect dispatch was proven absent but its durable replay "
+                        "attempt could not be closed safely"
+                    ),
+                )
+            result.data["side_effect_absence_verified"] = True
         return result
 
     @classmethod
     def _requires_guard(cls, kind: str, args: dict[str, Any]) -> bool:
-        if kind in cls._COMMAND_KINDS or kind in cls._TERMINAL_INPUT_KINDS:
+        if (
+            kind in cls._COMMAND_KINDS
+            or kind in cls._TERMINAL_INPUT_KINDS
+            or kind in cls._INPUT_GESTURE_KINDS
+        ):
             return True
+        if kind == "pointer_click":
+            return str(args.get("button") or "left").strip().lower() in {"right", "middle"}
         return kind in cls._APPEND_KINDS and bool(args.get("append", False))
 
     @staticmethod

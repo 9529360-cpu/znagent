@@ -8,7 +8,9 @@ import * as https from 'node:https'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import { app, ipcMain } from 'electron'
+import { app } from 'electron'
+
+import { handleZnDesktopIpc } from './zn-ipc-trust'
 
 import { applyZnReleaseInstallerWithResidentGate } from './zn-release-application-gate'
 import {
@@ -18,6 +20,7 @@ import {
   type ZnReleaseNotes,
   type ZnReleaseTarget
 } from './zn-release-channel'
+import { verifyZnReleaseChannelSignature } from './zn-release-signature'
 
 const execFileAsync = promisify(execFile)
 const USER_AGENT = 'ZN-Desktop-Updater/2'
@@ -170,7 +173,13 @@ async function readJson(url: string): Promise<unknown> {
   const response = await request(url)
   const chunks: Buffer[] = []
   for await (const chunk of response) chunks.push(Buffer.from(chunk))
-  return JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+  const document = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+  verifyZnReleaseChannelSignature(
+    document,
+    String(process.env.ZN_UPDATE_SIGNING_PUBLIC_KEYS || ''),
+    { required: app.isPackaged }
+  )
+  return document
 }
 
 async function resolvePlan(): Promise<UpdatePlan | { status: ZnReleaseUpdateStatus }> {
@@ -529,6 +538,6 @@ export async function applyZnReleaseUpdate(): Promise<ZnReleaseApplyResult> {
 export function registerZnReleaseUpdaterIpc(): void {
   if (registered) return
   registered = true
-  ipcMain.handle('zn:updates:check', () => checkZnReleaseUpdate())
-  ipcMain.handle('zn:updates:apply', () => applyZnReleaseUpdate())
+  handleZnDesktopIpc('zn:updates:check', () => checkZnReleaseUpdate())
+  handleZnDesktopIpc('zn:updates:apply', () => applyZnReleaseUpdate())
 }

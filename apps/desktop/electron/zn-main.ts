@@ -1,23 +1,85 @@
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-import { app, BrowserWindow, dialog, Menu, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, screen, shell, Tray } from 'electron'
 
+import {
+  isZnLocalePreference,
+  resolveZnLocale,
+  translateZnDesktop,
+  type ZnDesktopLocaleState,
+  type ZnLocalePreference,
+  type ZnTranslationKey
+} from '../localization/zn-localization'
+import { handleZnDesktopIpc, trustZnDesktopWebContents } from './zn-ipc-trust'
+import { readZnLocalePreference, writeZnLocalePreference } from './zn-locale-preference'
 import { configureZnPackagedRuntime } from './zn-packaged-runtime'
 import { parseZnDeepLink, type ZnDeepLink, znDeepLinksFromArgv } from './zn-protocol'
 import { registerZnReleaseUpdaterIpc } from './zn-release-updater'
 import { registerZnResidentIpc, startZnResidentOnDesktopReady } from './zn-resident-ipc'
 import { ZnWindowsResidentSurface, znWindowsTrayIconPath } from './zn-windows-resident-surface'
 import { registerZnWorkspaceIpc } from './zn-workspace-ipc'
+import { fitZnWindowToWorkArea } from './zn-window-bounds'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 const preloadPath = path.join(moduleDir, 'electron-preload.js')
 const shellPath = path.join(moduleDir, 'zn-shell.html')
+const ZN_GLOBAL_INVOCATION_SHORTCUT = 'CommandOrControl+Alt+Space'
+const ZN_DESKTOP_PREFERENCES_FILE = 'desktop-preferences.json'
+const ZN_WINDOW_BOUNDS = {
+  compact: { width: 480, height: 620 },
+  expanded: { width: 1120, height: 760 }
+} as const
+
+type ZnWindowMode = keyof typeof ZN_WINDOW_BOUNDS
+
+type ZnWindowTransitionAck = {
+  transitionId: string
+  mode: ZnWindowMode
+}
+
+const ZN_WINDOW_TRANSITION_TIMEOUT_MS = 250
+let nextWindowTransitionId = 0
+const latestWindowTransitionIds = new Map<number, string>()
+const pendingWindowTransitionAcks = new Map<
+  string,
+  {
+    windowId: number
+    mode: ZnWindowMode
+    timer: ReturnType<typeof setTimeout>
+    resolve: () => void
+  }
+>()
 
 let primaryWindow: BrowserWindow | null = null
 let windowsResidentSurface: ZnWindowsResidentSurface | null = null
 let windowsResidentTray: Tray | null = null
+let currentLocaleState: ZnDesktopLocaleState = {
+  preference: 'system',
+  resolvedLocale: 'en-US',
+  preferredSystemLanguages: []
+}
 const pendingDeepLinks: ZnDeepLink[] = []
+
+function isSourceDevelopmentInstance(): boolean {
+  return !app.isPackaged && process.env.ZN_DESKTOP_DEV === '1'
+}
+
+function configureSourceDevelopmentProfile(): void {
+  if (!isSourceDevelopmentInstance()) return
+  const userData = String(process.env.ZN_DESKTOP_USER_DATA || '').trim()
+  if (!userData) {
+    throw new Error('ZN_DESKTOP_USER_DATA is required for an isolated source-development desktop')
+  }
+  const resolved = path.resolve(userData)
+  const sessionData = path.join(resolved, 'session')
+  fs.mkdirSync(resolved, { recursive: true })
+  fs.mkdirSync(sessionData, { recursive: true })
+  app.setPath('userData', resolved)
+  app.setPath('sessionData', sessionData)
+  console.info(`[ZN] source-development profile isolated at ${resolved}`)
+}
 
 function isSafeExternalUrl(value: string): boolean {
   try {
@@ -33,6 +95,63 @@ function openExternal(value: string): void {
   void shell.openExternal(value).catch(error => {
     console.error('[ZN] failed to open external URL', error)
   })
+}
+
+function preferredSystemLanguages(): string[] {
+  try {
+    const languages = app.getPreferredSystemLanguages().filter(Boolean)
+    if (languages.length > 0) return languages
+  } catch {
+    void 0
+  }
+  try {
+    const locale = app.getLocale()
+    if (locale) return [locale]
+  } catch {
+    void 0
+  }
+  return ['en-US']
+}
+
+function desktopPreferencesPath(): string {
+  return path.join(app.getPath('userData'), ZN_DESKTOP_PREFERENCES_FILE)
+}
+
+function buildLocaleState(preference: ZnLocalePreference): ZnDesktopLocaleState {
+  const languages = preferredSystemLanguages()
+  return {
+    preference,
+    resolvedLocale: resolveZnLocale(preference, languages),
+    preferredSystemLanguages: languages
+  }
+}
+
+function refreshLocaleStateFromDisk(): ZnDesktopLocaleState {
+  currentLocaleState = buildLocaleState(readZnLocalePreference(desktopPreferencesPath()))
+  return currentLocaleState
+}
+
+function localizedMainText(key: ZnTranslationKey): string {
+  return translateZnDesktop(currentLocaleState.resolvedLocale, key)
+}
+
+function refreshWindowsTrayMenu(): void {
+  const tray = windowsResidentTray
+  const surface = windowsResidentSurface
+  if (!tray || !surface) return
+  tray.setContextMenu(
+    Menu.buildFromTemplate([
+      {
+        label: localizedMainText('tray.open'),
+        click: () => showPrimaryWindow(true, 'compact')
+      },
+      { type: 'separator' },
+      {
+        label: localizedMainText('tray.quit'),
+        click: () => surface.quit()
+      }
+    ])
+  )
 }
 
 function deliverDeepLink(link: ZnDeepLink): void {
@@ -67,12 +186,20 @@ function routeNavigation(value: string): void {
 export function createZnDesktopWindow(): BrowserWindow {
   const window = new BrowserWindow({
     title: 'ZN',
-    width: 1180,
-    height: 760,
-    minWidth: 760,
-    minHeight: 520,
+    width: ZN_WINDOW_BOUNDS.compact.width,
+    height: ZN_WINDOW_BOUNDS.compact.height,
+    minWidth: 420,
+    minHeight: 480,
     show: false,
-    backgroundColor: '#0f1115',
+    backgroundColor: '#ffffff',
+    backgroundMaterial: 'mica',
+    titleBarStyle: 'hidden',
+    titleBarOverlay: {
+      color: '#ffffff',
+      symbolColor: '#747780',
+      height: 62
+    },
+    roundedCorners: true,
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,
@@ -80,6 +207,10 @@ export function createZnDesktopWindow(): BrowserWindow {
       sandbox: true
     }
   })
+  trustZnDesktopWebContents(window.webContents)
+  window.center()
+  window.setBounds(fitZnWindowToWorkArea(window.getBounds(), screen.getDisplayMatching(window.getBounds()).workArea))
+  window.setMenu(null)
 
   window.once('ready-to-show', () => window.show())
   window.webContents.on('did-finish-load', () => flushDeepLinks(window))
@@ -113,6 +244,117 @@ function ensurePrimaryWindow(): BrowserWindow {
   return primaryWindow
 }
 
+function setZnWindowMode(window: BrowserWindow, mode: ZnWindowMode): void {
+  const bounds = ZN_WINDOW_BOUNDS[mode]
+  if (window.isMaximized()) window.unmaximize()
+  const current = window.getBounds()
+  const workArea = screen.getDisplayMatching(current).workArea
+  window.setBounds(fitZnWindowToWorkArea({ ...current, ...bounds }, workArea), true)
+}
+
+async function prepareZnWindowTransition(
+  window: BrowserWindow,
+  mode: ZnWindowMode,
+  reason: string
+): Promise<string | null> {
+  if (window.isDestroyed() || window.webContents.isLoading()) return null
+  const transitionId = `${window.id}:${++nextWindowTransitionId}`
+  latestWindowTransitionIds.set(window.id, transitionId)
+
+  await new Promise<void>(resolve => {
+    const timer = setTimeout(() => {
+      pendingWindowTransitionAcks.delete(transitionId)
+      resolve()
+    }, ZN_WINDOW_TRANSITION_TIMEOUT_MS)
+
+    pendingWindowTransitionAcks.set(transitionId, {
+      windowId: window.id,
+      mode,
+      timer,
+      resolve: () => {
+        clearTimeout(timer)
+        pendingWindowTransitionAcks.delete(transitionId)
+        resolve()
+      }
+    })
+
+    window.webContents.send('zn:shell:window-mode-transition', {
+      transitionId,
+      phase: 'prepare',
+      mode,
+      reason
+    })
+  })
+
+  return transitionId
+}
+
+async function transitionZnWindowMode(
+  window: BrowserWindow,
+  mode: ZnWindowMode,
+  reason: string
+): Promise<{ mode: ZnWindowMode; width: number; height: number }> {
+  const transitionId = await prepareZnWindowTransition(window, mode, reason)
+  const result = { mode, ...ZN_WINDOW_BOUNDS[mode] }
+  if (transitionId && latestWindowTransitionIds.get(window.id) !== transitionId) return result
+  if (window.isDestroyed()) {
+    if (transitionId) latestWindowTransitionIds.delete(window.id)
+    return result
+  }
+  setZnWindowMode(window, mode)
+  if (transitionId) {
+    latestWindowTransitionIds.delete(window.id)
+    window.webContents.send('zn:shell:window-mode-transition', {
+      transitionId,
+      phase: 'complete',
+      mode,
+      reason,
+      width: result.width,
+      height: result.height
+    })
+  }
+  return result
+}
+
+function focusComposerAfterInvocation(window: BrowserWindow): void {
+  const notify = () => {
+    if (!window.isDestroyed()) window.webContents.send('zn:global-invocation')
+  }
+  if (window.webContents.isLoading()) {
+    window.webContents.once('did-finish-load', notify)
+    return
+  }
+  notify()
+}
+
+function showPrimaryWindow(focusComposer = false, mode?: ZnWindowMode): void {
+  const window = ensurePrimaryWindow()
+  if (windowsResidentSurface) {
+    windowsResidentSurface.show()
+  } else {
+    if (window.isMinimized()) window.restore()
+    window.show()
+    window.focus()
+  }
+  // Windows can ignore size changes while a native window is minimized. Apply
+  // compact/expanded bounds only after the resident surface has restored it.
+  if (mode) {
+    void transitionZnWindowMode(
+      window,
+      mode,
+      focusComposer ? 'resident-invocation' : 'resident-show'
+    )
+      .catch(error => {
+        console.error('[ZN] failed to transition resident window mode', error)
+      })
+      .finally(() => {
+        if (focusComposer) focusComposerAfterInvocation(window)
+      })
+    return
+  }
+  if (focusComposer) focusComposerAfterInvocation(window)
+}
+
 function initializeWindowsResidentSurface(): void {
   if (process.platform !== 'win32' || windowsResidentSurface) return
 
@@ -130,22 +372,10 @@ function initializeWindowsResidentSurface(): void {
       })
     )
     tray.setToolTip('ZN')
-    tray.setContextMenu(
-      Menu.buildFromTemplate([
-        {
-          label: 'Open ZN',
-          click: () => surface.show()
-        },
-        { type: 'separator' },
-        {
-          label: 'Quit ZN',
-          click: () => surface.quit()
-        }
-      ])
-    )
-    tray.on('double-click', () => surface.show())
+    tray.on('double-click', () => showPrimaryWindow(true, 'compact'))
     windowsResidentSurface = surface
     windowsResidentTray = tray
+    refreshWindowsTrayMenu()
   } catch (error) {
     console.error('[ZN] failed to initialize Windows resident surface', error)
     windowsResidentSurface = null
@@ -153,7 +383,81 @@ function initializeWindowsResidentSurface(): void {
   }
 }
 
+function initializeGlobalInvocation(): void {
+  if (process.platform !== 'win32') return
+  const registered = globalShortcut.register(ZN_GLOBAL_INVOCATION_SHORTCUT, () => {
+    showPrimaryWindow(true, 'compact')
+  })
+  if (!registered) {
+    console.warn(`[ZN] global invocation shortcut unavailable: ${ZN_GLOBAL_INVOCATION_SHORTCUT}`)
+  }
+}
+
+function registerZnShellIpc(): void {
+  ipcMain.removeHandler('zn:shell:get-locale-state')
+  handleZnDesktopIpc('zn:shell:get-locale-state', () => {
+    if (currentLocaleState.preference === 'system') {
+      currentLocaleState = buildLocaleState('system')
+    }
+    return {
+      ...currentLocaleState,
+      preferredSystemLanguages: [...currentLocaleState.preferredSystemLanguages]
+    }
+  })
+
+  ipcMain.removeHandler('zn:shell:set-locale-preference')
+  handleZnDesktopIpc('zn:shell:set-locale-preference', (_event, preference: unknown) => {
+    if (!isZnLocalePreference(preference)) {
+      throw new Error('invalid ZN locale preference')
+    }
+    writeZnLocalePreference(desktopPreferencesPath(), preference)
+    currentLocaleState = buildLocaleState(preference)
+    refreshWindowsTrayMenu()
+    return {
+      ...currentLocaleState,
+      preferredSystemLanguages: [...currentLocaleState.preferredSystemLanguages]
+    }
+  })
+
+  ipcMain.removeHandler('zn:shell:set-window-mode')
+  ipcMain.removeHandler('zn:shell:ack-window-mode-transition')
+  handleZnDesktopIpc('zn:shell:ack-window-mode-transition', (event, ack: unknown) => {
+    if (
+      !ack ||
+      typeof ack !== 'object' ||
+      typeof (ack as ZnWindowTransitionAck).transitionId !== 'string' ||
+      ((ack as ZnWindowTransitionAck).mode !== 'compact' &&
+        (ack as ZnWindowTransitionAck).mode !== 'expanded')
+    ) {
+      return { accepted: false }
+    }
+    const typedAck = ack as ZnWindowTransitionAck
+    const pending = pendingWindowTransitionAcks.get(typedAck.transitionId)
+    const sourceWindow = BrowserWindow.fromWebContents(event.sender)
+    if (
+      !pending ||
+      !sourceWindow ||
+      sourceWindow.id !== pending.windowId ||
+      typedAck.mode !== pending.mode
+    ) {
+      return { accepted: false }
+    }
+    pending.resolve()
+    return { accepted: true }
+  })
+  handleZnDesktopIpc('zn:shell:set-window-mode', async (_event, mode: unknown) => {
+    if (mode !== 'compact' && mode !== 'expanded') {
+      throw new Error('invalid ZN window mode')
+    }
+    const window = ensurePrimaryWindow()
+    return transitionZnWindowMode(window, mode, 'renderer-request')
+  })
+}
+
 async function bootstrapZnDesktop(): Promise<void> {
+  configureSourceDevelopmentProfile()
+  const sourceDevelopment = isSourceDevelopmentInstance()
+
   if (!app.requestSingleInstanceLock()) {
     app.quit()
     return
@@ -162,16 +466,16 @@ async function bootstrapZnDesktop(): Promise<void> {
   for (const link of znDeepLinksFromArgv(process.argv)) pendingDeepLinks.push(link)
 
   app.on('before-quit', () => windowsResidentSurface?.beginQuit())
+  app.on('will-quit', () => {
+    if (process.platform === 'win32') globalShortcut.unregister(ZN_GLOBAL_INVOCATION_SHORTCUT)
+  })
   app.on('open-url', (event, url) => {
     event.preventDefault()
     receiveDeepLink(url)
   })
   app.on('second-instance', (_event, argv) => {
     for (const link of znDeepLinksFromArgv(argv)) deliverDeepLink(link)
-    const window = ensurePrimaryWindow()
-    if (window.isMinimized()) window.restore()
-    window.show()
-    window.focus()
+    showPrimaryWindow(true, 'compact')
   })
 
   if (app.isPackaged) {
@@ -184,12 +488,17 @@ async function bootstrapZnDesktop(): Promise<void> {
   registerZnResidentIpc()
   registerZnWorkspaceIpc()
   registerZnReleaseUpdaterIpc()
+  registerZnShellIpc()
 
   await app.whenReady()
-  if (!app.setAsDefaultProtocolClient('zn')) {
+  refreshLocaleStateFromDisk()
+  if (sourceDevelopment) {
+    console.info('[ZN] source-development instance skips zn:// OS protocol registration')
+  } else if (!app.setAsDefaultProtocolClient('zn')) {
     console.warn('[ZN] OS protocol registration for zn:// is unavailable in this build')
   }
   initializeWindowsResidentSurface()
+  initializeGlobalInvocation()
   ensurePrimaryWindow()
   await startZnResidentOnDesktopReady()
 
@@ -206,7 +515,7 @@ void bootstrapZnDesktop().catch(error => {
   console.error('[ZN] desktop bootstrap failed:', error)
 
   try {
-    dialog.showErrorBox('ZN runtime unavailable', message)
+    dialog.showErrorBox(localizedMainText('dialog.runtimeUnavailable'), message)
   } catch {
     void 0
   }

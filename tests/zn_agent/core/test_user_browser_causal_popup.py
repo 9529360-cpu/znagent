@@ -40,7 +40,7 @@ def _valid_result() -> dict:
         "exact_node_continuity": True,
         "target_revalidated_before_dispatch": True,
         "expected_url": _CHILD,
-        "task_action_id": "body-e2e07-1",
+        "task_action_id": "body-causal-popup-1",
         "relationship": "causal_child",
         "child_tab_id": 91,
         "opener_tab_id": 81,
@@ -124,7 +124,7 @@ class _CausalRelay:
                 "expected_url_before": _ROOT,
                 "expected_url_after": _CHILD,
                 "causal_popup_allowed": True,
-                "task_action_id": "body-e2e07-1",
+                "task_action_id": "body-causal-popup-1",
             }
             self.click_seen = True
             if self.uncertain:
@@ -165,7 +165,7 @@ def _prepared(relay: _CausalRelay):
         expected={
             "url_equals": _CHILD,
             "causal_popup_allowed": True,
-            "task_action_id": "body-e2e07-1",
+            "task_action_id": "body-causal-popup-1",
         },
     )
     authority = BrowserActionAuthority.from_observation(action, observed, permission)
@@ -190,7 +190,7 @@ class CausalPopupAuthorizedExtensionUserBrowserTests(unittest.TestCase):
         self.assertTrue(evidence.data["child_debugger_detached"])
         self.assertTrue(evidence.data["returned_to_exact_root_tab"])
         self.assertEqual(relay.last_click_timeout, 10.0)
-        self.assertEqual(browser.causal_child_result("body-e2e07-1")["child_title"], _TITLE)
+        self.assertEqual(browser.causal_child_result("body-causal-popup-1")["child_title"], _TITLE)
         browser.close_session(session.session_id)
 
     def test_unrelated_user_tab_is_counted_but_never_claimed(self) -> None:
@@ -260,7 +260,7 @@ class CausalPopupAuthorizedExtensionUserBrowserTests(unittest.TestCase):
         self.assertTrue(evidence.success, evidence.error)
         self.assertNotIn("Status: delivered", repr(asdict(evidence)))
         self.assertEqual(
-            browser.causal_child_result("body-e2e07-1")["child_title"],
+            browser.causal_child_result("body-causal-popup-1")["child_title"],
             "Status: delivered",
         )
 
@@ -282,7 +282,7 @@ class CausalPopupAuthorizedExtensionUserBrowserTests(unittest.TestCase):
         self.assertTrue(evidence.data["click_may_have_been_sent"])
         self.assertTrue(evidence.data["requires_fresh_resense"])
         self.assertEqual(relay.last_click_timeout, 10.0)
-        self.assertIsNone(browser.causal_child_result("body-e2e07-1"))
+        self.assertIsNone(browser.causal_child_result("body-causal-popup-1"))
 
 
 if __name__ == "__main__":

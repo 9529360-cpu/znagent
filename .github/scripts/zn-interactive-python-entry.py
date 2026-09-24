@@ -168,7 +168,7 @@ def _run_original(args: list[str]) -> None:
     script = args[0]
     # `runpy.run_path()` intentionally does not prepend a plain script file's
     # directory to sys.path. Direct CPython script execution does, and several
-    # existing E2Es import sibling fixture modules through that standard rule.
+    # existing integration tests import sibling fixture modules through that standard rule.
     _replace_sys_path0(os.path.dirname(os.path.abspath(script)))
     sys.argv = [script, *args[1:]]
     runpy.run_path(script, run_name="__main__")
