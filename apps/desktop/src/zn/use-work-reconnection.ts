@@ -28,11 +28,11 @@ export function useZnWorkReconnection({
   }, [onProgress, progress, submissionBusy, thread])
 
   useEffect(() => {
-    // While work_start is crossing the RPC acceptance boundary, do not attach
-    // an observer to the previous activeRun. As soon as submission releases,
-    // this read-only observer becomes the sole progress follower; it never
+    // Submission no longer polls Work. Keep the read-only observer alive while
+    // a steering work_start RPC waits for the current Resident step boundary,
+    // so the existing run continues to show fresh progress. This observer never
     // resubmits Work, including after steering or renderer reconnect.
-    if (submissionBusy || !threadId || !eventId) return
+    if (!threadId || !eventId) return
     return observeZnWorkProgress(
       { threadId, eventId },
       loadZnWorkProgress,
@@ -50,7 +50,7 @@ export function useZnWorkReconnection({
         onError(t('error.desktopReconnect', { message: error.message }))
       }
     )
-  }, [eventId, onError, onHealth, onProgress, onThread, submissionBusy, t, threadId])
+  }, [eventId, onError, onHealth, onProgress, onThread, t, threadId])
 
   return submissionBusy || hasZnUnfinishedWork(thread, progress)
 }

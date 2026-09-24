@@ -249,6 +249,10 @@ class ZNResidentRuntime:
             if event is None:
                 return None
 
+            durable_transition = self.result_for(event.event_id)
+            if durable_transition is not None:
+                return durable_transition
+
             requested_cancel = self._requested_cancellation_result(event)
             if requested_cancel is not None:
                 durable_cancel = self.result_for(event.event_id)

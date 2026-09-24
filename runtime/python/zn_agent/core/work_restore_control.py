@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -740,33 +740,74 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         )
         payload = dict(raw_payload or {})
 
-        # Steering creates the next ResidentEvent through the plan transition
-        # path rather than ordinary Work.start(). Preserve the same Work-owned
-        # privacy boundary before that event can be materialized: first reject
-        # an already-unsteerable live state, then validate/merge durable thread
-        # policy and copy it into the exact next-event payload. The ledger still
-        # repeats its own state check and owns the atomic plan transition.
-        self.ledger._assert_steerable_resident_state(active.event_id)
-        durable_thread = self.ledger.get_thread(thread.thread_id)
-        if durable_thread is None:
-            raise RuntimeError("active Work steering lost its durable WorkThread")
-        bind_work_event_route_policy(
-            self.ledger,
-            durable_thread,
-            task=task,
-            event_payload=payload,
+        # The same cycle lock defines the Resident step boundary. Wait for an
+        # in-flight step to finish, then decide under that lock whether this
+        # message can still steer the active plan or arrived just after the Work
+        # became terminal. In the latter case it must become a fresh follow-up;
+        # user input is never dropped merely because the final tool step won the
+        # race by a few milliseconds.
+        cycle_lock = getattr(self.resident, "_cycle_lock", None)
+        context = (
+            cycle_lock
+            if cycle_lock is not None and hasattr(cycle_lock, "__enter__")
+            else nullcontext()
         )
+        terminal_outcome = None
+        with context:
+            resident_event = self.resident.store.get_event(active.event_id)
+            if resident_event is None:
+                raise RuntimeError("active Work steering lost its durable resident event")
+            terminal_outcome = self.resident.store.get_event_outcome(active.event_id)
+            if terminal_outcome is None:
+                # Steering creates the next ResidentEvent through the plan
+                # transition path rather than ordinary Work.start(). Preserve
+                # the same Work-owned privacy boundary before that event can be
+                # materialized, then let the ledger own the atomic plan switch.
+                self.ledger._assert_steerable_resident_state(active.event_id)
+                durable_thread = self.ledger.get_thread(thread.thread_id)
+                if durable_thread is None:
+                    raise RuntimeError(
+                        "active Work steering lost its durable WorkThread"
+                    )
+                bind_work_event_route_policy(
+                    self.ledger,
+                    durable_thread,
+                    task=task,
+                    event_payload=payload,
+                )
+                snapshot, event = self.ledger.steer_active(
+                    thread.thread_id,
+                    active.event_id,
+                    task,
+                    objective=bounded_followup,
+                    reference=reference,
+                    kind=kind,
+                    priority=priority,
+                    payload=payload,
+                )
 
-        snapshot, event = self.ledger.steer_active(
-            thread.thread_id,
-            active.event_id,
-            task,
-            objective=bounded_followup,
-            reference=reference,
-            kind=kind,
-            priority=priority,
-            payload=payload,
-        )
+        if terminal_outcome is not None:
+            if terminal_outcome.cancelled:
+                # A later Stop is stronger than an earlier queued correction.
+                # Reconcile the cancelled run and return that authoritative
+                # terminal Work instead of silently starting more work.
+                self.reconcile_cancelled_runs(thread_id=thread.thread_id)
+                cancelled_event = self.resident.store.get_event(active.event_id)
+                if cancelled_event is None:
+                    raise RuntimeError(
+                        "cancelled Work disappeared while steering was waiting"
+                    )
+                return self.get_snapshot(thread.thread_id), cancelled_event
+
+            self.ledger._finalize_completed_runs(thread_id=thread.thread_id)
+            return self._start_referenced_completed_followup(
+                thread,
+                task,
+                followup=bounded_followup,
+                reference=reference,
+                ingress_thread_id=ingress_thread_id,
+                start_kwargs=start_kwargs,
+            )
         normalized_ingress = self.ledger._normalize_thread_id(ingress_thread_id)
         if normalized_ingress != thread.thread_id:
             self._continuation_ingress_aliases[event.event_id] = normalized_ingress

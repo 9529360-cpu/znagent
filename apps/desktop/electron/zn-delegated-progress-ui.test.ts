@@ -290,7 +290,8 @@ test('actual renderer client normalizes active Work and reconnects through exist
     assert.equal(workStart.mock.calls.length, 0)
     assert.equal(workProgress.mock.calls.length, 1)
     assert.match(read('src/zn/workbench.tsx'), /const workActive = useZnWorkReconnection\(/)
-    assert.match(read('src/zn/use-work-reconnection.ts'), /if \(submissionBusy \|\| !threadId \|\| !eventId\) return/)
+    assert.match(read('src/zn/use-work-reconnection.ts'), /if \(!threadId \|\| !eventId\) return/)
+    assert.doesNotMatch(read('src/zn/use-work-reconnection.ts'), /if \(submissionBusy \|\|/)
     assert.doesNotMatch(read('src/zn/use-work-reconnection.ts'), /startZnWork|submitZnWork|workStart/)
   } finally { vi.unstubAllGlobals() }
 })

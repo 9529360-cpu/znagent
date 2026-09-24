@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.daemon import ResidentRpcServer
-from zn_agent.core.models import EventStatus
+from zn_agent.core.models import EventStatus, ExecutionPath
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.work import ResidentWorkLedger, WorkMessage
 
@@ -81,11 +81,38 @@ class ResidentWorkIngressRecoveryTests(unittest.TestCase):
                 self.assertFalse(progress["terminal"])
                 self.assertFalse(progress["finalized"])
 
-                with self.assertRaisesRegex(ValueError, "already has an active"):
-                    server.work_control.start(
-                        thread.thread_id,
-                        "must not create duplicate Work while repaired event is active",
-                    )
+                before_ids = {
+                    item.event_id for item in restored.store.list_events(limit=32)
+                }
+                _, steered_event = server.work_control.start(
+                    thread.thread_id,
+                    "change the repaired Work instead of replaying it",
+                )
+
+                self.assertNotEqual(steered_event.event_id, event.event_id)
+                self.assertEqual(
+                    {
+                        item.event_id for item in restored.store.list_events(limit=32)
+                    }
+                    - before_ids,
+                    {steered_event.event_id},
+                )
+                old_outcome = restored.store.get_event_outcome(event.event_id)
+                self.assertIsNotNone(old_outcome)
+                assert old_outcome is not None
+                self.assertFalse(old_outcome.success)
+                self.assertEqual(old_outcome.execution_path, ExecutionPath.CONTROL)
+                self.assertIn("superseded by user steering", old_outcome.reason or "")
+                self.assertEqual(
+                    server.work_control.ledger.get_run(event.event_id).ledger_state,
+                    "stale_finalized",
+                )
+                active = server.work_control.ledger._active_run_for_thread(
+                    thread.thread_id
+                )
+                self.assertIsNotNone(active)
+                assert active is not None
+                self.assertEqual(active.event_id, steered_event.event_id)
             finally:
                 restored.store.close()
 
