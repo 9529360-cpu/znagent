@@ -31,6 +31,7 @@ class GuiAutomationBody(MachineCapabilityBody):
     _LIST_KIND = "automation_controls_list"
     _READ_KIND = "automation_control_read"
     _SET_VALUE_KIND = "automation_control_set_value"
+    _TYPE_TEXT_KIND = "automation_control_type_text"
     _TOGGLE_KIND = "automation_control_toggle"
     _EXPAND_COLLAPSE_KIND = "automation_control_expand_collapse"
     _SELECT_KIND = "automation_control_select"
@@ -52,6 +53,7 @@ class GuiAutomationBody(MachineCapabilityBody):
     _GUI_KINDS = frozenset(
         {
             _SET_VALUE_KIND,
+            _TYPE_TEXT_KIND,
             _TOGGLE_KIND,
             _EXPAND_COLLAPSE_KIND,
             _SELECT_KIND,
@@ -298,6 +300,8 @@ class GuiAutomationBody(MachineCapabilityBody):
         allowed = {"application_id", "control_type", "control_name", "automation_id"}
         if kind == self._SET_VALUE_KIND:
             allowed.add("value")
+        elif kind == self._TYPE_TEXT_KIND:
+            allowed.add("text")
         elif kind in {self._TOGGLE_KIND, self._EXPAND_COLLAPSE_KIND}:
             allowed.add("state")
         rejected = sorted(key for key in args if key not in allowed)
@@ -351,6 +355,7 @@ class GuiAutomationBody(MachineCapabilityBody):
             control_name=selector.name,
             automation_id=selector.automation_id,
             **({"value": target} if kind == self._SET_VALUE_KIND else {}),
+            **({"text": target} if kind == self._TYPE_TEXT_KIND else {}),
             **(
                 {"state": target}
                 if kind in {self._TOGGLE_KIND, self._EXPAND_COLLAPSE_KIND}
@@ -479,6 +484,12 @@ class GuiAutomationBody(MachineCapabilityBody):
             if len(value) > 4096:
                 raise ValueError("GUI ValuePattern value exceeds 4096 characters")
             return value
+        if kind == cls._TYPE_TEXT_KIND:
+            text = args.get("text")
+            if not isinstance(text, str):
+                raise ValueError("GUI semantic text input requires a string text argument")
+            cls.validate_text(text)
+            return text
         if kind == cls._TOGGLE_KIND:
             state = str(args.get("state") or "").strip().lower()
             if state not in {"on", "off"}:
@@ -496,7 +507,11 @@ class GuiAutomationBody(MachineCapabilityBody):
         raise ValueError(f"unsupported GUI control action kind: {kind}")
 
     def _foreground_target(self, app_id: str):
-        application = self.device_capabilities.application_by_id(app_id, force_refresh=True)
+        # Installed-app identity is low-churn inventory. Reuse the bounded TTL
+        # snapshot here; application_runtime() still reacquires process/window
+        # reality on every control action. Dispatch authority never comes from
+        # this cache alone.
+        application = self.device_capabilities.application_by_id(app_id)
         if application is None:
             raise RuntimeError("resolved application identity is no longer installed")
         processes, windows = self.device_capabilities.application_runtime(application)
@@ -607,6 +622,11 @@ class GuiAutomationBody(MachineCapabilityBody):
                 safe_args["value_redacted"] = True
                 safe_args["value_chars"] = len(raw)
                 safe_args["value_sha256"] = text_sha256(raw)
+            if action.kind == self._TYPE_TEXT_KIND and "text" in safe_args:
+                raw = str(safe_args.pop("text"))
+                safe_args["text_redacted"] = True
+                safe_args["text_chars"] = len(raw)
+                safe_args["text_sha256"] = text_sha256(raw)
             action = BodyAction(
                 action_id=action.action_id,
                 kind=action.kind,
@@ -762,8 +782,23 @@ class GuiAutomationBody(MachineCapabilityBody):
             name=str(action.args.get("control_name") or ""),
             automation_id=str(action.args.get("automation_id") or ""),
         )
-        pattern = self._pattern_for_kind(action.kind)
+        pattern = self._pattern_for_kind(
+            action.kind,
+            control_type=selector.control_type,
+        )
         target = self._target_for(action.kind, dict(action.args))
+        if action.kind == self._TYPE_TEXT_KIND:
+            return self._dispatch_gui_type_text(
+                action,
+                started,
+                base_data=base_data,
+                selector=selector,
+                pattern=pattern,
+                target=target,
+                process_id=expected_pid,
+                process_name=expected_process_name,
+                window_handle=expected_hwnd,
+            )
         result = self._automation_control.mutate(
             process_id=expected_pid,
             process_name=expected_process_name,
@@ -797,8 +832,257 @@ class GuiAutomationBody(MachineCapabilityBody):
             ),
         )
 
+    def _dispatch_gui_type_text(
+        self,
+        action: BodyAction,
+        started: str,
+        *,
+        base_data: dict[str, Any],
+        selector: AutomationControlSelector,
+        pattern: str,
+        target: str,
+        process_id: int,
+        process_name: str,
+        window_handle: int,
+    ) -> BodyActionResult:
+        chars_key = "text_chars" if pattern == "text" else "value_chars"
+        hash_key = "text_sha256" if pattern == "text" else "value_sha256"
+        expected_hash = text_sha256(target)
+
+        def matches(observation: AutomationControlObservation) -> bool:
+            state = dict(observation.state or {})
+            return (
+                state.get(chars_key) == len(target)
+                and state.get(hash_key) == expected_hash
+            )
+
+        def data_for(
+            *,
+            before: AutomationControlObservation | None,
+            after: AutomationControlObservation | None,
+            focus_dispatched: bool,
+            text_dispatch_sent: bool,
+            uncertain: bool,
+            absence_proven: bool,
+            keyboard_result: BodyActionResult | None = None,
+        ) -> dict[str, Any]:
+            keyboard_data = dict(
+                (keyboard_result.data if keyboard_result is not None else {}) or {}
+            )
+            return {
+                **base_data,
+                "selector": selector.audit(),
+                "pattern": pattern,
+                "dispatch_sent": bool(text_dispatch_sent),
+                "focus_dispatched": bool(focus_dispatched),
+                "postcondition_verified": bool(after is not None and matches(after)),
+                "side_effect_uncertain": bool(uncertain),
+                "side_effect_absence_proven": bool(absence_proven),
+                "expected_text_chars": len(target),
+                "expected_text_sha256": expected_hash,
+                "input_events_expected": keyboard_data.get("input_events_expected"),
+                "input_events_sent": keyboard_data.get("input_events_sent"),
+                "before": before.audit() if before is not None else None,
+                "after": after.audit() if after is not None else None,
+            }
+
+        try:
+            before = self._automation_control.read(
+                process_id=process_id,
+                process_name=process_name,
+                window_handle=window_handle,
+                selector=selector,
+                pattern=pattern,
+            )
+        except Exception as exc:
+            return self._result(
+                action,
+                started,
+                False,
+                data_for(
+                    before=None,
+                    after=None,
+                    focus_dispatched=False,
+                    text_dispatch_sent=False,
+                    uncertain=False,
+                    absence_proven=True,
+                ),
+                f"semantic text preflight failed: {type(exc).__name__}: {exc}",
+            )
+
+        if matches(before):
+            return self._result(
+                action,
+                started,
+                True,
+                data_for(
+                    before=before,
+                    after=before,
+                    focus_dispatched=False,
+                    text_dispatch_sent=False,
+                    uncertain=False,
+                    absence_proven=True,
+                ),
+                None,
+                output="semantic text target already matched requested digest",
+            )
+
+        before_chars = (before.state or {}).get(chars_key)
+        if before_chars != 0:
+            return self._result(
+                action,
+                started,
+                False,
+                data_for(
+                    before=before,
+                    after=before,
+                    focus_dispatched=False,
+                    text_dispatch_sent=False,
+                    uncertain=False,
+                    absence_proven=True,
+                ),
+                (
+                    "semantic text input first slice refuses non-empty replacement; "
+                    "current text differs from the requested digest"
+                ),
+            )
+
+        focus = self._automation_control.focus(
+            process_id=process_id,
+            process_name=process_name,
+            window_handle=window_handle,
+            selector=selector,
+            pattern=pattern,
+        )
+        focused = focus.after if focus.after is not None else before
+        if not focus.success or focus.after is None:
+            return self._result(
+                action,
+                started,
+                False,
+                data_for(
+                    before=before,
+                    after=focus.after,
+                    focus_dispatched=focus.focus_dispatched,
+                    text_dispatch_sent=False,
+                    uncertain=False,
+                    absence_proven=True,
+                ),
+                focus.error or "fresh UI Automation evidence did not confirm keyboard focus",
+            )
+        if focus.after.runtime_id != before.runtime_id:
+            return self._result(
+                action,
+                started,
+                False,
+                data_for(
+                    before=before,
+                    after=focus.after,
+                    focus_dispatched=focus.focus_dispatched,
+                    text_dispatch_sent=False,
+                    uncertain=False,
+                    absence_proven=True,
+                ),
+                "semantic text target RuntimeId changed while acquiring keyboard focus",
+            )
+        focused_chars = (focused.state or {}).get(chars_key)
+        if focused_chars != 0:
+            return self._result(
+                action,
+                started,
+                False,
+                data_for(
+                    before=before,
+                    after=focused,
+                    focus_dispatched=focus.focus_dispatched,
+                    text_dispatch_sent=False,
+                    uncertain=False,
+                    absence_proven=True,
+                ),
+                "semantic text target changed after focus and is no longer empty",
+            )
+
+        keyboard = super().act(
+            "keyboard_text",
+            event_id=action.event_id,
+            text=target,
+        )
+        keyboard_data = dict(keyboard.data or {})
+        try:
+            sent = max(0, int(keyboard_data.get("input_events_sent") or 0))
+        except (TypeError, ValueError):
+            sent = 0
+        text_dispatch_sent = sent > 0
+
+        try:
+            after = self._automation_control.read(
+                process_id=process_id,
+                process_name=process_name,
+                window_handle=window_handle,
+                selector=selector,
+                pattern=pattern,
+            )
+        except Exception as exc:
+            return self._result(
+                action,
+                started,
+                False,
+                data_for(
+                    before=before,
+                    after=None,
+                    focus_dispatched=focus.focus_dispatched,
+                    text_dispatch_sent=text_dispatch_sent,
+                    uncertain=text_dispatch_sent,
+                    absence_proven=not text_dispatch_sent,
+                    keyboard_result=keyboard,
+                ),
+                (
+                    "keyboard input crossed the dispatch boundary but fresh semantic "
+                    f"text readback failed: {type(exc).__name__}: {exc}"
+                ),
+            )
+
+        verified = after.runtime_id == before.runtime_id and matches(after)
+        uncertain = bool(text_dispatch_sent and not verified)
+        absence_proven = bool(not text_dispatch_sent)
+        error = None
+        if not verified:
+            error = (
+                keyboard.error
+                or "fresh semantic text digest did not match the requested input"
+            )
+        return self._result(
+            action,
+            started,
+            verified,
+            data_for(
+                before=before,
+                after=after,
+                focus_dispatched=focus.focus_dispatched,
+                text_dispatch_sent=text_dispatch_sent,
+                uncertain=uncertain,
+                absence_proven=absence_proven,
+                keyboard_result=keyboard,
+            ),
+            error,
+            output=(
+                "semantic keyboard text digest verified"
+                if verified
+                else ""
+            ),
+        )
+
     @classmethod
-    def _pattern_for_kind(cls, kind: str) -> str:
+    def _pattern_for_kind(cls, kind: str, *, control_type: str = "") -> str:
+        if kind == cls._TYPE_TEXT_KIND:
+            normalized = str(control_type or "").strip().lower().replace("-", "_")
+            if normalized == "document":
+                return "text"
+            if normalized == "edit":
+                return "value"
+            raise ValueError(
+                "semantic text input is limited to exact UI Automation edit/document controls"
+            )
         return {
             cls._SET_VALUE_KIND: "value",
             cls._TOGGLE_KIND: "toggle",
