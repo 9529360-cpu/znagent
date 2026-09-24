@@ -8,6 +8,7 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.automation_control_action import (
+    AutomationControlFocusResult,
     AutomationControlMutationResult,
     AutomationControlObservation,
     AutomationControlSelector,
@@ -25,7 +26,9 @@ class _FakeControlDriver:
     def __init__(self) -> None:
         self.mutations: list[dict] = []
         self.reads: list[dict] = []
+        self.focuses: list[dict] = []
         self.toggle_state = "off"
+        self.text = ""
 
     @staticmethod
     def _observation(*, process_id, process_name, window_handle, selector, pattern, state):
@@ -43,6 +46,8 @@ class _FakeControlDriver:
             is_password=False,
             supported_patterns=(pattern,),
             pattern=pattern,
+            is_keyboard_focusable=True,
+            has_keyboard_focus=True,
             state=state,
         )
 
@@ -77,10 +82,31 @@ class _FakeControlDriver:
         self.reads.append(dict(kwargs))
         if kwargs["pattern"] == "toggle":
             state = {"toggle_state": self.toggle_state}
+        elif kwargs["pattern"] == "text":
+            state = {
+                "text_chars": len(self.text),
+                "text_sha256": text_sha256(self.text),
+            }
+        elif kwargs["pattern"] == "value":
+            state = {
+                "value_chars": len(self.text),
+                "value_sha256": text_sha256(self.text),
+                "read_only": False,
+            }
         else:
             state = {"selected": True}
         return self._observation(**kwargs, state=state)
 
+    def focus(self, **kwargs):
+        self.focuses.append(dict(kwargs))
+        before = self.read(**kwargs)
+        after = self.read(**kwargs)
+        return AutomationControlFocusResult(
+            success=True,
+            focus_dispatched=True,
+            before=before,
+            after=after,
+        )
 
 
 class _FakeControlSense:
@@ -204,7 +230,11 @@ class GuiAutomationBodyTests(unittest.TestCase):
         store = KernelStore(Path(tmp) / "kernel.db")
         driver = _FakeControlDriver()
         control_sense = _FakeControlSense()
-        control = NativeAutomationControlAction(read_fn=driver.read, mutate_fn=driver.mutate)
+        control = NativeAutomationControlAction(
+            read_fn=driver.read,
+            mutate_fn=driver.mutate,
+            focus_fn=driver.focus,
+        )
         scene_builder = _FakeSceneBuilder(Path(tmp))
         body = GuiAutomationBody(
             store=store,
@@ -365,6 +395,70 @@ class GuiAutomationBodyTests(unittest.TestCase):
                         self.assertFalse(result.data["dispatch_sent"])
                         self.assertIn(key, result.data["rejected_arguments"])
                 self.assertEqual(driver.mutations, [])
+            finally:
+                store.close()
+
+    def test_semantic_document_text_uses_focus_keyboard_digest_and_replay_guard(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            store, body, app, _runtime, driver, _, _control_sense = self._fixture(tmp)
+            try:
+                text = "hello from ZN"
+
+                def send_keyboard(value):
+                    driver.text = value
+                    return len(value), len(value)
+
+                body._send_keyboard_text = send_keyboard
+                first = body.act(
+                    "automation_control_type_text",
+                    event_id="evt-type-text",
+                    application_id=app.app_id,
+                    control_type="document",
+                    automation_id="Editor",
+                    text=text,
+                )
+                self.assertTrue(first.success, first.error)
+                self.assertTrue(first.data["dispatch_sent"])
+                self.assertTrue(first.data["postcondition_verified"])
+                self.assertFalse(first.data["side_effect_uncertain"])
+                self.assertEqual(first.data["expected_text_chars"], len(text))
+                self.assertEqual(first.data["expected_text_sha256"], text_sha256(text))
+                self.assertEqual(driver.text, text)
+                self.assertEqual(len(driver.focuses), 1)
+
+                reads_after_first = len(driver.reads)
+                second = body.act(
+                    "automation_control_type_text",
+                    event_id="evt-type-text",
+                    application_id=app.app_id,
+                    control_type="document",
+                    automation_id="Editor",
+                    text=text,
+                )
+                self.assertFalse(second.success)
+                self.assertTrue(second.data["replay_blocked"])
+                self.assertEqual(len(driver.reads), reads_after_first)
+                self.assertEqual(driver.text, text)
+
+                conn = sqlite3.connect(store.path)
+                try:
+                    row = conn.execute(
+                        "SELECT action_json FROM native_body_actions "
+                        "WHERE kind=? ORDER BY completed_at DESC LIMIT 1",
+                        ("automation_control_type_text",),
+                    ).fetchone()
+                finally:
+                    conn.close()
+                self.assertIsNotNone(row)
+                persisted = row[0]
+                self.assertNotIn(text, persisted)
+                persisted_action = json.loads(persisted)
+                self.assertIs(persisted_action["args"]["text_redacted"], True)
+                self.assertEqual(persisted_action["args"]["text_chars"], len(text))
+                self.assertEqual(
+                    persisted_action["args"]["text_sha256"],
+                    text_sha256(text),
+                )
             finally:
                 store.close()
 

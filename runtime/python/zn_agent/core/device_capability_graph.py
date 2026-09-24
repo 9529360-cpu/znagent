@@ -26,6 +26,7 @@ from .machine_capability import (
     InstalledApplication,
     _aliases,
     _normalize_name,
+    _preferred_profile_representative,
 )
 from .models import utc_now
 from .windows_companion_context import (
@@ -164,6 +165,9 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         if len(exact_candidates) == 1:
             return ApplicationResolution(raw, "resolved", exact_candidates[0])
         if len(exact_candidates) > 1:
+            representative = _preferred_profile_representative(exact_candidates)
+            if representative is not None:
+                return ApplicationResolution(raw, "resolved", representative)
             return ApplicationResolution(raw, "ambiguous", candidates=exact_candidates)
 
         if len(wanted) < 2:
@@ -181,5 +185,8 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         if len(partial_candidates) == 1:
             return ApplicationResolution(raw, "resolved", partial_candidates[0])
         if len(partial_candidates) > 1:
+            representative = _preferred_profile_representative(partial_candidates)
+            if representative is not None:
+                return ApplicationResolution(raw, "resolved", representative)
             return ApplicationResolution(raw, "ambiguous", candidates=partial_candidates)
         return ApplicationResolution(raw, "not_installed")
