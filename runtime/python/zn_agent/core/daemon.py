@@ -7,6 +7,8 @@ import time
 from dataclasses import asdict
 from typing import Any, TextIO
 
+from .agentic_tool_loop import AgenticToolLoop, ToolLoopError
+from .anthropic_resource import AnthropicToolLoopClient
 from .model_first_turn import ModelFirstTurnService
 from .outcome_aware_work_control import OutcomeAwareRestoreWorkControl
 from .provider_bridge import build_resident_runtime_from_existing_stack
@@ -185,6 +187,18 @@ class ResidentRpcServer:
             if snapshot is not None:
                 turn["thread"] = self._work_snapshot(snapshot)
             result = turn
+        elif method == "agent_run":
+            objective = str(params.get("objective") or params.get("task") or "").strip()
+            if not objective:
+                raise ValueError("agent_run requires objective")
+            max_turns_param = params.get("max_turns")
+            try:
+                max_turns = (
+                    int(max_turns_param) if max_turns_param is not None else 25
+                )
+            except (TypeError, ValueError):
+                raise ValueError("agent_run max_turns must be an integer")
+            result = self._run_agentic_tool_loop(objective, max_turns=max_turns)
         elif method == "work_start":
             thread_id = str(params.get("thread_id") or "").strip()
             task = str(params.get("task") or "").strip()
@@ -495,6 +509,64 @@ class ResidentRpcServer:
     @staticmethod
     def _limit(params: dict[str, Any]) -> int:
         return max(1, min(200, int(params.get("limit") or 20)))
+
+    def _select_anthropic_route(self):
+        """Pick a currently configured Anthropic route for the tool loop.
+
+        Phase 1 of the model-driven tool loop only has a client for
+        Anthropic's native Messages tool-calling
+        (AnthropicToolLoopClient); other providers are a follow-up. This
+        deliberately reuses the kernel's already-resolved routes (real
+        credentials/base_url already materialized) instead of re-reading
+        config, so agent_run always reflects the same provider
+        configuration as ordinary cognition.
+        """
+        router = getattr(self.resident.kernel, "router", None)
+        routes = tuple(getattr(router, "routes", ()) or ())
+        for route in routes:
+            provider = str(getattr(route, "provider", "") or "").strip().lower()
+            api_mode = str(
+                (getattr(route, "metadata", None) or {}).get("api_mode") or ""
+            ).strip().lower()
+            if provider == "anthropic" or api_mode == "anthropic_messages":
+                return route
+        raise ValueError(
+            "agent_run requires a configured Anthropic route; no anthropic "
+            "provider/model is currently configured"
+        )
+
+    def _run_agentic_tool_loop(
+        self, objective: str, *, max_turns: int = 25
+    ) -> dict[str, Any]:
+        route = self._select_anthropic_route()
+        client = AnthropicToolLoopClient(route)
+        loop = AgenticToolLoop(client, max_turns=max_turns)
+        try:
+            loop_result = loop.run(objective)
+        except ToolLoopError as exc:
+            raise ValueError(str(exc)) from exc
+        return {
+            "completed": loop_result.completed,
+            "final_text": loop_result.final_text,
+            "turns_used": loop_result.turns_used,
+            "stopped_reason": loop_result.stopped_reason,
+            "steps": [
+                {
+                    "turn": step.turn,
+                    "assistant_text": step.assistant_text,
+                    "tool_calls": [dict(call) for call in step.tool_calls],
+                    "tool_results": [
+                        {
+                            "tool_use_id": item.tool_use_id,
+                            "name": item.name,
+                            "output": item.output,
+                        }
+                        for item in step.tool_results
+                    ],
+                }
+                for step in loop_result.steps
+            ],
+        }
 
     def _work_snapshot(
         self,
