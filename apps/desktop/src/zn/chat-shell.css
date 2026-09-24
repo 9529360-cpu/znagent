@@ -479,13 +479,6 @@ body::before, body::after { display: none !important; }
   background: var(--zn-chat-accent-strong);
   filter: none;
 }
-.zn-send.zn-send-stop {
-  color: #fff;
-  background: var(--zn-chat-danger);
-}
-.zn-send.zn-send-stop:not(:disabled):hover {
-  background: #b9434d;
-}
 .zn-composer-caption { margin-top: 6px; color: #aaaab0; font-size: 8.5px; }
 
 .zn-artifact-pane {
