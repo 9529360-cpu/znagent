@@ -24,6 +24,7 @@ class ResidentStartupAdmissionTests(unittest.TestCase):
             resident=SimpleNamespace(pulse=calls.pulse, live_once=calls.live_once, store=SimpleNamespace(close=calls.close)),
             _start_life_loop=calls.life_start,
             _stop_life_loop=calls.life_stop,
+            set_fatal_life_error_handler=calls.life_fatal_handler,
         )
         service.host, service.port = "127.0.0.1", 0
         service._session_secret = "synthetic-startup-test"
@@ -103,6 +104,70 @@ class ResidentStartupAdmissionTests(unittest.TestCase):
         calls.live_once.assert_not_called()
         calls.life_start.assert_not_called()
         calls.publish.assert_not_called()
+
+
+class ResidentLeaseLossTests(unittest.TestCase):
+    def test_life_loop_treats_lease_heartbeat_failure_as_fatal(self):
+        from zn_agent.core.daemon import ResidentRpcServer
+
+        rpc = ResidentRpcServer.__new__(ResidentRpcServer)
+        rpc.life_interval = 0.01
+        rpc._shutdown = False
+        rpc._life_stop = threading.Event()
+        rpc._fatal_life_error_handler = Mock()
+        rpc.service = SimpleNamespace(
+            heartbeat=Mock(side_effect=RuntimeError("resident lease was lost")),
+            heartbeat_interval=0.01,
+        )
+        rpc.resident = SimpleNamespace(live_once=Mock())
+
+        thread = threading.Thread(target=rpc._life_loop, daemon=True)
+        thread.start()
+        thread.join(timeout=1.0)
+
+        self.assertFalse(thread.is_alive())
+        self.assertTrue(rpc._shutdown)
+        rpc._fatal_life_error_handler.assert_called_once()
+        rpc.resident.live_once.assert_not_called()
+
+    def test_socket_service_stops_and_retires_endpoint_after_lease_loss(self):
+        from zn_agent.core.daemon import ResidentRpcServer
+        from zn_agent.core.provider_bridge import build_resident_runtime
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+            rpc = ResidentRpcServer(resident, life_interval=0.25)
+            rpc.service.heartbeat_interval = 0.25
+            service = ResidentSocketService(
+                rpc,
+                endpoint_path=root / "resident-endpoint.json",
+            )
+            service._start_visual_loop = Mock()
+            errors: list[BaseException] = []
+
+            def serve():
+                try:
+                    service.serve_forever()
+                except BaseException as exc:
+                    errors.append(exc)
+
+            thread = threading.Thread(target=serve, daemon=True)
+            thread.start()
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline and not service.endpoint_path.exists():
+                time.sleep(0.02)
+            self.assertTrue(service.endpoint_path.exists())
+
+            resident.store.release_resident_lease(rpc.service.instance_id)
+            thread.join(timeout=3.0)
+
+            self.assertFalse(thread.is_alive(), "resident kept serving after losing its lease")
+            self.assertFalse(service.endpoint_path.exists())
+            self.assertEqual(errors, [])
 
 
 class ResidentRestartCognitionReadinessTests(unittest.TestCase):
