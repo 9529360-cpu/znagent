@@ -214,7 +214,10 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.match(workbench, /topbar\.openSettings/)
   assert.match(workbench, /settings\.models\.description/)
   assert.match(localization, /Clear computer actions stay local when a deterministic path exists/)
-  assert.match(workbench, /disabled=\{busy \|\| !draft\.trim\(\)\}/)
+  assert.match(workbench, /zn-send-stop/)
+  assert.match(workbench, /type=\{busy \? 'button' : 'submit'\}/)
+  assert.match(workbench, /workProgress\.terminal/)
+  assert.match(workbench, /!draft\.trim\(\)/)
   assert.match(residentClient, /resident\.workList/)
   assert.match(residentClient, /resident\.workStart/)
   assert.match(residentClient, /resident\.workProgress/)
@@ -337,7 +340,7 @@ test('provider readiness never turns an unavailable resident resource into succe
   assert.doesNotMatch(providerUpdateNotice(unavailable), /^Model ready\./)
 })
 
-test('running Work progress and uncertain cancellation come from resident state', () => {
+test('running Work progress and Stop control come from resident state', () => {
   const processClient = read('electron/zn-resident-process.ts')
   const ipc = read('electron/zn-resident-ipc.ts')
   const preload = read('electron/zn-preload.ts')
@@ -363,6 +366,16 @@ test('running Work progress and uncertain cancellation come from resident state'
   assert.match(workbench, /replayBlocked/)
   assert.match(workbench, /work\.outsideUncertain/)
   assert.match(workbench, /work\.stop/)
+  assert.match(workbench, /workProgress\.stage === 'cancelling'/)
+  assert.match(workbench, /zn-send-stop/)
+  assert.match(workbench, /type=\{busy \? 'button' : 'submit'\}/)
+  assert.doesNotMatch(
+    workbench.slice(
+      workbench.indexOf('const cancelCurrentWork'),
+      workbench.indexOf('const submit', workbench.indexOf('const cancelCurrentWork'))
+    ),
+    /recovery\?\.replayBlocked/
+  )
   assert.doesNotMatch(state, /ZnWorkProgress|workProgress/)
   assert.doesNotMatch(workbench, /fake progress|Math\.random\(\).*progress/i)
 })
