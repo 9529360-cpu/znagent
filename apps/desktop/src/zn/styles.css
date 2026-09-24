@@ -548,12 +548,6 @@ button, input, textarea { -webkit-tap-highlight-color: transparent; }
   font-weight: 900;
 }
 .zn-send:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.06); }
-.zn-send.zn-send-stop {
-  color: #fff;
-  border-color: rgba(245, 141, 151, .35);
-  background: linear-gradient(145deg, #d76571, #b84f5b);
-  box-shadow: 0 10px 24px rgba(156, 56, 68, .2), inset 0 1px 0 rgba(255,255,255,.2);
-}
 .zn-composer-caption { width: min(780px, 100%); margin: 8px auto 0; color: #59657a; font-size: 9.5px; text-align: center; }
 
 .zn-context-panel {
