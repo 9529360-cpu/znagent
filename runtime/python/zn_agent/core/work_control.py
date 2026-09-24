@@ -410,6 +410,15 @@ class ResidentWorkControl:
             return self._with_delegation_projection(normalized_thread, progress)
 
         progress = self.ledger.progress(normalized_thread, normalized_event)
+        cancellation = self.resident.store.get_event_cancellation_request(normalized_event)
+        if cancellation is not None and not progress.get("terminal"):
+            progress.update(
+                {
+                    "stage": "cancelling",
+                    "next_action": "stop after the current resident step",
+                    "blocked_by": "cancellation_requested",
+                }
+            )
         progress = self._with_uncertain_controls(normalized_event, progress)
         return self._with_delegation_projection(normalized_thread, progress)
 
@@ -455,7 +464,7 @@ class ResidentWorkControl:
         thread_id: str,
         event_id: str,
         *,
-        reason: str = "user cancelled Work while outside-world effect remained uncertain",
+        reason: str = "user requested Work stop",
     ) -> dict[str, Any]:
         normalized_thread = self.ledger._normalize_thread_id(thread_id)
         normalized_event = str(event_id or "").strip()
@@ -470,13 +479,26 @@ class ResidentWorkControl:
                 return self.progress(normalized_thread, normalized_event)
             raise RuntimeError("work cancellation requires an active Work run")
 
-        run = self.resident.cancel_uncertain_event(
+        working = self.resident.store.get_working_state()
+        if (
+            str(working.current_event_id or "") == normalized_event
+            and str(working.stage or "").strip().lower() == "side_effect_recovery"
+            and str(working.blocked_by or "").strip().lower()
+            == "outside_world_effect_uncertain"
+        ):
+            run = self.resident.cancel_uncertain_event(
+                normalized_event,
+                reason=reason,
+            )
+            if not run.cancelled:
+                raise RuntimeError("resident cancellation did not return a cancelled result")
+            self._finalize_cancelled(work_run, run)
+            return self.progress(normalized_thread, normalized_event)
+
+        self.resident.request_event_cancellation(
             normalized_event,
             reason=reason,
         )
-        if not run.cancelled:
-            raise RuntimeError("resident cancellation did not return a cancelled result")
-        self._finalize_cancelled(work_run, run)
         return self.progress(normalized_thread, normalized_event)
 
     def _finalize_cancelled(
@@ -496,10 +518,15 @@ class ResidentWorkControl:
             if thread is None:
                 raise ValueError(f"unknown work thread: {current.thread_id}")
 
+            uncertain_outside_world_effect = not bool(str(run.response or "").strip())
             message = (
-                str(run.reason or "").strip()
+                str(run.response or "").strip()
+                or str(run.reason or "").strip()
                 or "Work cancelled. ZN will not continue it; the uncertain outside-world effect remains unresolved."
             )
+            message_detail: dict[str, Any] = {"cancelled": True}
+            if uncertain_outside_world_effect:
+                message_detail["outside_world_effect"] = "uncertain"
             self.ledger._append(
                 thread,
                 WorkMessage(
@@ -507,10 +534,7 @@ class ResidentWorkControl:
                     thread_id=thread.thread_id,
                     role="zn",
                     text=message,
-                    detail={
-                        "cancelled": True,
-                        "outside_world_effect": "uncertain",
-                    },
+                    detail=message_detail,
                 ),
             )
             self.ledger._append(
@@ -524,7 +548,11 @@ class ResidentWorkControl:
                         "event_id": run.event.event_id,
                         "execution_path": run.execution_path.value,
                         "cancelled": True,
-                        "outside_world_effect": "uncertain",
+                        **(
+                            {"outside_world_effect": "uncertain"}
+                            if uncertain_outside_world_effect
+                            else {}
+                        ),
                         "reason": run.reason,
                     },
                 ),

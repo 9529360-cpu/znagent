@@ -149,6 +149,7 @@ function stageLabel(stage: string, t: TFunction): string {
   if (stage === 'working') return t('stage.working')
   if (stage === 'completed') return t('stage.completed')
   if (stage === 'failed') return t('stage.failed')
+  if (stage === 'cancelling') return t('work.stopping')
   if (stage === 'superseded') return t('stage.superseded')
   if (stage === 'inspection_complete') return t('stage.inspectionComplete')
   return stage.replaceAll('_', ' ')
@@ -558,7 +559,7 @@ export function ZnWorkbench() {
 
   const cancelCurrentWork = useCallback(async () => {
     if (!activeThread || !workProgress || cancelBusy || workProgress.finalized) return
-    if (workProgress.threadId !== activeThread.id || !workProgress.recovery?.replayBlocked) return
+    if (workProgress.threadId !== activeThread.id || workProgress.stage === 'cancelling') return
 
     const threadId = activeThread.id
     const eventId = workProgress.eventId
@@ -785,6 +786,7 @@ export function ZnWorkbench() {
   }, [requestWindowMode, view, windowMode])
 
   const showActiveWork = workProgress && activeThread && workProgress.threadId === activeThread.id && !workProgress.finalized
+  const stoppingWork = Boolean(cancelBusy || workProgress?.stage === 'cancelling')
   const firstResult = activeArtifacts[0] || null
 
   return (
@@ -1199,12 +1201,15 @@ export function ZnWorkbench() {
                       <h2>{activeThread ? threadDisplayTitle(activeThread.title, t) : t('work.workingOnIt')}</h2>
                       <p>{stageLabel(workProgress.stage, t)} · {workProgress.nextAction || t('work.continuing')}</p>
                     </div>
-                    {workProgress.recovery?.replayBlocked ? (
-                      <button className="zn-stop-button" type="button" disabled={cancelBusy} onClick={() => void cancelCurrentWork()}>
-                        <Stop size={15} weight="fill" />
-                        <span>{cancelBusy ? t('work.stopping') : t('work.stop')}</span>
-                      </button>
-                    ) : null}
+                    <button
+                      className="zn-stop-button"
+                      type="button"
+                      disabled={stoppingWork}
+                      onClick={() => void cancelCurrentWork()}
+                    >
+                      {stoppingWork ? <CircleNotch className="zn-spin" size={15} /> : <Stop size={15} weight="fill" />}
+                      <span>{stoppingWork ? t('work.stopping') : t('work.stop')}</span>
+                    </button>
                   </div>
 
                   <div className="zn-work-steps" aria-label={t('work.statusAria')}>
@@ -1313,8 +1318,22 @@ export function ZnWorkbench() {
                     <span className="zn-model-chip" title={localizedProviderReadinessDetail}>
                       {providerSettings?.model || 'ZN'}
                     </span>
-                    <button className="zn-send" type="submit" aria-label={t('composer.sendAria')} disabled={busy || !draft.trim()}>
-                      {busy ? <CircleNotch className="zn-spin" size={18} /> : <ArrowUp size={18} weight="bold" />}
+                    <button
+                      className={'zn-send' + (busy ? ' zn-send-stop' : '')}
+                      type={busy ? 'button' : 'submit'}
+                      aria-label={busy ? t('work.stop') : t('composer.sendAria')}
+                      disabled={
+                        busy
+                          ? !workProgress || workProgress.terminal || stoppingWork
+                          : !draft.trim()
+                      }
+                      onClick={busy ? () => void cancelCurrentWork() : undefined}
+                    >
+                      {busy
+                        ? (stoppingWork
+                          ? <CircleNotch className="zn-spin" size={17} />
+                          : <Stop size={15} weight="fill" />)
+                        : <ArrowUp size={18} weight="bold" />}
                     </button>
                   </div>
                 </div>
