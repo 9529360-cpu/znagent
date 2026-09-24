@@ -26,6 +26,7 @@ _CONTROL_TYPES = {
     "checkbox": 50002,
     "combo_box": 50003,
     "edit": 50004,
+    "document": 50030,
     "list_item": 50007,
     "menu_item": 50011,
     "radio_button": 50013,
@@ -43,7 +44,7 @@ _CONTROL_TYPE_ALIASES = {
     "treeitem": "tree_item",
     "dataitem": "data_item",
 }
-_PATTERN_NAMES = frozenset({"value", "toggle", "expand_collapse", "selection_item"})
+_PATTERN_NAMES = frozenset({"value", "text", "toggle", "expand_collapse", "selection_item"})
 _TOGGLE_STATES = {0: "off", 1: "on", 2: "indeterminate"}
 _EXPAND_STATES = {0: "collapsed", 1: "expanded", 2: "partially_expanded", 3: "leaf_node"}
 
@@ -113,6 +114,8 @@ class AutomationControlObservation:
     is_password: bool
     supported_patterns: tuple[str, ...]
     pattern: str
+    is_keyboard_focusable: bool = False
+    has_keyboard_focus: bool = False
     state: Mapping[str, Any] = field(default_factory=dict)
     captured_at: str = field(default_factory=utc_now)
 
@@ -139,6 +142,8 @@ class AutomationControlObservation:
             "is_enabled": self.is_enabled,
             "is_offscreen": self.is_offscreen,
             "is_password": self.is_password,
+            "is_keyboard_focusable": self.is_keyboard_focusable,
+            "has_keyboard_focus": self.has_keyboard_focus,
             "supported_patterns": list(self.supported_patterns),
             "pattern": self.pattern,
             "state": dict(self.state),
@@ -166,8 +171,27 @@ class AutomationControlMutationResult:
         }
 
 
+@dataclass(frozen=True, slots=True)
+class AutomationControlFocusResult:
+    success: bool
+    focus_dispatched: bool
+    before: AutomationControlObservation | None = None
+    after: AutomationControlObservation | None = None
+    error: str | None = None
+
+    def audit(self) -> dict[str, object]:
+        return {
+            "success": self.success,
+            "focus_dispatched": self.focus_dispatched,
+            "before": self.before.audit() if self.before is not None else None,
+            "after": self.after.audit() if self.after is not None else None,
+            "error": self.error,
+        }
+
+
 ControlReadFn = Callable[..., AutomationControlObservation]
 ControlMutateFn = Callable[..., AutomationControlMutationResult]
+ControlFocusFn = Callable[..., AutomationControlFocusResult]
 
 
 @dataclass(slots=True)
@@ -180,7 +204,12 @@ class _ControlRequest:
     pattern: str
     target: str | None = None
     done: threading.Event | None = None
-    result: AutomationControlObservation | AutomationControlMutationResult | None = None
+    result: (
+        AutomationControlObservation
+        | AutomationControlMutationResult
+        | AutomationControlFocusResult
+        | None
+    ) = None
     error: str | None = None
 
 
@@ -255,6 +284,29 @@ class _WindowsAutomationControlWorker:
             raise RuntimeError("UI Automation control mutation returned no result")
         return result
 
+    def focus(
+        self,
+        *,
+        process_id: int,
+        process_name: str,
+        window_handle: int,
+        selector: AutomationControlSelector,
+        pattern: str,
+    ) -> AutomationControlFocusResult:
+        result = self._submit(
+            _ControlRequest(
+                operation="focus",
+                process_id=int(process_id),
+                process_name=str(process_name),
+                window_handle=int(window_handle),
+                selector=selector,
+                pattern=str(pattern),
+            )
+        )
+        if not isinstance(result, AutomationControlFocusResult):
+            raise RuntimeError("UI Automation control focus returned no result")
+        return result
+
     def _submit(self, request: _ControlRequest):
         if self._failure:
             raise RuntimeError(self._failure)
@@ -311,9 +363,12 @@ class _WindowsAutomationControlWorker:
                 client.UIA_ControlTypePropertyId,
                 client.UIA_ClassNamePropertyId,
                 client.UIA_IsEnabledPropertyId,
+                client.UIA_IsKeyboardFocusablePropertyId,
+                client.UIA_HasKeyboardFocusPropertyId,
                 client.UIA_IsOffscreenPropertyId,
                 client.UIA_IsPasswordPropertyId,
                 client.UIA_IsValuePatternAvailablePropertyId,
+                client.UIA_IsTextPatternAvailablePropertyId,
                 client.UIA_IsTogglePatternAvailablePropertyId,
                 client.UIA_IsExpandCollapsePatternAvailablePropertyId,
                 client.UIA_IsSelectionItemPatternAvailablePropertyId,
@@ -336,6 +391,8 @@ class _WindowsAutomationControlWorker:
                     request.result = self._read(automation, client, cache, request, pattern)
                 elif request.operation == "mutate":
                     request.result = self._mutate(automation, client, cache, request, pattern)
+                elif request.operation == "focus":
+                    request.result = self._focus(automation, client, cache, request, pattern)
                 else:
                     raise ValueError(f"unknown UI Automation control operation: {request.operation}")
             except Exception as exc:
@@ -449,6 +506,8 @@ class _WindowsAutomationControlWorker:
         ).strip()
         control_type = int(element.CachedControlType)
         is_enabled = bool(element.CachedIsEnabled)
+        is_keyboard_focusable = bool(element.CachedIsKeyboardFocusable)
+        has_keyboard_focus = bool(element.CachedHasKeyboardFocus)
         is_offscreen = bool(element.CachedIsOffscreen)
         is_password = cls._cached_bool(
             element,
@@ -460,6 +519,11 @@ class _WindowsAutomationControlWorker:
                 element,
                 client.UIA_IsValuePatternAvailablePropertyId,
                 field_name="is_value_pattern_available",
+            ),
+            "text": cls._cached_bool(
+                element,
+                client.UIA_IsTextPatternAvailablePropertyId,
+                field_name="is_text_pattern_available",
             ),
             "toggle": cls._cached_bool(
                 element,
@@ -503,6 +567,8 @@ class _WindowsAutomationControlWorker:
             "is_enabled": is_enabled,
             "is_offscreen": is_offscreen,
             "is_password": is_password,
+            "is_keyboard_focusable": is_keyboard_focusable,
+            "has_keyboard_focus": has_keyboard_focus,
             "supported_patterns": supported_patterns,
         }
 
@@ -526,6 +592,27 @@ class _WindowsAutomationControlWorker:
                 "value_chars": len(value),
                 "value_sha256": text_sha256(value),
                 "read_only": bool(interface.CurrentIsReadOnly),
+            }
+        if pattern == "text":
+            unknown = element.GetCurrentPattern(client.UIA_TextPatternId)
+            if not unknown:
+                raise RuntimeError("exact UI Automation control lost TextPattern")
+            interface = unknown.QueryInterface(client.IUIAutomationTextPattern)
+            document_range = interface.DocumentRange
+            if not document_range:
+                raise RuntimeError("UI Automation TextPattern returned no document range")
+            value = document_range.GetText(_MAX_VALUE_CHARS + 1)
+            if value is None:
+                value = ""
+            if not isinstance(value, str):
+                raise RuntimeError("UI Automation TextPattern current text is not text")
+            if len(value) > _MAX_VALUE_CHARS:
+                raise RuntimeError(
+                    f"UI Automation TextPattern exceeds {_MAX_VALUE_CHARS} characters"
+                )
+            return {
+                "text_chars": len(value),
+                "text_sha256": text_sha256(value),
             }
         if pattern == "toggle":
             unknown = element.GetCurrentPattern(client.UIA_TogglePatternId)
@@ -572,6 +659,8 @@ class _WindowsAutomationControlWorker:
             is_password=snapshot["is_password"],
             supported_patterns=snapshot["supported_patterns"],
             pattern=pattern,
+            is_keyboard_focusable=bool(snapshot["is_keyboard_focusable"]),
+            has_keyboard_focus=bool(snapshot["has_keyboard_focus"]),
             state=state,
         )
 
@@ -594,6 +683,13 @@ class _WindowsAutomationControlWorker:
                 and chars == len(target)
                 and str(state.get("value_sha256") or "") == text_sha256(target)
             )
+        if pattern == "text":
+            chars = state.get("text_chars")
+            return (
+                isinstance(chars, int)
+                and chars == len(target)
+                and str(state.get("text_sha256") or "") == text_sha256(target)
+            )
         if pattern == "toggle":
             return str(state.get("toggle_state") or "") == target
         if pattern == "expand_collapse":
@@ -603,11 +699,66 @@ class _WindowsAutomationControlWorker:
         return False
 
     @classmethod
+    def _focus(cls, automation, client, cache, request: _ControlRequest, pattern: str):
+        dispatched = False
+        before: AutomationControlObservation | None = None
+        try:
+            first = cls._find_exact(automation, client, cache, request)
+            before = cls._observe(first, client, request, pattern)
+            if before.is_password:
+                raise RuntimeError("UI Automation focus refuses password controls")
+            if not before.is_enabled or before.is_offscreen:
+                raise RuntimeError("UI Automation focus requires one enabled onscreen control")
+            if not before.is_keyboard_focusable:
+                raise RuntimeError("UI Automation control is not keyboard-focusable")
+            if before.has_keyboard_focus:
+                return AutomationControlFocusResult(
+                    success=True,
+                    focus_dispatched=False,
+                    before=before,
+                    after=before,
+                )
+
+            current = cls._find_exact(automation, client, cache, request)
+            current_observation = cls._observe(current, client, request, pattern)
+            if current_observation.runtime_id != before.runtime_id:
+                raise RuntimeError(
+                    "exact UI Automation control RuntimeId changed at the final focus boundary"
+                )
+            dispatched = True
+            current.SetFocus()
+
+            post = cls._find_exact(automation, client, cache, request)
+            after = cls._observe(post, client, request, pattern)
+            if after.runtime_id != before.runtime_id:
+                raise RuntimeError("exact UI Automation control RuntimeId changed after focus")
+            focused = bool(after.has_keyboard_focus)
+            return AutomationControlFocusResult(
+                success=focused,
+                focus_dispatched=dispatched,
+                before=before,
+                after=after,
+                error=None if focused else "fresh UI Automation evidence did not confirm keyboard focus",
+            )
+        except Exception as exc:
+            return AutomationControlFocusResult(
+                success=False,
+                focus_dispatched=dispatched,
+                before=before,
+                after=None,
+                error=f"{type(exc).__name__}: {exc}",
+            )
+
+    @classmethod
     def _mutate(cls, automation, client, cache, request: _ControlRequest, pattern: str):
         dispatched = False
         before: AutomationControlObservation | None = None
         target = str(request.target or "")
         try:
+            if pattern == "text":
+                raise ValueError(
+                    "UI Automation TextPattern is read-only; use bounded focus plus keyboard input"
+                )
             if pattern == "value":
                 if len(target) > _MAX_VALUE_CHARS:
                     raise ValueError(
@@ -712,9 +863,11 @@ class NativeAutomationControlAction:
         *,
         read_fn: ControlReadFn | None = None,
         mutate_fn: ControlMutateFn | None = None,
+        focus_fn: ControlFocusFn | None = None,
     ) -> None:
         self.read_fn = read_fn
         self.mutate_fn = mutate_fn
+        self.focus_fn = focus_fn
         self._native_worker: _WindowsAutomationControlWorker | None = None
         self._worker_lock = threading.Lock()
 
@@ -765,6 +918,31 @@ class NativeAutomationControlAction:
         if not isinstance(result, AutomationControlMutationResult):
             raise TypeError(
                 "UI Automation mutate function must return AutomationControlMutationResult"
+            )
+        return result
+
+    def focus(
+        self,
+        *,
+        process_id: int,
+        process_name: str,
+        window_handle: int,
+        selector: AutomationControlSelector,
+        pattern: str,
+    ) -> AutomationControlFocusResult:
+        self._validate_native_identity(process_id, process_name, window_handle)
+        pattern = _WindowsAutomationControlWorker._normalize_pattern(pattern)
+        focus = self.focus_fn or self._worker().focus
+        result = focus(
+            process_id=int(process_id),
+            process_name=str(process_name),
+            window_handle=int(window_handle),
+            selector=selector,
+            pattern=pattern,
+        )
+        if not isinstance(result, AutomationControlFocusResult):
+            raise TypeError(
+                "UI Automation focus function must return AutomationControlFocusResult"
             )
         return result
 
