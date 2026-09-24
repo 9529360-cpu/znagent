@@ -603,7 +603,8 @@ class ActiveWorkSteeringTests(unittest.TestCase):
                     active_event.event_id,
                 )
                 progress = control.progress("product", active_event.event_id)
-                self.assertEqual(progress["stage"], "inspection_complete")
+                self.assertEqual(progress["stage"], "queued")
+                self.assertIn("active Work continues", progress["next_action"])
             finally:
                 resident.store.close()
 

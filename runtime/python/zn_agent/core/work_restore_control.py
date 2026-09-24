@@ -185,6 +185,7 @@ class RestoreAwareWorkControl(ResidentWorkControl):
                         task,
                         reference="current",
                         ingress_thread_id=normalized_thread,
+                        live=True,
                     )
 
                 # A new message sent inside the same active conversation is
@@ -333,6 +334,11 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         )
         if artifact_summary:
             summary += f" · artifacts {artifact_summary}"
+        if detail.get("live_inspection") is True:
+            summary += " · inspection only; active Work continues"
+            progress["next_action"] = self._public_text(summary, limit=1400)
+            return progress
+
         summary += " · inspection only; execution was not resumed"
         progress["stage"] = "inspection_complete"
         progress["next_action"] = self._public_text(summary, limit=1400)
@@ -346,6 +352,7 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         *,
         reference: str,
         ingress_thread_id: str,
+        live: bool = False,
     ):
         event = self.resident.store.get_event(run.event_id)
         if event is None:
@@ -365,6 +372,7 @@ class RestoreAwareWorkControl(ResidentWorkControl):
                 detail={
                     "continuation": True,
                     "inspection": True,
+                    "live_inspection": bool(live),
                     "reference": reference,
                     "inspected_event_id": run.event_id,
                     "new_resident_event": False,
