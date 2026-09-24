@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import tempfile
+import threading
+import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from zn_agent.core.daemon import ResidentRpcServer
@@ -242,6 +245,38 @@ class ActiveWorkSteeringTests(unittest.TestCase):
                     "side_effect_recovery",
                 )
                 self.assertEqual(ledger.list_messages("shell"), [])
+            finally:
+                resident.store.close()
+
+    def test_pending_stop_request_wins_over_new_same_thread_steering(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._runtime(Path(tmp) / "kernel.db")
+            try:
+                control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+                ledger = control.ledger
+                ledger.create_thread(thread_id="product", title="Product")
+                _, event = ledger.start("product", "旧计划：做登录和核心记账")
+
+                stopping = control.cancel("product", event.event_id)
+                self.assertEqual(stopping["stage"], "cancelling")
+                self.assertIsNotNone(
+                    resident.store.get_event_cancellation_request(event.event_id)
+                )
+
+                with self.assertRaisesRegex(RuntimeError, "pending stop request"):
+                    control.start(
+                        "product",
+                        "改成只做核心记账，不要登录",
+                    )
+
+                self.assertEqual(ledger.plan_version("product"), 1)
+                self.assertEqual(
+                    ledger.get_run(event.event_id).ledger_state,
+                    "active",
+                )
+                self.assertIsNotNone(
+                    resident.store.get_event_cancellation_request(event.event_id)
+                )
             finally:
                 resident.store.close()
 
@@ -498,6 +533,371 @@ class ActiveWorkSteeringTests(unittest.TestCase):
                 self.assertEqual(
                     server.work_control.ledger.get_run(old_event_id).ledger_state,
                     "stale_finalized",
+                )
+            finally:
+                resident.store.close()
+
+    def test_same_active_thread_message_is_steering_without_continue_prefix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._runtime(Path(tmp) / "kernel.db")
+            try:
+                control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+                ledger = control.ledger
+                ledger.create_thread(thread_id="product", title="Product")
+                _, old_event = ledger.start(
+                    "product",
+                    "先把登录和核心记账都做出来",
+                )
+
+                snapshot, new_event = control.start(
+                    "product",
+                    "登录不要了，先把核心记账做完，界面简单一点",
+                )
+
+                self.assertEqual(snapshot[0].thread_id, "product")
+                self.assertNotEqual(new_event.event_id, old_event.event_id)
+                self.assertEqual(ledger.plan_version("product"), 2)
+                steering = new_event.payload["work_steering"]
+                self.assertEqual(steering["mode"], "active_steer")
+                self.assertEqual(steering["reference"], "current")
+                self.assertEqual(
+                    steering["objective"],
+                    "登录不要了，先把核心记账做完，界面简单一点",
+                )
+                self.assertEqual(
+                    ledger.get_run(old_event.event_id).ledger_state,
+                    "stale_finalized",
+                )
+                self.assertEqual(
+                    ledger.get_run(new_event.event_id).ledger_state,
+                    "active",
+                )
+            finally:
+                resident.store.close()
+
+    def test_same_active_thread_progress_question_is_read_only_inspection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._runtime(Path(tmp) / "kernel.db")
+            try:
+                control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+                ledger = control.ledger
+                ledger.create_thread(thread_id="product", title="Product")
+                _, active_event = ledger.start("product", "正在做核心记账")
+
+                snapshot, inspected_event = control.start(
+                    "product",
+                    "现在做到哪了？",
+                )
+
+                self.assertEqual(snapshot[0].thread_id, "product")
+                self.assertEqual(inspected_event.event_id, active_event.event_id)
+                self.assertEqual(ledger.plan_version("product"), 1)
+                self.assertEqual(
+                    ledger.get_run(active_event.event_id).ledger_state,
+                    "active",
+                )
+                messages = ledger.list_messages("product")
+                self.assertTrue(messages[-1].detail.get("inspection"))
+                self.assertEqual(
+                    messages[-1].detail.get("inspected_event_id"),
+                    active_event.event_id,
+                )
+                progress = control.progress("product", active_event.event_id)
+                self.assertEqual(progress["stage"], "queued")
+                self.assertIn("active Work continues", progress["next_action"])
+            finally:
+                resident.store.close()
+
+    def test_stop_that_settles_while_steering_waits_wins_without_new_event(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._runtime(Path(tmp) / "kernel.db")
+            control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+            ledger = control.ledger
+            ledger.create_thread(thread_id="product", title="Product")
+            _, old_event = ledger.start("product", "旧计划：执行最后一步")
+            before_ids = {
+                item.event_id for item in resident.store.list_events(limit=32)
+            }
+
+            steering_finished = threading.Event()
+            steer_result = {}
+
+            def steer_now():
+                try:
+                    steer_result["value"] = control.start(
+                        "product",
+                        "这条纠偏不应覆盖稍后发生的 Stop",
+                    )
+                finally:
+                    steering_finished.set()
+
+            resident._cycle_lock.acquire()
+            try:
+                steering = threading.Thread(target=steer_now, daemon=True)
+                steering.start()
+                time.sleep(0.08)
+                self.assertTrue(steering.is_alive())
+
+                claimed = resident.store.claim_event(old_event.event_id)
+                self.assertIsNotNone(claimed)
+                resident.store.complete_event(
+                    EventOutcome(
+                        event_id=old_event.event_id,
+                        success=False,
+                        cancelled=True,
+                        execution_path=ExecutionPath.CONTROL,
+                        response="Work stopped.",
+                        reason="user requested Work stop",
+                    )
+                )
+            finally:
+                resident._cycle_lock.release()
+
+            steering.join(3.0)
+            try:
+                self.assertTrue(steering_finished.is_set())
+                self.assertIn("value", steer_result)
+                _, returned_event = steer_result["value"]
+                self.assertEqual(returned_event.event_id, old_event.event_id)
+                self.assertEqual(
+                    {
+                        item.event_id for item in resident.store.list_events(limit=32)
+                    },
+                    before_ids,
+                )
+                progress = control.progress("product", old_event.event_id)
+                self.assertEqual(progress["status"], "cancelled")
+                self.assertTrue(progress["finalized"])
+                self.assertIsNone(ledger._active_run_for_thread("product"))
+            finally:
+                resident.store.close()
+
+    def test_message_waiting_on_final_step_becomes_completed_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._runtime(Path(tmp) / "kernel.db")
+            control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+            ledger = control.ledger
+            ledger.create_thread(thread_id="product", title="Product")
+            _, old_event = ledger.start("product", "旧计划：完成最后一个步骤")
+
+            steering_finished = threading.Event()
+            steer_result = {}
+
+            def steer_now():
+                try:
+                    steer_result["value"] = control.start(
+                        "product",
+                        "旧任务如果已经完成，就继续处理这条新要求",
+                    )
+                finally:
+                    steering_finished.set()
+
+            resident._cycle_lock.acquire()
+            try:
+                steering = threading.Thread(target=steer_now, daemon=True)
+                steering.start()
+                time.sleep(0.08)
+                self.assertTrue(
+                    steering.is_alive(),
+                    "the message should wait for the current final step boundary",
+                )
+
+                claimed = resident.store.claim_event(old_event.event_id)
+                self.assertIsNotNone(claimed)
+                resident.store.complete_event(
+                    EventOutcome(
+                        event_id=old_event.event_id,
+                        success=True,
+                        execution_path=ExecutionPath.CAPABILITY,
+                        response="old Work completed at the boundary",
+                    )
+                )
+            finally:
+                resident._cycle_lock.release()
+
+            steering.join(3.0)
+            try:
+                self.assertTrue(steering_finished.is_set())
+                self.assertIn("value", steer_result)
+                _, followup_event = steer_result["value"]
+                self.assertNotEqual(followup_event.event_id, old_event.event_id)
+                continuation = followup_event.payload["work_continuation"]
+                self.assertEqual(continuation["mode"], "completed_followup")
+                self.assertEqual(
+                    continuation["previous_event_id"],
+                    old_event.event_id,
+                )
+                self.assertTrue(continuation["previous_outcome_success"])
+                self.assertFalse(continuation["replay_previous_event"])
+                self.assertEqual(
+                    ledger.get_run(old_event.event_id).ledger_state,
+                    "finalized",
+                )
+                self.assertEqual(
+                    ledger.get_run(followup_event.event_id).ledger_state,
+                    "active",
+                )
+            finally:
+                resident.store.close()
+
+    def test_steering_waits_through_event_claim_and_state_initialization(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._runtime(Path(tmp) / "kernel.db")
+            control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+            ledger = control.ledger
+            ledger.create_thread(thread_id="product", title="Product")
+            _, old_event = ledger.start("product", "旧计划：先做登录")
+
+            entered_state = threading.Event()
+            release_state = threading.Event()
+            steering_finished = threading.Event()
+            original_state_for_event = resident._state_for_event
+            steer_result = {}
+
+            def blocked_state_for_event(event, **kwargs):
+                entered_state.set()
+                self.assertTrue(release_state.wait(3.0))
+                return original_state_for_event(event, **kwargs)
+
+            def steer_now():
+                try:
+                    steer_result["value"] = control.start(
+                        "product",
+                        "改成不要登录，只做核心记账",
+                    )
+                finally:
+                    steering_finished.set()
+
+            try:
+                with patch.object(
+                    resident,
+                    "_state_for_event",
+                    side_effect=blocked_state_for_event,
+                ), patch.object(
+                    resident,
+                    "_advance_event_step",
+                    return_value=None,
+                ):
+                    runner = threading.Thread(
+                        target=lambda: resident.run_once(
+                            thought=SimpleNamespace(),
+                            target_event_id=old_event.event_id,
+                        ),
+                        daemon=True,
+                    )
+                    runner.start()
+                    self.assertTrue(entered_state.wait(2.0))
+
+                    steering = threading.Thread(target=steer_now, daemon=True)
+                    steering.start()
+                    time.sleep(0.08)
+                    self.assertTrue(
+                        steering.is_alive(),
+                        "steering must wait until claimed event state initialization finishes",
+                    )
+                    self.assertEqual(ledger.plan_version("product"), 1)
+
+                    release_state.set()
+                    runner.join(3.0)
+                    steering.join(3.0)
+
+                self.assertTrue(steering_finished.is_set())
+                self.assertIn("value", steer_result)
+                self.assertEqual(ledger.plan_version("product"), 2)
+                _, new_event = steer_result["value"]
+                self.assertNotEqual(new_event.event_id, old_event.event_id)
+                self.assertEqual(
+                    ledger.get_run(old_event.event_id).ledger_state,
+                    "stale_finalized",
+                )
+            finally:
+                resident.store.close()
+
+    def test_steering_waits_for_current_resident_step_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._runtime(Path(tmp) / "kernel.db")
+            control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
+            ledger = control.ledger
+            ledger.create_thread(thread_id="product", title="Product")
+            _, old_event = ledger.start("product", "旧计划：做登录和核心记账")
+
+            entered_step = threading.Event()
+            release_step = threading.Event()
+            steering_finished = threading.Event()
+            run_finished = threading.Event()
+            advance_calls = []
+            run_result = {}
+            steer_result = {}
+
+            def advance_once(event, state, **kwargs):
+                advance_calls.append((event.event_id, state.stage))
+                if len(advance_calls) > 1:
+                    raise AssertionError("old plan advanced another Resident step after steering")
+                entered_step.set()
+                self.assertTrue(release_step.wait(3.0))
+                return None
+
+            def pulse_after_boundary():
+                self.assertTrue(steering_finished.wait(3.0))
+                return SimpleNamespace(thought=None)
+
+            def run_old_plan():
+                try:
+                    run_result["value"] = resident.run_once(
+                        target_event_id=old_event.event_id
+                    )
+                finally:
+                    run_finished.set()
+
+            def steer_now():
+                try:
+                    steer_result["value"] = control.start(
+                        "product",
+                        "改成只做核心记账，不要登录",
+                    )
+                finally:
+                    steering_finished.set()
+
+            try:
+                with patch.object(resident, "_advance_event_step", side_effect=advance_once), patch.object(
+                    resident,
+                    "pulse",
+                    side_effect=pulse_after_boundary,
+                ):
+                    runner = threading.Thread(target=run_old_plan, daemon=True)
+                    runner.start()
+                    self.assertTrue(entered_step.wait(2.0))
+
+                    steering = threading.Thread(target=steer_now, daemon=True)
+                    steering.start()
+                    time.sleep(0.08)
+                    self.assertTrue(
+                        steering.is_alive(),
+                        "steering must wait while the current Resident step owns the cycle lock",
+                    )
+                    self.assertEqual(ledger.plan_version("product"), 1)
+
+                    release_step.set()
+                    steering.join(3.0)
+                    runner.join(3.0)
+
+                self.assertTrue(steering_finished.is_set())
+                self.assertTrue(run_finished.is_set())
+                self.assertIn("value", steer_result)
+                self.assertEqual(len(advance_calls), 1)
+                self.assertEqual(ledger.plan_version("product"), 2)
+
+                old_result = run_result.get("value")
+                self.assertIsNotNone(old_result)
+                self.assertFalse(old_result.success)
+                self.assertEqual(old_result.execution_path, ExecutionPath.CONTROL)
+                self.assertIn("superseded by user steering", old_result.reason or "")
+
+                _, new_event = steer_result["value"]
+                self.assertNotEqual(new_event.event_id, old_event.event_id)
+                self.assertEqual(
+                    ledger.get_run(new_event.event_id).ledger_state,
+                    "active",
                 )
             finally:
                 resident.store.close()
