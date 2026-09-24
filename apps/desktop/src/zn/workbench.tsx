@@ -38,7 +38,6 @@ import {
   detachZnWorkspace,
   loadZnProviderSettings,
   loadZnResidentSnapshot,
-  loadZnWorkProgress,
   loadZnWorkThread,
   loadZnWorkThreads,
   startZnWork,
@@ -227,10 +226,6 @@ function threadDisplayTitle(title: string, t: TFunction): string {
   return title === 'New work' ? t('sidebar.newWork') : title
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise(resolve => window.setTimeout(resolve, ms))
-}
-
 function focusComposerInput(): void {
   window.requestAnimationFrame(() => {
     const composer = document.querySelector<HTMLTextAreaElement>('.zn-composer textarea')
@@ -379,7 +374,7 @@ export function ZnWorkbench() {
     )
   }, [])
 
-  const busy = useZnWorkReconnection({
+  const workActive = useZnWorkReconnection({
     thread: activeThread,
     submissionBusy,
     progress: workProgress,
@@ -389,6 +384,7 @@ export function ZnWorkbench() {
     onHealth: setResidentHealth,
     t
   })
+  const stoppingWork = Boolean(cancelBusy || workProgress?.stage === 'cancelling')
 
   const refreshResident = useCallback(async () => {
     setResidentHealth(previous => (previous === 'live' ? previous : 'connecting'))
@@ -527,7 +523,7 @@ export function ZnWorkbench() {
   }, [replaceThread])
 
   const attachWorkspace = useCallback(async () => {
-    if (!activeThread || workspaceBusy || busy) return
+    if (!activeThread || workspaceBusy || workActive) return
     const threadId = activeThread.id
     setWorkspaceBusy(true)
     try {
@@ -540,10 +536,10 @@ export function ZnWorkbench() {
     } finally {
       setWorkspaceBusy(false)
     }
-  }, [activeThread, busy, replaceThread, workspaceBusy])
+  }, [activeThread, replaceThread, workActive, workspaceBusy])
 
   const detachWorkspace = useCallback(async () => {
-    if (!activeThread?.workspace || workspaceBusy || busy) return
+    if (!activeThread?.workspace || workspaceBusy || workActive) return
     const threadId = activeThread.id
     setWorkspaceBusy(true)
     try {
@@ -555,7 +551,7 @@ export function ZnWorkbench() {
     } finally {
       setWorkspaceBusy(false)
     }
-  }, [activeThread, busy, replaceThread, workspaceBusy])
+  }, [activeThread, replaceThread, workActive, workspaceBusy])
 
   const cancelCurrentWork = useCallback(async () => {
     if (!activeThread || !workProgress || cancelBusy || workProgress.finalized) return
@@ -581,7 +577,7 @@ export function ZnWorkbench() {
     async (event: FormEvent) => {
       event.preventDefault()
       const task = draft.trim()
-      if (!task || busy || !activeThread) return
+      if (!task || submissionBusy || stoppingWork || !activeThread) return
 
       const threadId = activeThread.id
       let residentAccepted = false
@@ -598,42 +594,22 @@ export function ZnWorkbench() {
         residentAccepted = true
         replaceThread(started.thread)
         setActiveThreadId(started.thread.id)
-        setWorkProgress(started.progress)
+        setWorkProgress(started.progress.finalized ? null : started.progress)
         setResidentError(null)
         setResidentHealth('live')
 
-        const progressThreadId = started.progress.threadId
-        let current = started.progress
-        let finalThread = started.progress.finalized ? started.thread : undefined
-        while (!current.terminal && current.stage !== 'inspection_complete') {
-          await sleep(current.assistantResponse ? 260 : 650)
-          const update = await loadZnWorkProgress(progressThreadId, current.eventId)
-          current = update.progress
-          setWorkProgress(current)
-          if (update.thread) finalThread = update.thread
-        }
-
-        if (current.stage === 'inspection_complete') {
-          void loadZnResidentSnapshot().then(setResidentSnapshot).catch(() => undefined)
-          return
-        }
-        if (!current.finalized) {
-          throw new Error(current.error || t('error.missingDurableOutcome'))
-        }
-        if (!finalThread) {
-          const update = await loadZnWorkProgress(progressThreadId, current.eventId)
-          finalThread = update.thread
-        }
-        if (finalThread) {
-          replaceThread(finalThread)
-          if (finalThread.artifacts.length > 0) {
-            setSelectedArtifactId(finalThread.artifacts[0].id)
+        // Submission owns only the RPC acceptance boundary. Once the Resident
+        // durably accepts the event (including a same-thread steering event),
+        // release the composer immediately. The read-only reconnection observer
+        // follows progress from here; it never resubmits Work.
+        if (started.progress.finalized) {
+          if (started.thread.artifacts.length > 0) {
+            setSelectedArtifactId(started.thread.artifacts[0].id)
             setContextOpen(false)
             setArtifactOpen(false)
           }
+          void loadZnResidentSnapshot().then(setResidentSnapshot).catch(() => undefined)
         }
-        setWorkProgress(null)
-        void loadZnResidentSnapshot().then(setResidentSnapshot).catch(() => undefined)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if (!residentAccepted) {
@@ -657,7 +633,7 @@ export function ZnWorkbench() {
         setBusy(false)
       }
     },
-    [activeThread, busy, draft, replaceThread, t]
+    [activeThread, draft, replaceThread, stoppingWork, submissionBusy, t]
   )
 
   const saveProvider = useCallback(async (event: FormEvent) => {
@@ -786,7 +762,6 @@ export function ZnWorkbench() {
   }, [requestWindowMode, view, windowMode])
 
   const showActiveWork = workProgress && activeThread && workProgress.threadId === activeThread.id && !workProgress.finalized
-  const stoppingWork = Boolean(cancelBusy || workProgress?.stage === 'cancelling')
   const firstResult = activeArtifacts[0] || null
 
   return (
@@ -874,11 +849,11 @@ export function ZnWorkbench() {
             </div>
           </div>
           <div className="zn-workspace-actions">
-            <button type="button" disabled={workspaceBusy || busy || !activeThread} onClick={() => void attachWorkspace()}>
+            <button type="button" disabled={workspaceBusy || workActive || !activeThread} onClick={() => void attachWorkspace()}>
               {workspaceBusy ? t('common.working') : activeWorkspace ? t('sidebar.changeFolder') : t('sidebar.attachFolder')}
             </button>
             {activeWorkspace ? (
-              <button type="button" disabled={workspaceBusy || busy} onClick={() => void detachWorkspace()}>
+              <button type="button" disabled={workspaceBusy || workActive} onClick={() => void detachWorkspace()}>
                 {t('sidebar.detach')}
               </button>
             ) : null}
@@ -1141,7 +1116,7 @@ export function ZnWorkbench() {
                         <span>{t('home.reviewWorkspace')}</span>
                       </button>
                     ) : (
-                      <button type="button" disabled={workspaceBusy || busy || !activeThread} onClick={() => void attachWorkspace()}>
+                      <button type="button" disabled={workspaceBusy || workActive || !activeThread} onClick={() => void attachWorkspace()}>
                         <FolderSimple size={17} />
                         <span>{workspaceBusy ? t('home.attaching') : t('sidebar.attachFolder')}</span>
                       </button>
@@ -1304,7 +1279,7 @@ export function ZnWorkbench() {
                       type="button"
                       aria-label={activeWorkspace ? t('composer.changeAttachedFolder') : t('composer.attachFolder')}
                       title={activeWorkspace ? t('composer.changeFolder') : t('composer.attachFolder')}
-                      disabled={workspaceBusy || busy || !activeThread}
+                      disabled={workspaceBusy || workActive || !activeThread}
                       onClick={() => void attachWorkspace()}
                     >
                       <Plus size={18} />
@@ -1319,27 +1294,20 @@ export function ZnWorkbench() {
                       {providerSettings?.model || 'ZN'}
                     </span>
                     <button
-                      className={'zn-send' + (busy ? ' zn-send-stop' : '')}
-                      type={busy ? 'button' : 'submit'}
-                      aria-label={busy ? t('work.stop') : t('composer.sendAria')}
-                      disabled={
-                        busy
-                          ? !workProgress || workProgress.terminal || stoppingWork
-                          : !draft.trim()
-                      }
-                      onClick={busy ? () => void cancelCurrentWork() : undefined}
+                      className="zn-send"
+                      type="submit"
+                      aria-label={t('composer.sendAria')}
+                      disabled={submissionBusy || stoppingWork || !draft.trim()}
                     >
-                      {busy
-                        ? (stoppingWork
-                          ? <CircleNotch className="zn-spin" size={17} />
-                          : <Stop size={15} weight="fill" />)
+                      {submissionBusy
+                        ? <CircleNotch className="zn-spin" size={17} />
                         : <ArrowUp size={18} weight="bold" />}
                     </button>
                   </div>
                 </div>
               </div>
               <div className="zn-composer-caption">
-                {busy ? t('composer.background') : ''}{t('composer.shortcut')}
+                {workActive ? t('composer.background') : ''}{t('composer.shortcut')}
               </div>
             </form>
           </>
@@ -1388,15 +1356,15 @@ export function ZnWorkbench() {
                 <div className="zn-context-value"><FolderSimple size={16} />{activeWorkspace.name}</div>
                 <div className="zn-context-path" title={activeWorkspace.path}>{activeWorkspace.path}</div>
                 <div className="zn-inline-actions zn-context-actions">
-                  <button type="button" disabled={workspaceBusy || busy} onClick={() => void attachWorkspace()}>{t('details.change')}</button>
-                  <button type="button" disabled={workspaceBusy || busy} onClick={() => void detachWorkspace()}>{t('details.detach')}</button>
+                  <button type="button" disabled={workspaceBusy || workActive} onClick={() => void attachWorkspace()}>{t('details.change')}</button>
+                  <button type="button" disabled={workspaceBusy || workActive} onClick={() => void detachWorkspace()}>{t('details.detach')}</button>
                 </div>
               </>
             ) : (
               <>
                 <p className="zn-muted zn-small">{t('details.noFolder')}</p>
                 <div className="zn-context-actions">
-                  <button type="button" disabled={workspaceBusy || busy || !activeThread} onClick={() => void attachWorkspace()}>{t('details.attachFolder')}</button>
+                  <button type="button" disabled={workspaceBusy || workActive || !activeThread} onClick={() => void attachWorkspace()}>{t('details.attachFolder')}</button>
                 </div>
               </>
             )}
@@ -1483,7 +1451,7 @@ export function ZnWorkbench() {
                       <ZnMissingRestoreControls
                         threadId={activeThread.id}
                         point={point}
-                        disabled={restoreBusy || busy}
+                        disabled={restoreBusy || workActive}
                         onRealityChanged={() => refreshRestorePoints(activeThread.id)}
                       />
                     ) : null}
