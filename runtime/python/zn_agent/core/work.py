@@ -131,6 +131,7 @@ class ResidentWorkLedger:
         self.resident = resident
         self.path = Path(resident.store.path)
         self._lock = threading.RLock()
+        self._response_streams: dict[str, tuple[list[str], int]] = {}
         self._init_schema()
 
     def _connect(self) -> sqlite3.Connection:
@@ -632,6 +633,25 @@ class ResidentWorkLedger:
         self._finalize_run(event.event_id, run=run)
         return self.get_snapshot(thread_id), run
 
+    def reset_response_stream(self, event_id: str) -> None:
+        normalized_event = str(event_id or "").strip()
+        if not normalized_event:
+            return
+        with self._lock:
+            previous = self._response_streams.get(normalized_event)
+            sequence = previous[1] + 1 if previous else 0
+            self._response_streams[normalized_event] = ([], sequence)
+
+    def publish_response_delta(self, event_id: str, delta: str) -> None:
+        normalized_event = str(event_id or "").strip()
+        text = str(delta or "")
+        if not normalized_event or not text:
+            return
+        with self._lock:
+            chunks, sequence = self._response_streams.setdefault(normalized_event, ([], 0))
+            chunks.append(text)
+            self._response_streams[normalized_event] = (chunks, sequence + 1)
+
     def progress(self, thread_id: str, event_id: str) -> dict[str, Any]:
         normalized_thread = self._normalize_thread_id(thread_id)
         normalized_event = str(event_id or "").strip()
@@ -754,6 +774,14 @@ class ResidentWorkLedger:
             result["model_invocations"] = max(0, int(completed.model_invocations))
         if terminal and not finalized:
             result["error"] = "resident event is terminal but no durable work outcome is available"
+        if active:
+            with self._lock:
+                streamed = self._response_streams.get(normalized_event)
+                chunks = list(streamed[0]) if streamed is not None else []
+                sequence = streamed[1] if streamed is not None else 0
+            if chunks:
+                result["assistant_response"] = "".join(chunks)
+                result["response_sequence"] = sequence
         return result
 
     def get_run(self, event_id: str) -> WorkRun | None:
@@ -896,6 +924,7 @@ class ResidentWorkLedger:
             work_run.updated_at = now
             work_run.finalized_at = now
             self._save_run(work_run)
+            self._response_streams.pop(event_id, None)
 
     def _collect_artifacts(
         self,

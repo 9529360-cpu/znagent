@@ -1,100 +1,24 @@
-# Design QA — ZN Resident Shell v2
+# Desktop settings visual QA
+
+## Reference and capture
+- Reference: user-provided ChatGPT Settings screenshot in this conversation (General page, 1278 × 1600 image).
+- Implementation: `.dev/zn-api-final-qa.png`, captured from the isolated Leopard ZN source build at 2560 × 1600 monitor resolution.
+- State: Settings → API & models; connection not configured; no secret entered or shown.
+- The two images differ in page and aspect ratio, so this is a directional layout comparison rather than a pixel comparison.
+
+## Findings
+- The settings navigation uses grouped sections and a clear active state, following the reference hierarchy.
+- API setup now uses a single-column form with provider, model ID, API address, and password field; content width is capped and aligned to the left edge of the main pane.
+- At the final capture, the form card and fields fit within the visible pane. Lower actions require normal vertical scrolling.
+- API secrets remain write-only; saved credentials are not rendered back into the field.
+- General, background service, updates, compact mode, expanded conversation, and artifact workbench were not re-captured in this QA pass. Their final visual behavior is not verified here.
+
+## Changes made during review
+- Replaced the initial wide form layout with a single column.
+- Added min/max width constraints after the first capture showed right-edge clipping.
+- Aligned the settings content to the left with a smaller responsive gutter after a second capture showed excessive centered whitespace.
 
 ## Result
+blocked
 
-**passed**
-
-The resident shell now matches the intended product pattern from the YOYO black-box reference: compact-first invocation, a calm assistant surface, and progressive expansion into work/history/details instead of a permanent three-column admin console.
-
-## Source of visual truth
-
-- Source: `C:\Users\Public\yoyo-static-evidence\small-large.png`
-- Source pixels: **2240 × 1172**
-- Source state: YOYO small/large resident assistant shell comparison.
-- Additional black-box references reviewed: `work-progress.png`, `workstation.png`, `cross-search.png`, and `fast-read.png`.
-- Comparison board: `C:\Users\Public\zn-design-qa\resident-shell-v2\yoyo-vs-zn-r4.png`
-
-## Implementation captures
-
-- Compact: `C:\Users\Public\zn-design-qa\resident-shell-v2\zn-compact-r4.png`
-- Captured pixels: **494 × 629**
-- Intended Electron content size: **480 × 620**
-- Windows DPI: **144 (150%)**
-- State: clean first-run profile, Resident ready, no workspace attached, cognition not configured.
-
-- Expanded: `C:\Users\Public\zn-design-qa\resident-shell-v2\zn-expanded-r4.png`
-- Captured pixels: **1134 × 767**
-- Intended Electron content size: **1120 × 760**
-- Windows DPI: **144 (150%)**
-- State: same clean first-run work, expanded history/workspace shell.
-## Full-view comparison
-
-The R4 comparison board was reviewed with the YOYO source and both real Electron states in the same image. The important structural match is present:
-
-- compact invocation is one assistant surface, not a shrunk three-column desktop app;
-- expanded mode reveals history/workspace/navigation only when requested;
-- the message composer remains the primary action in both modes;
-- assistant identity/readiness is visible without exposing model/runtime internals as the main hierarchy;
-- technical work evidence, restore points, and artifacts are available through progressive disclosure rather than permanent panels;
-- native Windows controls and ZN controls have separate safe areas.
-
-The source uses a light/pale system palette while ZN intentionally keeps its dark navy/Mica visual language. This is a brand/token deviation, not a structural mismatch. Copy and icons are also ZN-native rather than cloned from YOYO.
-
-## Iteration history
-
-### R1 — P1: desktop/developer chrome
-
-The first real Electron pass still exposed the native `File / Edit / View / Window` menu and conventional title chrome. It made the shell read like a development desktop application rather than a resident assistant.
-
-Fix: switched to Electron hidden title bar + Windows title-bar overlay, removed the application menu with `window.setMenu(null)`, enabled Mica, and kept rounded Windows corners.
-
-Verification: UI Automation reports `File`, `Edit`, `View`, and `Window` as absent while Windows minimize/maximize/close controls remain available.
-
-### R2 — P1: global invocation did not always return to compact
-
-When the expanded window was minimized, Windows could ignore the resize request because resize happened before the native window was restored.
-
-Fix: `showPrimaryWindow()` now restores/shows the resident surface before applying compact/expanded bounds.
-
-Verification: from expanded + minimized, `Ctrl+Alt+Space` restores foreground ZN, hides expanded sidebar content, exposes `Expand ZN`, and focuses `Message ZN`.
-### R3 — P2: provider warning dominated the assistant home
-
-The expanded empty state initially opened with a large “No model configured” notice. That recreated an admin/settings-first hierarchy and competed with “What do you want to do?”.
-
-Fix: removed the large home notice. Provider readiness is now a quiet readiness item (`Cognition setup needed`) and provider explanation remains in Settings. Local deterministic paths stay available.
-
-### R3 — P2: custom controls competed with Windows controls
-
-The custom top-bar buttons did not reserve a Windows Window Controls Overlay safe area.
-
-Fix: the v2 top bar reserves 152 px on the right, is a draggable app region, and marks custom action buttons as no-drag.
-
-### R4 — final clean-state pass
-
-The app was relaunched with a clean Electron user-data directory so cached work did not contaminate the comparison. Compact and expanded screenshots were recaptured from the same first-run state and compared against the YOYO source.
-
-No unresolved P0, P1, or P2 visual mismatch remains in the resident-shell scope.
-
-## Functional/visual checks
-
-- Root desktop TypeScript typecheck: pass.
-- Desktop ownership contract tests: 17/17 pass after the final shell changes.
-- Real Electron Resident connection: pass.
-- Compact/expanded transition: pass.
-- Global invocation from minimized expanded state: pass.
-- Foreground restoration: pass.
-- Composer keyboard focus after invocation: pass.
-- Native menu removal: pass.
-- Windows system controls retained: pass.
-- Custom/system title-bar control overlap: not observed.
-- Reduced-motion rule remains present.
-- Existing delegated progress, execution evidence, artifact, and restore-point UI contracts remain represented.
-
-## Final severity status
-
-- P0: 0
-- P1: 0
-- P2: 0
-- P3: intentional palette/content differences only.
-
-result: passed
+The API settings view is materially improved and its final screenshot no longer shows the earlier horizontal clipping. The remaining settings sections and the three chat/workbench states still need a fresh visual pass before this desktop redesign can be marked complete.

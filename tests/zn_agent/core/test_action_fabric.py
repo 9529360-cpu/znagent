@@ -222,6 +222,7 @@ class MachineActionFabricTests(unittest.TestCase):
             (
                 "windows.application.activate",
                 "windows.application.launch",
+                "windows.application.resolve",
                 "windows.audio.volume.read",
                 "windows.audio.volume.set",
                 "windows.context.read",
@@ -240,8 +241,13 @@ class MachineActionFabricTests(unittest.TestCase):
                 "windows.ui.control.select",
                 "windows.ui.control.set_value",
                 "windows.ui.control.toggle",
+                "windows.ui.control.type_text",
                 "windows.ui.controls.list",
             ),
+        )
+        self.assertEqual(
+            registry.descriptor("windows.application.resolve").body_action_kind,
+            "resolve_application",
         )
         self.assertEqual(
             registry.descriptor("windows.application.launch").body_action_kind,

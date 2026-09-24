@@ -906,7 +906,8 @@ class MachineActionExecutionTests(unittest.TestCase):
             ),
         )
 
-        second = runtime.verify(first)
+        checkpoint = runtime.reverification_checkpoint(first)
+        second = runtime.verify_checkpoint(checkpoint)
 
         self.assertTrue(second.success)
         self.assertEqual(second.status, "verified")
@@ -916,6 +917,94 @@ class MachineActionExecutionTests(unittest.TestCase):
         self.assertEqual(
             second.observations[-1].data["visible_window_handles"],
             [99],
+        )
+
+    def test_activation_reverification_requires_exact_admitted_foreground_window(self) -> None:
+        descriptor = ActionDescriptor(
+            action_id="windows.application.activate",
+            provider="zn.windows",
+            description="Activate application",
+            body_action_kind="activate_application_window",
+            effect_class="potential_side_effect",
+        )
+        body = _FakeBody()
+        body.handlers["activate_application_window"] = (
+            lambda kind, event_id, args: BodyActionResult(
+                action_id="body-activate",
+                kind=kind,
+                success=True,
+                data={
+                    "dispatch_sent": True,
+                    "window_handle": 99,
+                    "process_id": 41,
+                },
+                event_id=event_id,
+            )
+        )
+        graph = _FakeGraph()
+        graph.processes = (
+            SimpleNamespace(process_id=41, resolved_app_id="app.demo"),
+        )
+        graph.windows_rows = (
+            SimpleNamespace(
+                hwnd=99,
+                process_id=41,
+                resolved_app_id="app.demo",
+                visible=True,
+                foreground=False,
+            ),
+        )
+        runtime = build_machine_action_execution_runtime(
+            _registry(descriptor),
+            body,
+            device_capabilities=graph,
+        )
+
+        first = runtime.execute(
+            ActionRequest(
+                "windows.application.activate",
+                {"application_id": "app.demo"},
+                event_id="event-activate-1",
+            )
+        )
+        self.assertEqual(first.status, "pending")
+        self.assertEqual(len(body.calls), 1)
+
+        graph.windows_rows = (
+            SimpleNamespace(
+                hwnd=100,
+                process_id=41,
+                resolved_app_id="app.demo",
+                visible=True,
+                foreground=True,
+            ),
+            SimpleNamespace(
+                hwnd=99,
+                process_id=41,
+                resolved_app_id="app.demo",
+                visible=True,
+                foreground=False,
+            ),
+        )
+        sibling = runtime.verify(first)
+        self.assertEqual(sibling.status, "pending")
+
+        graph.windows_rows = (
+            SimpleNamespace(
+                hwnd=99,
+                process_id=41,
+                resolved_app_id="app.demo",
+                visible=True,
+                foreground=True,
+            ),
+        )
+        verified = runtime.verify(sibling)
+        self.assertTrue(verified.success)
+        self.assertEqual(verified.status, "verified")
+        self.assertEqual(len(body.calls), 1)
+        self.assertEqual(
+            verified.verification.evidence["expected_window_handle"],
+            99,
         )
 
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import uuid
+from typing import Callable
 
 from .critic import Critic, DefaultCritic
 from .evolution import EvolutionEngine
@@ -91,6 +92,8 @@ class ZNKernelRuntime:
         metadata: dict | None = None,
         max_attempts_override: int | None = None,
         goal_id: str | None = None,
+        on_cognitive_delta: Callable[[str], None] | None = None,
+        on_cognitive_reset: Callable[[], None] | None = None,
     ) -> KernelRunResult:
         """Run or resume one durable external-cognition goal.
 
@@ -236,7 +239,13 @@ class ZNKernelRuntime:
                 goal, route, attempt_number, previous_failures
             )
             try:
-                result = worker.run(goal, kernel_context)
+                if on_cognitive_reset is not None:
+                    on_cognitive_reset()
+                run_stream = getattr(worker, "run_stream", None)
+                if on_cognitive_delta is not None and callable(run_stream):
+                    result = run_stream(goal, kernel_context, on_cognitive_delta)
+                else:
+                    result = worker.run(goal, kernel_context)
             except Exception as exc:
                 result = WorkerResult(
                     success=False,

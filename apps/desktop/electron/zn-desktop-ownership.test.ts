@@ -119,6 +119,27 @@ test('ZN global invocation is Windows-only, best-effort, and reuses the resident
   assert.doesNotMatch(callback, /startZnWork|requestSubmit|submitZnWork/)
 })
 
+test('privileged desktop IPC accepts only the trusted top-level ZN renderer', () => {
+  const trust = read('electron/zn-ipc-trust.ts')
+  const main = read('electron/zn-main.ts')
+  const resident = read('electron/zn-resident-ipc.ts')
+  const workspace = read('electron/zn-workspace-ipc.ts')
+  const updater = read('electron/zn-release-updater.ts')
+
+  assert.match(main, /trustZnDesktopWebContents\(window\.webContents\)/)
+  assert.match(trust, /trustedWebContentsIds\.has\(event\.sender\.id\)/)
+  assert.match(trust, /frame !== frame\.top/)
+  assert.match(trust, /frame !== event\.sender\.mainFrame/)
+  assert.match(trust, /contents\.once\(['"]destroyed['"], revoke\)/)
+  assert.match(trust, /ipcMain\.handle\(channel, \(event, \.\.\.args\) =>/)
+  assert.doesNotMatch(resident, /ipcMain\.handle\(/)
+  assert.doesNotMatch(workspace, /ipcMain\.handle\(/)
+  assert.doesNotMatch(updater, /ipcMain\.handle\(/)
+  assert.match(resident, /handleZnDesktopIpc\(['"]zn:resident:start['"]/)
+  assert.match(workspace, /handleZnDesktopIpc\(['"]zn:workspaces:attach['"]/)
+  assert.match(updater, /handleZnDesktopIpc\(['"]zn:updates:apply['"]/)
+})
+
 test('ZN preload exposes only the ZN bridge and does not import inherited preload', () => {
   const source = read('electron/zn-preload.ts')
 
@@ -168,7 +189,7 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.match(workbench, /sidebar\.workspaces/)
   assert.match(workbench, /settings\.title/)
   assert.match(workbench, /composer\.messageAria/)
-  assert.match(localization, /'sidebar\.newWork': 'New work'/)
+  assert.match(localization, /'sidebar\.newWork': 'New chat'/)
   assert.match(workbench, /loadZnWorkThreads/)
   assert.match(workbench, /createZnWorkThread/)
   assert.match(workbench, /startZnWork/)
@@ -184,8 +205,11 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.match(workbench, /describeZnProviderReadiness/)
   assert.match(workbench, /topbar\.openSettings/)
   assert.match(workbench, /settings\.models\.description/)
-  assert.match(localization, /Local and deterministic Resident paths remain available/)
-  assert.match(workbench, /disabled=\{busy \|\| !draft\.trim\(\)\}/)
+  assert.match(localization, /Clear computer actions stay local when a deterministic path exists/)
+  assert.match(workbench, /zn-send-stop/)
+  assert.match(workbench, /type=\{busy \? 'button' : 'submit'\}/)
+  assert.match(workbench, /workProgress\.terminal/)
+  assert.match(workbench, /!draft\.trim\(\)/)
   assert.match(residentClient, /resident\.workList/)
   assert.match(residentClient, /resident\.workStart/)
   assert.match(residentClient, /resident\.workProgress/)
@@ -283,9 +307,9 @@ test('provider settings stay resident-owned and renderer never receives a stored
   assert.match(workbench, /settings\.models\.title/)
   assert.match(workbench, /type="password"/)
   assert.match(workbench, /settings\.models\.save/)
-  assert.match(workbench, /settings\.description/)
-  assert.match(localization, /'settings\.models\.title': 'Models & providers'/)
-  assert.match(localization, /secure credential boundary/)
+  assert.match(workbench, /settings\.models\.description/)
+  assert.match(localization, /'settings\.models\.title': 'API & models'/)
+  assert.match(localization, /saved securely by ZN/)
   assert.doesNotMatch(ipc, /safeStorage|keytar|keyring/i)
   assert.doesNotMatch(preload, /safeStorage|keytar|keyring/i)
   assert.doesNotMatch(client, /localStorage|sessionStorage/)
@@ -308,7 +332,7 @@ test('provider readiness never turns an unavailable resident resource into succe
   assert.doesNotMatch(providerUpdateNotice(unavailable), /^Model ready\./)
 })
 
-test('running Work progress and uncertain cancellation come from resident state', () => {
+test('running Work progress and Stop control come from resident state', () => {
   const processClient = read('electron/zn-resident-process.ts')
   const ipc = read('electron/zn-resident-ipc.ts')
   const preload = read('electron/zn-preload.ts')
@@ -334,6 +358,16 @@ test('running Work progress and uncertain cancellation come from resident state'
   assert.match(workbench, /replayBlocked/)
   assert.match(workbench, /work\.outsideUncertain/)
   assert.match(workbench, /work\.stop/)
+  assert.match(workbench, /workProgress\.stage === 'cancelling'/)
+  assert.match(workbench, /zn-send-stop/)
+  assert.match(workbench, /type=\{busy \? 'button' : 'submit'\}/)
+  assert.doesNotMatch(
+    workbench.slice(
+      workbench.indexOf('const cancelCurrentWork'),
+      workbench.indexOf('const submit', workbench.indexOf('const cancelCurrentWork'))
+    ),
+    /recovery\?\.replayBlocked/
+  )
   assert.doesNotMatch(state, /ZnWorkProgress|workProgress/)
   assert.doesNotMatch(workbench, /fake progress|Math\.random\(\).*progress/i)
 })
