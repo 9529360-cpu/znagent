@@ -73,6 +73,104 @@ class MachineCapabilityTests(unittest.TestCase):
             self.assertEqual(len(result.candidates), 2)
             self.assertNotEqual(result.candidates[0].app_id, result.candidates[1].app_id)
 
+    def test_known_profile_prefers_unique_runtime_bindable_primary_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            primary = root / "WindowsApps" / "Notepad.exe"
+            alias = root / "Windows" / "notepad.exe"
+            primary.parent.mkdir(parents=True)
+            alias.parent.mkdir(parents=True)
+            primary.write_bytes(b"")
+            alias.write_bytes(b"")
+            graph = DeviceCapabilityGraph(
+                inventory_provider=lambda: [
+                    ApplicationInventoryCandidate(
+                        source="apps_folder",
+                        source_id="notepad-aumid",
+                        display_name="记事本",
+                        aumid="Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+                        package_identity="Microsoft.WindowsNotepad_8wekyb3d8bbwe",
+                        launch_kind="aumid",
+                        launch_target="Microsoft.WindowsNotepad_8wekyb3d8bbwe!App",
+                    ),
+                    ApplicationInventoryCandidate(
+                        source="app_paths",
+                        source_id="notepad-primary",
+                        display_name="Notepad",
+                        executable_path=str(primary),
+                        identity_paths=(str(primary),),
+                        launch_kind="executable",
+                        launch_target=str(primary),
+                    ),
+                    ApplicationInventoryCandidate(
+                        source="path",
+                        source_id="notepad-alias",
+                        display_name="notepad",
+                        executable_path=str(alias),
+                        identity_paths=(str(alias),),
+                        launch_kind="executable",
+                        launch_target=str(alias),
+                    ),
+                ],
+                cache_path=root / "cache.json",
+                inventory_ttl_seconds=0,
+            )
+            apps = graph.installed_applications(force_refresh=True)
+            self.assertEqual(len(apps), 3)
+
+            for query in ("Notepad", "记事本"):
+                result = graph.resolve_application(query, force_refresh=True)
+                self.assertEqual(result.status, "resolved")
+                self.assertEqual(result.application.executable_path, str(primary))
+                self.assertEqual(result.application.evidence_source, ("app_paths",))
+
+    def test_powershell_ise_profile_prefers_runtime_bindable_executable_identity(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            executable = root / "WindowsPowerShell" / "v1.0" / "powershell_ise.exe"
+            executable.parent.mkdir(parents=True)
+            executable.write_bytes(b"")
+            graph = DeviceCapabilityGraph(
+                inventory_provider=lambda: [
+                    ApplicationInventoryCandidate(
+                        source="apps_folder",
+                        source_id="ise-aumid",
+                        display_name="Windows PowerShell ISE",
+                        aumid=(
+                            "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}"
+                            "\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe"
+                        ),
+                        launch_kind="aumid",
+                        launch_target=(
+                            "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}"
+                            "\\WindowsPowerShell\\v1.0\\PowerShell_ISE.exe"
+                        ),
+                    ),
+                    ApplicationInventoryCandidate(
+                        source="path",
+                        source_id="ise-executable",
+                        display_name="powershell_ise",
+                        executable_path=str(executable),
+                        identity_paths=(str(executable),),
+                        launch_kind="executable",
+                        launch_target=str(executable),
+                    ),
+                ],
+                cache_path=root / "cache.json",
+                inventory_ttl_seconds=0,
+            )
+
+            result = graph.resolve_application(
+                "Windows PowerShell ISE",
+                force_refresh=True,
+            )
+            self.assertEqual(result.status, "resolved")
+            self.assertEqual(result.application.executable_path, str(executable))
+            self.assertEqual(
+                result.application.canonical_name,
+                "Windows PowerShell ISE",
+            )
+
     def test_exact_alias_wins_over_longer_fuzzy_candidate(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

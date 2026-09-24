@@ -14,6 +14,7 @@ from .models import utc_now
 
 _UIA_BUTTON_CONTROL_TYPE = 50000
 _UIA_EDIT_CONTROL_TYPE = 50004
+_UIA_DOCUMENT_CONTROL_TYPE = 50030
 _MAX_NAME_CHARS = 160
 _MAX_AUTOMATION_ID_CHARS = 256
 _MAX_CANDIDATES = 24
@@ -41,6 +42,7 @@ class NamedAutomationControlObservation:
     has_keyboard_focus: bool = False
     is_password: bool = False
     is_value_pattern_available: bool = False
+    is_text_pattern_available: bool = False
     value_is_read_only: bool | None = None
     is_toggle_pattern_available: bool = False
     is_expand_collapse_pattern_available: bool = False
@@ -52,6 +54,8 @@ class NamedAutomationControlObservation:
         patterns: list[str] = []
         if self.is_value_pattern_available:
             patterns.append("value")
+        if self.is_text_pattern_available:
+            patterns.append("text")
         if self.is_toggle_pattern_available:
             patterns.append("toggle")
         if self.is_expand_collapse_pattern_available:
@@ -237,6 +241,7 @@ class _WindowsNamedControlReader:
                 client.UIA_IsOffscreenPropertyId,
                 client.UIA_IsPasswordPropertyId,
                 client.UIA_IsValuePatternAvailablePropertyId,
+                client.UIA_IsTextPatternAvailablePropertyId,
                 client.UIA_IsTogglePatternAvailablePropertyId,
                 client.UIA_IsExpandCollapsePatternAvailablePropertyId,
                 client.UIA_IsSelectionItemPatternAvailablePropertyId,
@@ -303,7 +308,17 @@ class _WindowsNamedControlReader:
                                 element.GetCachedPropertyValue(client.UIA_NamePropertyId) or ""
                             ).strip().split()
                         )
-                        if not candidate_name or len(candidate_name) > _MAX_NAME_CHARS:
+                        candidate_automation_id = str(
+                            element.GetCachedPropertyValue(
+                                client.UIA_AutomationIdPropertyId
+                            )
+                            or ""
+                        ).strip()
+                        if (
+                            (not candidate_name and not candidate_automation_id)
+                            or len(candidate_name) > _MAX_NAME_CHARS
+                            or len(candidate_automation_id) > _MAX_AUTOMATION_ID_CHARS
+                        ):
                             continue
                         try:
                             candidate = self._snapshot(
@@ -320,6 +335,7 @@ class _WindowsNamedControlReader:
                                 automation_id_property_id=client.UIA_AutomationIdPropertyId,
                                 is_password_property_id=client.UIA_IsPasswordPropertyId,
                                 is_value_pattern_available_property_id=client.UIA_IsValuePatternAvailablePropertyId,
+                                is_text_pattern_available_property_id=client.UIA_IsTextPatternAvailablePropertyId,
                                 is_toggle_pattern_available_property_id=client.UIA_IsTogglePatternAvailablePropertyId,
                                 is_expand_collapse_pattern_available_property_id=client.UIA_IsExpandCollapsePatternAvailablePropertyId,
                                 is_selection_item_pattern_available_property_id=client.UIA_IsSelectionItemPatternAvailablePropertyId,
@@ -355,6 +371,7 @@ class _WindowsNamedControlReader:
                         automation_id_property_id=client.UIA_AutomationIdPropertyId,
                         is_password_property_id=client.UIA_IsPasswordPropertyId,
                         is_value_pattern_available_property_id=client.UIA_IsValuePatternAvailablePropertyId,
+                        is_text_pattern_available_property_id=client.UIA_IsTextPatternAvailablePropertyId,
                         is_toggle_pattern_available_property_id=client.UIA_IsTogglePatternAvailablePropertyId,
                         is_expand_collapse_pattern_available_property_id=client.UIA_IsExpandCollapsePatternAvailablePropertyId,
                         is_selection_item_pattern_available_property_id=client.UIA_IsSelectionItemPatternAvailablePropertyId,
@@ -423,6 +440,7 @@ class _WindowsNamedControlReader:
         automation_id_property_id: int,
         is_password_property_id: int,
         is_value_pattern_available_property_id: int,
+        is_text_pattern_available_property_id: int,
         is_toggle_pattern_available_property_id: int,
         is_expand_collapse_pattern_available_property_id: int,
         is_selection_item_pattern_available_property_id: int,
@@ -453,6 +471,11 @@ class _WindowsNamedControlReader:
             element,
             is_value_pattern_available_property_id,
             field_name="is_value_pattern_available",
+        )
+        is_text_pattern_available = _WindowsNamedControlReader._cached_bool(
+            element,
+            is_text_pattern_available_property_id,
+            field_name="is_text_pattern_available",
         )
         is_toggle_pattern_available = _WindowsNamedControlReader._cached_bool(
             element,
@@ -539,6 +562,7 @@ class _WindowsNamedControlReader:
             has_keyboard_focus=has_keyboard_focus,
             is_password=is_password,
             is_value_pattern_available=is_value_pattern_available,
+            is_text_pattern_available=is_text_pattern_available,
             is_toggle_pattern_available=is_toggle_pattern_available,
             is_expand_collapse_pattern_available=is_expand_collapse_pattern_available,
             is_selection_item_pattern_available=is_selection_item_pattern_available,
@@ -788,12 +812,22 @@ class NativeNamedAutomationControlSense:
             raise TypeError(
                 "named desktop control probe must return NamedAutomationControlObservation"
             )
-        safe_edit = bool(
-            control_type != _UIA_EDIT_CONTROL_TYPE
-            or (
-                observation.is_keyboard_focusable
-                and not observation.is_password
-                and observation.value_is_read_only is not True
+        safe_text_control = bool(
+            (
+                control_type != _UIA_EDIT_CONTROL_TYPE
+                or (
+                    observation.is_keyboard_focusable
+                    and not observation.is_password
+                    and observation.value_is_read_only is not True
+                )
+            )
+            and (
+                control_type != _UIA_DOCUMENT_CONTROL_TYPE
+                or (
+                    observation.is_keyboard_focusable
+                    and not observation.is_password
+                    and observation.is_text_pattern_available
+                )
             )
         )
         normalized_name = " ".join(str(observation.name or "").strip().split())
@@ -802,7 +836,7 @@ class NativeNamedAutomationControlSense:
             int(observation.process_id) != expected_pid
             or str(observation.process_name or "").strip().lower()
             != expected_process.lower()
-            or not normalized_name
+            or (not normalized_name and not normalized_automation_id)
             or len(normalized_name) > _MAX_NAME_CHARS
             or len(normalized_automation_id) > _MAX_AUTOMATION_ID_CHARS
             or (expected_name is not None and normalized_name != expected_name)
@@ -810,7 +844,7 @@ class NativeNamedAutomationControlSense:
             or not observation.runtime_id
             or not observation.is_enabled
             or observation.is_offscreen
-            or not safe_edit
+            or not safe_text_control
             or not 0.0 <= float(observation.center_x_fraction) <= 1.0
             or not 0.0 <= float(observation.center_y_fraction) <= 1.0
         ):
