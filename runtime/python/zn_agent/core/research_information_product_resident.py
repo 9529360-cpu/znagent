@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Product Resident composition over reusable Research, OS, document, and application capabilities."""
 
+from .action import NativeActionIntent
 from .action_authority import install_worker_authority_gate
 from .app_competence import AppCompetenceRegistry
 from .app_competence_execution import (
@@ -14,7 +15,7 @@ from .local_inference_runtime import LocalInferenceRuntimeDiscovery
 from .presentation_work_behavior import install_presentation_work_behavior
 from .document_work_behavior import install_document_work_behavior
 from .models import utc_now
-from .research_information_resident import ResearchInformationResidentRuntime
+from .generic_action_resident import GenericActionResidentRuntime
 from .user_browser_extension_relay import UserBrowserExtensionRelayError
 from .user_browser_multi_record_result import (
     parse_verified_record_excerpts,
@@ -33,7 +34,7 @@ from .visual_stage_bridge import (
 )
 
 
-class ProductResearchInformationResidentRuntime(ResearchInformationResidentRuntime):
+class ProductResearchInformationResidentRuntime(GenericActionResidentRuntime):
     """Final Product Resident assembled from reusable capability layers."""
 
     _VISUAL_COMPETENCE_HANDOFF_KEY = "app_competence_visual_handoff"
