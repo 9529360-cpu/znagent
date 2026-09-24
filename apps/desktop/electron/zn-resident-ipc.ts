@@ -198,6 +198,15 @@ export function registerZnResidentIpc(): void {
       ...(payload?.payload && typeof payload.payload === 'object' ? { payload: payload.payload } : {})
     })
   })
+  handleZnDesktopIpc('zn:resident:agent-run', async (_event, payload) => {
+    const objective = String(payload?.objective || payload?.task || '').trim()
+    if (!objective) throw new Error('objective is required')
+    const maxTurns = Number(payload?.maxTurns ?? payload?.max_turns)
+    return getZnResidentProcess().request('agent_run', {
+      objective,
+      ...(Number.isFinite(maxTurns) && maxTurns > 0 ? { max_turns: Math.floor(maxTurns) } : {})
+    })
+  })
   handleZnDesktopIpc('zn:resident:work-start', async (_event, payload) => {
     return getZnResidentProcess().request('work_start', normalizedWorkPayload(payload))
   })

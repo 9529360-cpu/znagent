@@ -38,6 +38,21 @@ export type ZnTurnSubmitResult =
       reply?: string
     }
 
+export type ZnAgentRunStep = {
+  turn: number
+  assistantText: string
+  toolCalls: unknown[]
+  toolResults: Array<{ toolUseId: string; name: string; output: string }>
+}
+
+export type ZnAgentRunResult = {
+  completed: boolean
+  finalText: string
+  turnsUsed: number
+  stoppedReason: string
+  steps: ZnAgentRunStep[]
+}
+
 export type ZnWorkRecovery = {
   status: string
   kind: string
@@ -720,6 +735,43 @@ export async function submitZnTurn(threadId: string, text: string): Promise<ZnTu
     }
   }
   throw new Error('Resident returned an unknown turn mode')
+}
+
+export async function runZnAgent(objective: string, maxTurns?: number): Promise<ZnAgentRunResult> {
+  const normalized = objective.trim()
+  if (!normalized) throw new Error('Objective must not be empty')
+  const result = record(await desktop().resident.agentRun({
+    objective: normalized,
+    ...(typeof maxTurns === 'number' && Number.isFinite(maxTurns) && maxTurns > 0
+      ? { maxTurns: Math.floor(maxTurns) }
+      : {})
+  }))
+  if (!result) throw new Error('Resident returned an invalid agent run result')
+  const rawSteps = Array.isArray(result.steps) ? result.steps : []
+  const steps: ZnAgentRunStep[] = rawSteps.map((raw) => {
+    const step = record(raw) || {}
+    const rawResults = Array.isArray(step.tool_results) ? step.tool_results : []
+    return {
+      turn: Number(step.turn || 0),
+      assistantText: String(step.assistant_text || ''),
+      toolCalls: Array.isArray(step.tool_calls) ? step.tool_calls : [],
+      toolResults: rawResults.map((r) => {
+        const item = record(r) || {}
+        return {
+          toolUseId: String(item.tool_use_id || ''),
+          name: String(item.name || ''),
+          output: String(item.output || '')
+        }
+      })
+    }
+  })
+  return {
+    completed: result.completed === true,
+    finalText: String(result.final_text || ''),
+    turnsUsed: Number(result.turns_used || 0),
+    stoppedReason: String(result.stopped_reason || ''),
+    steps
+  }
 }
 
 export async function startZnWork(threadId: string, task: string): Promise<ZnWorkStartResult> {

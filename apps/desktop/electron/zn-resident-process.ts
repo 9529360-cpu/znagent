@@ -18,6 +18,7 @@ export type ZnResidentRequest = {
     | 'work_create'
     | 'work_get'
     | 'turn_submit'
+    | 'agent_run'
     | 'work_attach_workspace'
     | 'work_detach_workspace'
     | 'work_start'
