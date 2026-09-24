@@ -33,6 +33,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
     _BROWSER_NAVIGATE = "browser_navigate"
     _BROWSER_SET_CHECKBOX = "browser_set_checkbox"
     _BROWSER_SET_NAMED_CHECKBOX = "browser_set_named_checkbox"
+    _BROWSER_SELECT_NAMED_OPTION = "browser_select_named_option"
     _BROWSER_CLICK_NAMED_BUTTON_TO_URL = "browser_click_named_button_to_url"
 
     @classmethod
@@ -41,6 +42,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
             cls._BROWSER_NAVIGATE,
             cls._BROWSER_SET_CHECKBOX,
             cls._BROWSER_SET_NAMED_CHECKBOX,
+            cls._BROWSER_SELECT_NAMED_OPTION,
             cls._BROWSER_CLICK_NAMED_BUTTON_TO_URL,
         }:
             return True
@@ -53,6 +55,8 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
             return self._browser_set_checkbox(action, started)
         if action.kind == self._BROWSER_SET_NAMED_CHECKBOX:
             return self._browser_set_named_checkbox(action, started)
+        if action.kind == self._BROWSER_SELECT_NAMED_OPTION:
+            return self._browser_select_named_option(action, started)
         if action.kind == self._BROWSER_CLICK_NAMED_BUTTON_TO_URL:
             return self._browser_click_named_button_to_url(action, started)
         if action.kind == "browser_observe":
@@ -350,6 +354,180 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                     ),
                     "semantic_regrounds": semantic_action.regrounds,
                     "browser_evidence": asdict(mutation_evidence),
+                    "closed": True,
+                },
+                event_id=action.event_id,
+                started_at=started,
+                completed_at=utc_now(),
+            )
+        except BaseException:
+            if session is not None and not closed:
+                try:
+                    browser.close_session(session.session_id)
+                except Exception:
+                    pass
+            raise
+
+    def _browser_select_named_option(
+        self,
+        action: BodyAction,
+        started: str,
+    ) -> BodyActionResult:
+        """Navigate, freshly bind one native combobox, select by label, verify, close."""
+
+        browser = self._browser()
+        if getattr(browser, "plane", None) is BrowserPlane.USER:
+            raise ValueError(
+                "browser_select_named_option currently requires a MANAGED browser session"
+            )
+        url = str(action.args.get("url") or "").strip()
+        target_name = str(action.args.get("target_name") or "").strip()
+        option_label = str(action.args.get("option_label") or "").strip()
+        if not url:
+            raise ValueError("browser_select_named_option requires url")
+        for value, label, limit in (
+            (target_name, "target_name", 160),
+            (option_label, "option_label", 256),
+        ):
+            if not value:
+                raise ValueError(f"browser_select_named_option requires {label}")
+            if len(value) > limit:
+                raise ValueError(f"browser_select_named_option {label} is too long")
+            if any(ord(char) < 32 or ord(char) == 127 for char in value):
+                raise ValueError(
+                    f"browser_select_named_option {label} contains control characters"
+                )
+
+        permission = BrowserPermissionContext(
+            allow_navigation=True,
+            allow_page_interaction=True,
+            allow_private_network=bool(action.args.get("allow_private_network", False)),
+            allowed_origins=(url,),
+        )
+        session = None
+        closed = False
+        try:
+            session = self._open_session_for_target_query(
+                browser,
+                permission,
+                BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME,
+                headless=True,
+            )
+            initial = browser.observe(session.session_id)
+            navigate = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.NAVIGATE,
+                page_id=initial.page_id,
+                args={"url": url},
+                expected={"url_equals": url},
+            )
+            navigation_evidence = browser.act(
+                navigate,
+                BrowserActionAuthority.from_observation(
+                    navigate,
+                    initial,
+                    permission,
+                ),
+            )
+            if not navigation_evidence.success:
+                browser.close_session(session.session_id)
+                closed = True
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={
+                        "browser_evidence": asdict(navigation_evidence),
+                        "closed": True,
+                    },
+                    error=navigation_evidence.error or "managed browser navigation failed",
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+
+            observed = browser.observe_target(
+                session.session_id,
+                BrowserTargetQuery(
+                    kind=BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME,
+                    value=target_name,
+                ),
+                page_id=navigation_evidence.page_id,
+            )
+            if observed.target is None or observed.target.role != "combobox":
+                raise ValueError(
+                    "browser_select_named_option requires one visible native combobox target"
+                )
+
+            select = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.SELECT_OPTION,
+                page_id=observed.page_id,
+                target=observed.target,
+                args={"label": option_label},
+            )
+            select_evidence = browser.act(
+                select,
+                BrowserActionAuthority.from_observation(
+                    select,
+                    observed,
+                    permission,
+                ),
+            )
+            if not select_evidence.success:
+                browser.close_session(session.session_id)
+                closed = True
+                return BodyActionResult(
+                    action_id=action.action_id,
+                    kind=action.kind,
+                    success=False,
+                    data={
+                        "url": navigation_evidence.url_after,
+                        "target_id": observed.target.target_id,
+                        "target_role": observed.target.role,
+                        "target_name": observed.target.name,
+                        "browser_evidence": asdict(select_evidence),
+                        "closed": True,
+                    },
+                    error=select_evidence.error or "managed browser option selection failed",
+                    event_id=action.event_id,
+                    started_at=started,
+                    completed_at=utc_now(),
+                )
+
+            browser.close_session(session.session_id)
+            closed = True
+            evidence_data = dict(select_evidence.data or {})
+            return BodyActionResult(
+                action_id=action.action_id,
+                kind=action.kind,
+                success=True,
+                output=f'combobox "{target_name}" selected option "{option_label}"',
+                data={
+                    "url": select_evidence.url_after or navigation_evidence.url_after,
+                    "page_id": select_evidence.page_id,
+                    "target_id": select_evidence.target_id,
+                    "target_role": observed.target.role,
+                    "target_name": observed.target.name,
+                    "selector_hint": observed.target.selector_hint,
+                    "provider": str(
+                        evidence_data.get("provider")
+                        or navigation_evidence.data.get("provider")
+                        or session.provider
+                    ),
+                    "postcondition": select_evidence.postcondition,
+                    "selection_mode": evidence_data.get("selection_mode"),
+                    "selection_dispatched": evidence_data.get("selection_dispatched") is True,
+                    "exact_node_continuity": evidence_data.get("exact_node_continuity") is True,
+                    "expected_label_length": evidence_data.get("expected_label_length"),
+                    "expected_label_sha256": evidence_data.get("expected_label_sha256"),
+                    "selected_label_length_after": evidence_data.get(
+                        "selected_label_length_after"
+                    ),
+                    "selected_label_sha256_after": evidence_data.get(
+                        "selected_label_sha256_after"
+                    ),
+                    "browser_evidence": asdict(select_evidence),
                     "closed": True,
                 },
                 event_id=action.event_id,
