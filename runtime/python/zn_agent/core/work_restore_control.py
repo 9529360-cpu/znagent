@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import re
 import uuid
-from contextlib import closing
+from contextlib import closing, nullcontext
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -26,6 +26,7 @@ _INSPECTION_FOLLOWUPS = (
     re.compile(r"^(?:我)?先?看(?:看|一下)?(?:现在)?(?:做到哪(?:一步)?(?:了)?|进度|进展|什么情况)$"),
     re.compile(r"^先?告诉我(?:现在)?(?:做到哪(?:一步)?(?:了)?|进度|进展|什么情况)$"),
     re.compile(r"^(?:我)?先?看看?现在什么情况$"),
+    re.compile(r"^(?:你)?(?:现在)?(?:做到哪(?:一步)?(?:了)?|进度|进展|什么情况)(?:了)?$"),
 )
 _LATEST_REFERENCE = ("刚才", "刚刚", "上次", "之前那个", "前面那个")
 _YESTERDAY_REFERENCE = ("昨天", "昨日")
@@ -108,6 +109,22 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         normalized = re.sub(r"[。！!？?，,；;]+$", "", followup.strip())
         return normalized if any(pattern.fullmatch(normalized) for pattern in _INSPECTION_FOLLOWUPS) else None
 
+    @staticmethod
+    def active_inspection_task(task: str) -> str | None:
+        """Recognize a same-thread progress question without changing the plan."""
+        normalized = re.sub(
+            r"[。！!？?，,；;]+$",
+            "",
+            " ".join(str(task or "").strip().split()),
+        )
+        if not normalized:
+            return None
+        return (
+            normalized
+            if any(pattern.fullmatch(normalized) for pattern in _INSPECTION_FOLLOWUPS)
+            else None
+        )
+
     @classmethod
     def active_steering_followup(cls, task: str) -> str | None:
         """Recognize explicit active-plan edits without treating every suffix as steering."""
@@ -145,16 +162,53 @@ class RestoreAwareWorkControl(ResidentWorkControl):
     def start(self, thread_id: str, task: str, **kwargs):
         reference = self.continuation_reference(task)
         if reference is None:
+            normalized_thread = self.ledger._normalize_thread_id(thread_id)
+            self.reconcile_cancelled_runs(thread_id=normalized_thread)
+            current = self.ledger.get_thread(normalized_thread)
+            active = (
+                self.ledger._active_run_for_thread(normalized_thread)
+                if current is not None
+                else None
+            )
+
+            if active is not None and not self._bare_current_continue(task):
+                inspection = self.active_inspection_task(task)
+                if inspection is not None:
+                    execution_options = self._inspection_execution_options(kwargs)
+                    if execution_options:
+                        raise ValueError(
+                            "active Work inspection is read-only and does not accept execution options"
+                        )
+                    return self._inspect_referenced_work(
+                        current,
+                        active,
+                        task,
+                        reference="current",
+                        ingress_thread_id=normalized_thread,
+                        live=True,
+                    )
+
+                # A new message sent inside the same active conversation is
+                # steering by product semantics. Do not require users to prefix
+                # ordinary corrections with "继续". The durable steer path still
+                # owns plan versioning, fresh re-sense, stale-result rejection
+                # and Body safety.
+                return self._steer_referenced_active_work(
+                    current,
+                    active,
+                    task,
+                    followup=" ".join(str(task or "").strip().split()),
+                    reference="current",
+                    ingress_thread_id=normalized_thread,
+                    start_kwargs=kwargs,
+                )
+
             # ``继续`` is intentionally admitted only after a durable inspection
             # message on this exact thread. This keeps the new behavior bounded
             # and lets a restart preserve the status-first -> resume sequence
             # without relying on the in-memory ingress alias helper.
             if self._bare_current_continue(task):
-                normalized_thread = self.ledger._normalize_thread_id(thread_id)
-                current = self.ledger.get_thread(normalized_thread)
                 if current is not None and self._latest_message_is_inspection(normalized_thread):
-                    self.reconcile_cancelled_runs(thread_id=normalized_thread)
-                    active = self.ledger._active_run_for_thread(normalized_thread)
                     if active is None:
                         raise ValueError(
                             "the inspected Work is already complete; say what should happen next so ZN can form a fresh task instead of replaying the completed event"
@@ -280,6 +334,11 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         )
         if artifact_summary:
             summary += f" · artifacts {artifact_summary}"
+        if detail.get("live_inspection") is True:
+            summary += " · inspection only; active Work continues"
+            progress["next_action"] = self._public_text(summary, limit=1400)
+            return progress
+
         summary += " · inspection only; execution was not resumed"
         progress["stage"] = "inspection_complete"
         progress["next_action"] = self._public_text(summary, limit=1400)
@@ -293,6 +352,7 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         *,
         reference: str,
         ingress_thread_id: str,
+        live: bool = False,
     ):
         event = self.resident.store.get_event(run.event_id)
         if event is None:
@@ -312,6 +372,7 @@ class RestoreAwareWorkControl(ResidentWorkControl):
                 detail={
                     "continuation": True,
                     "inspection": True,
+                    "live_inspection": bool(live),
                     "reference": reference,
                     "inspected_event_id": run.event_id,
                     "new_resident_event": False,
@@ -687,33 +748,74 @@ class RestoreAwareWorkControl(ResidentWorkControl):
         )
         payload = dict(raw_payload or {})
 
-        # Steering creates the next ResidentEvent through the plan transition
-        # path rather than ordinary Work.start(). Preserve the same Work-owned
-        # privacy boundary before that event can be materialized: first reject
-        # an already-unsteerable live state, then validate/merge durable thread
-        # policy and copy it into the exact next-event payload. The ledger still
-        # repeats its own state check and owns the atomic plan transition.
-        self.ledger._assert_steerable_resident_state(active.event_id)
-        durable_thread = self.ledger.get_thread(thread.thread_id)
-        if durable_thread is None:
-            raise RuntimeError("active Work steering lost its durable WorkThread")
-        bind_work_event_route_policy(
-            self.ledger,
-            durable_thread,
-            task=task,
-            event_payload=payload,
+        # The same cycle lock defines the Resident step boundary. Wait for an
+        # in-flight step to finish, then decide under that lock whether this
+        # message can still steer the active plan or arrived just after the Work
+        # became terminal. In the latter case it must become a fresh follow-up;
+        # user input is never dropped merely because the final tool step won the
+        # race by a few milliseconds.
+        cycle_lock = getattr(self.resident, "_cycle_lock", None)
+        context = (
+            cycle_lock
+            if cycle_lock is not None and hasattr(cycle_lock, "__enter__")
+            else nullcontext()
         )
+        terminal_outcome = None
+        with context:
+            resident_event = self.resident.store.get_event(active.event_id)
+            if resident_event is None:
+                raise RuntimeError("active Work steering lost its durable resident event")
+            terminal_outcome = self.resident.store.get_event_outcome(active.event_id)
+            if terminal_outcome is None:
+                # Steering creates the next ResidentEvent through the plan
+                # transition path rather than ordinary Work.start(). Preserve
+                # the same Work-owned privacy boundary before that event can be
+                # materialized, then let the ledger own the atomic plan switch.
+                self.ledger._assert_steerable_resident_state(active.event_id)
+                durable_thread = self.ledger.get_thread(thread.thread_id)
+                if durable_thread is None:
+                    raise RuntimeError(
+                        "active Work steering lost its durable WorkThread"
+                    )
+                bind_work_event_route_policy(
+                    self.ledger,
+                    durable_thread,
+                    task=task,
+                    event_payload=payload,
+                )
+                snapshot, event = self.ledger.steer_active(
+                    thread.thread_id,
+                    active.event_id,
+                    task,
+                    objective=bounded_followup,
+                    reference=reference,
+                    kind=kind,
+                    priority=priority,
+                    payload=payload,
+                )
 
-        snapshot, event = self.ledger.steer_active(
-            thread.thread_id,
-            active.event_id,
-            task,
-            objective=bounded_followup,
-            reference=reference,
-            kind=kind,
-            priority=priority,
-            payload=payload,
-        )
+        if terminal_outcome is not None:
+            if terminal_outcome.cancelled:
+                # A later Stop is stronger than an earlier queued correction.
+                # Reconcile the cancelled run and return that authoritative
+                # terminal Work instead of silently starting more work.
+                self.reconcile_cancelled_runs(thread_id=thread.thread_id)
+                cancelled_event = self.resident.store.get_event(active.event_id)
+                if cancelled_event is None:
+                    raise RuntimeError(
+                        "cancelled Work disappeared while steering was waiting"
+                    )
+                return self.get_snapshot(thread.thread_id), cancelled_event
+
+            self.ledger._finalize_completed_runs(thread_id=thread.thread_id)
+            return self._start_referenced_completed_followup(
+                thread,
+                task,
+                followup=bounded_followup,
+                reference=reference,
+                ingress_thread_id=ingress_thread_id,
+                start_kwargs=start_kwargs,
+            )
         normalized_ingress = self.ledger._normalize_thread_id(ingress_thread_id)
         if normalized_ingress != thread.thread_id:
             self._continuation_ingress_aliases[event.event_id] = normalized_ingress
