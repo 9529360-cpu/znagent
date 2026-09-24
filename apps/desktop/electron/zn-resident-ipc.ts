@@ -187,6 +187,17 @@ export function registerZnResidentIpc(): void {
       message_limit: Number(payload?.messageLimit || payload?.message_limit || 120)
     })
   })
+  handleZnDesktopIpc('zn:resident:turn-submit', async (_event, payload) => {
+    const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+    const text = String(payload?.text || payload?.task || '').trim()
+    if (!threadId) throw new Error('threadId is required')
+    if (!text) throw new Error('text is required')
+    return getZnResidentProcess().request('turn_submit', {
+      thread_id: threadId,
+      text,
+      ...(payload?.payload && typeof payload.payload === 'object' ? { payload: payload.payload } : {})
+    })
+  })
   handleZnDesktopIpc('zn:resident:work-start', async (_event, payload) => {
     return getZnResidentProcess().request('work_start', normalizedWorkPayload(payload))
   })

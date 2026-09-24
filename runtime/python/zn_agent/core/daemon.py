@@ -7,6 +7,7 @@ import time
 from dataclasses import asdict
 from typing import Any, TextIO
 
+from .model_first_turn import ModelFirstTurnService
 from .outcome_aware_work_control import OutcomeAwareRestoreWorkControl
 from .provider_bridge import build_resident_runtime_from_existing_stack
 from .provider_settings import ProviderSettingsService
@@ -37,6 +38,7 @@ class ResidentRpcServer:
         self.service = ResidentService(self.resident)
         self.work = RecoveryBoundedWorkLedger(self.resident)
         self.work_control = OutcomeAwareRestoreWorkControl(self.work)
+        self.turn = ModelFirstTurnService(self.resident, self.work_control)
         self.resident.cognitive_delta_handler = self.work.publish_response_delta
         self.resident.cognitive_response_reset_handler = self.work.reset_response_stream
         self.provider_settings = provider_settings or ProviderSettingsService(self.resident)
@@ -168,6 +170,21 @@ class ResidentRpcServer:
                     ),
                 )
             )
+        elif method == "turn_submit":
+            thread_id = str(params.get("thread_id") or "").strip()
+            text = str(params.get("text") or params.get("task") or "").strip()
+            if not thread_id:
+                raise ValueError("turn_submit requires thread_id")
+            if not text:
+                raise ValueError("turn_submit requires text")
+            payload = params.get("payload")
+            if payload is not None and not isinstance(payload, dict):
+                raise ValueError("turn_submit payload must be an object")
+            turn = self.turn.submit(thread_id, text, payload=payload)
+            snapshot = turn.get("thread")
+            if snapshot is not None:
+                turn["thread"] = self._work_snapshot(snapshot)
+            result = turn
         elif method == "work_start":
             thread_id = str(params.get("thread_id") or "").strip()
             task = str(params.get("task") or "").strip()

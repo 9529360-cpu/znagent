@@ -79,7 +79,7 @@ test('continuation inspection returns control to the composer without finalizing
   const reconnection = read('src/zn/work-reconnection.ts')
 
   assert.equal(workbench.includes('while (!current.terminal'), false)
-  assert.ok(workbench.includes('setWorkProgress(started.progress.finalized ? null : started.progress)'))
+  assert.ok(workbench.includes("setWorkProgress(turn.mode === 'work' && !turn.progress.finalized ? turn.progress : null)"))
   assert.ok(workbench.includes('submissionBusy || stoppingWork || !draft.trim()'))
   assert.ok(reconnection.includes("current?.stage !== 'inspection_complete'"))
   assert.ok(reconnection.includes("update.progress.stage === 'inspection_complete'"))

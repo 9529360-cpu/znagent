@@ -40,7 +40,7 @@ import {
   loadZnResidentSnapshot,
   loadZnWorkThread,
   loadZnWorkThreads,
-  startZnWork,
+  submitZnTurn,
   updateZnProviderSettings,
   type ZnProviderSettings,
   type ZnResidentSnapshot,
@@ -590,21 +590,20 @@ export function ZnWorkbench() {
       )
 
       try {
-        const started = await startZnWork(threadId, task)
+        const turn = await submitZnTurn(threadId, task)
         residentAccepted = true
-        replaceThread(started.thread)
-        setActiveThreadId(started.thread.id)
-        setWorkProgress(started.progress.finalized ? null : started.progress)
+        replaceThread(turn.thread)
+        setActiveThreadId(turn.thread.id)
+        setWorkProgress(turn.mode === 'work' && !turn.progress.finalized ? turn.progress : null)
         setResidentError(null)
         setResidentHealth('live')
 
-        // Submission owns only the RPC acceptance boundary. Once the Resident
-        // durably accepts the event (including a same-thread steering event),
-        // release the composer immediately. The read-only reconnection observer
-        // follows progress from here; it never resubmits Work.
-        if (started.progress.finalized) {
-          if (started.thread.artifacts.length > 0) {
-            setSelectedArtifactId(started.thread.artifacts[0].id)
+        // Ordinary messages reach the model-first turn ingress. A direct answer
+        // stays conversational; only an explicit model handoff (or an already
+        // active Work control turn) materializes durable Work.
+        if (turn.mode === 'work' && turn.progress.finalized) {
+          if (turn.thread.artifacts.length > 0) {
+            setSelectedArtifactId(turn.thread.artifacts[0].id)
             setContextOpen(false)
             setArtifactOpen(false)
           }

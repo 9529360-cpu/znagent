@@ -24,6 +24,20 @@ export type ZnWorkSubmitResult = {
   run: unknown
 }
 
+export type ZnTurnSubmitResult =
+  | {
+      mode: 'reply'
+      thread: ZnThread
+      reply: string
+    }
+  | {
+      mode: 'work'
+      thread: ZnThread
+      progress: ZnWorkProgress
+      steering: boolean
+      reply?: string
+    }
+
 export type ZnWorkRecovery = {
   status: string
   kind: string
@@ -677,6 +691,35 @@ export async function createZnWorkThread(thread: ZnThread): Promise<ZnThread> {
     metadata: {}
   })
   return normalizeThread(result)
+}
+
+export async function submitZnTurn(threadId: string, text: string): Promise<ZnTurnSubmitResult> {
+  const normalized = text.trim()
+  if (!normalized) throw new Error('Message must not be empty')
+  const result = record(await desktop().resident.turnSubmit({
+    threadId,
+    text: normalized
+  }))
+  if (!result) throw new Error('Resident returned an invalid turn result')
+  const mode = String(result.mode || '')
+  const thread = normalizeThread(result.thread)
+  if (mode === 'reply') {
+    return {
+      mode: 'reply',
+      thread,
+      reply: String(result.reply || '')
+    }
+  }
+  if (mode === 'work') {
+    return {
+      mode: 'work',
+      thread,
+      progress: normalizeWorkProgress(result.progress),
+      steering: result.steering === true,
+      ...(result.reply ? { reply: String(result.reply) } : {})
+    }
+  }
+  throw new Error('Resident returned an unknown turn mode')
 }
 
 export async function startZnWork(threadId: string, task: string): Promise<ZnWorkStartResult> {
