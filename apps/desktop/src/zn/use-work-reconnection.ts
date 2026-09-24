@@ -28,9 +28,11 @@ export function useZnWorkReconnection({
   }, [onProgress, progress, submissionBusy, thread])
 
   useEffect(() => {
-    // The submit handler already follows its accepted event. There must not be
-    // a second observer until it releases control (including on disconnect).
-    if (submissionBusy || !threadId || !eventId) return
+    // Submission no longer polls Work. Keep the read-only observer alive while
+    // a steering work_start RPC waits for the current Resident step boundary,
+    // so the existing run continues to show fresh progress. This observer never
+    // resubmits Work, including after steering or renderer reconnect.
+    if (!threadId || !eventId) return
     return observeZnWorkProgress(
       { threadId, eventId },
       loadZnWorkProgress,
@@ -48,7 +50,7 @@ export function useZnWorkReconnection({
         onError(t('error.desktopReconnect', { message: error.message }))
       }
     )
-  }, [eventId, onError, onHealth, onProgress, onThread, submissionBusy, t, threadId])
+  }, [eventId, onError, onHealth, onProgress, onThread, t, threadId])
 
   return submissionBusy || hasZnUnfinishedWork(thread, progress)
 }
