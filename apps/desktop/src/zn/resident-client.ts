@@ -19,6 +19,8 @@ export type ZnResidentSnapshot = {
   self: unknown
 }
 
+export type ZnExecutionMode = 'ask' | 'agent'
+
 export type ZnWorkSubmitResult = {
   thread: ZnThread
   run: unknown
@@ -679,14 +681,19 @@ export async function createZnWorkThread(thread: ZnThread): Promise<ZnThread> {
   return normalizeThread(result)
 }
 
-export async function startZnWork(threadId: string, task: string): Promise<ZnWorkStartResult> {
+export async function startZnWork(
+  threadId: string,
+  task: string,
+  executionMode: ZnExecutionMode = 'agent'
+): Promise<ZnWorkStartResult> {
   const normalized = task.trim()
   if (!normalized) throw new Error('Task must not be empty')
   const result = record(await desktop().resident.workStart({
     threadId,
     task: normalized,
     kind: 'desktop_user_event',
-    priority: 0
+    priority: 0,
+    payload: { execution_mode: executionMode }
   }))
   if (!result) throw new Error('Resident returned an invalid work start result')
   return {

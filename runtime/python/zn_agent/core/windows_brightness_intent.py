@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .execution_mode import event_allows_effects
+
 _SET_PATTERNS = (
     re.compile(
         r"^(?:请|帮我|麻烦)?\s*(?:把)?\s*(?:屏幕|系统)?\s*亮度\s*"
@@ -46,7 +48,7 @@ class WindowsBrightnessReadGoal:
 
 
 def windows_brightness_set_goal(event: Any) -> WindowsBrightnessSetGoal | None:
-    if not _eligible_event(event):
+    if not event_allows_effects(event) or not _eligible_event(event):
         return None
     task = _task(event)
     if not task:
