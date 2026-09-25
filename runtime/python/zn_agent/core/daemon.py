@@ -9,6 +9,7 @@ from typing import Any, Callable, TextIO
 
 from .agentic_tool_loop import AgenticToolLoop, ToolLoopError
 from .anthropic_resource import AnthropicToolLoopClient
+from .error_safety import public_exception_text
 from .models import ModelRoute
 from .outcome_aware_work_control import OutcomeAwareRestoreWorkControl
 from .provider_bridge import build_resident_runtime_from_existing_stack
@@ -75,7 +76,7 @@ class ResidentRpcServer:
                     response = {
                         "id": request_id,
                         "ok": False,
-                        "error": f"{type(exc).__name__}: {exc}",
+                        "error": public_exception_text(exc),
                     }
                 self._write(response)
         finally:
