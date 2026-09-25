@@ -1,8 +1,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, screen, shell, Tray } from 'electron'
+import { app, BrowserWindow, dialog, globalShortcut, ipcMain, Menu, net, protocol, screen, shell, Tray } from 'electron'
 
 import {
   isZnLocalePreference,
@@ -24,7 +24,25 @@ import { fitZnWindowToWorkArea } from './zn-window-bounds'
 
 const moduleDir = path.dirname(fileURLToPath(import.meta.url))
 const preloadPath = path.join(moduleDir, 'electron-preload.js')
-const shellPath = path.join(moduleDir, 'zn-shell.html')
+const ZN_APP_SCHEME = 'zn-app'
+const ZN_APP_HOST = 'bundle'
+const ZN_APP_URL = `${ZN_APP_SCHEME}://${ZN_APP_HOST}/zn-shell.html`
+const ZN_APP_FILES = new Map([
+  ['/zn-shell.html', 'zn-shell.html'],
+  ['/zn-shell-renderer.js', 'zn-shell-renderer.js'],
+  ['/zn-shell-renderer.css', 'zn-shell-renderer.css']
+])
+
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: ZN_APP_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true
+    }
+  }
+])
 const ZN_GLOBAL_INVOCATION_SHORTCUT = 'CommandOrControl+Alt+Space'
 const ZN_DESKTOP_PREFERENCES_FILE = 'desktop-preferences.json'
 const ZN_WINDOW_BOUNDS = {
@@ -79,6 +97,20 @@ function configureSourceDevelopmentProfile(): void {
   app.setPath('userData', resolved)
   app.setPath('sessionData', sessionData)
   console.info(`[ZN] source-development profile isolated at ${resolved}`)
+}
+
+function registerZnAppProtocol(): void {
+  protocol.handle(ZN_APP_SCHEME, request => {
+    const url = new URL(request.url)
+    if (url.host !== ZN_APP_HOST) {
+      return new Response('not found', { status: 404 })
+    }
+    const filename = ZN_APP_FILES.get(url.pathname)
+    if (!filename) {
+      return new Response('not found', { status: 404 })
+    }
+    return net.fetch(pathToFileURL(path.join(moduleDir, filename)).toString())
+  })
 }
 
 function isSafeExternalUrl(value: string): boolean {
@@ -232,7 +264,7 @@ export function createZnDesktopWindow(): BrowserWindow {
     if (primaryWindow === window) primaryWindow = null
   })
 
-  void window.loadFile(shellPath).catch(error => {
+  void window.loadURL(ZN_APP_URL).catch(error => {
     console.error('[ZN] failed to load desktop shell', error)
   })
   return window
@@ -491,6 +523,7 @@ async function bootstrapZnDesktop(): Promise<void> {
   registerZnShellIpc()
 
   await app.whenReady()
+  registerZnAppProtocol()
   refreshLocaleStateFromDisk()
   if (sourceDevelopment) {
     console.info('[ZN] source-development instance skips zn:// OS protocol registration')
