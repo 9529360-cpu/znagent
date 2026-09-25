@@ -1,0 +1,26 @@
+# Normalize line endings across the repository so `git status`/`git diff`
+# reflect real changes instead of CRLF<->LF churn on Windows checkouts.
+#
+# Everything is treated as text and normalized to LF in the repository and
+# on checkout, unless overridden below. Git still auto-detects binaries.
+* text=auto eol=lf
+
+# Windows-native scripts are conventionally edited/run with CRLF; keep them
+# CRLF on checkout so native Windows tooling (PowerShell ISE, notepad, etc.)
+# behaves as expected. They remain LF inside the git object store.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Common binary/asset types: never touch line endings, avoid diffing as text.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.pdf binary
+*.zip binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
