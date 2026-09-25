@@ -137,6 +137,19 @@ function normalizedWorkPayload(payload: any): Record<string, unknown> {
   }
 }
 
+const AGENT_RUN_TIMEOUT_MS = 300_000
+
+function normalizedAgentRunPayload(payload: any): Record<string, unknown> {
+  const task = String(payload?.task || '').trim()
+  if (!task) throw new Error('task is required')
+  const params: Record<string, unknown> = { task }
+  const maxTurns = payload?.maxTurns ?? payload?.max_turns
+  if (maxTurns !== undefined && maxTurns !== null && maxTurns !== '') {
+    params.max_turns = Number(maxTurns)
+  }
+  return params
+}
+
 export function registerZnResidentIpc(): void {
   if (registered) return
   registered = true
@@ -214,6 +227,13 @@ export function registerZnResidentIpc(): void {
   })
   handleZnDesktopIpc('zn:resident:work-submit', async (_event, payload) => {
     return getZnResidentProcess().request('work_submit', normalizedWorkPayload(payload))
+  })
+  handleZnDesktopIpc('zn:resident:agent-run', async (_event, payload) => {
+    return getZnResidentProcess().request(
+      'agent_run',
+      normalizedAgentRunPayload(payload),
+      AGENT_RUN_TIMEOUT_MS
+    )
   })
   handleZnDesktopIpc('zn:resident:work-restore-prepare', async (_event, payload) => {
     const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
