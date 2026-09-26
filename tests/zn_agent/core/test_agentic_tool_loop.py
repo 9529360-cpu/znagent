@@ -184,6 +184,93 @@ class ExecuteToolCallTests(unittest.TestCase):
         )
         self.assertTrue(output.startswith("error:"))
 
+    def test_edit_file_replaces_unique_occurrence(self):
+        workdir = Path(tempfile.mkdtemp())
+        target = workdir / "file.txt"
+        target.write_text("hello world\ngoodbye world\n", encoding="utf-8")
+
+        output = execute_tool_call(
+            "edit_file",
+            {"path": str(target), "old_string": "hello world", "new_string": "hi world"},
+            terminal=self.terminal,
+        )
+        self.assertTrue(output.startswith("replaced 1 occurrence"))
+        self.assertEqual(
+            target.read_text(encoding="utf-8"), "hi world\ngoodbye world\n"
+        )
+
+    def test_edit_file_rejects_missing_old_string(self):
+        workdir = Path(tempfile.mkdtemp())
+        target = workdir / "file.txt"
+        target.write_text("hello world\n", encoding="utf-8")
+
+        output = execute_tool_call(
+            "edit_file",
+            {"path": str(target), "old_string": "not present", "new_string": "x"},
+            terminal=self.terminal,
+        )
+        self.assertTrue(output.startswith("error:"))
+        self.assertIn("not found", output)
+        self.assertEqual(target.read_text(encoding="utf-8"), "hello world\n")
+
+    def test_edit_file_rejects_ambiguous_match_without_replace_all(self):
+        workdir = Path(tempfile.mkdtemp())
+        target = workdir / "file.txt"
+        target.write_text("dup\ndup\n", encoding="utf-8")
+
+        output = execute_tool_call(
+            "edit_file",
+            {"path": str(target), "old_string": "dup", "new_string": "single"},
+            terminal=self.terminal,
+        )
+        self.assertTrue(output.startswith("error:"))
+        self.assertIn("matches 2 times", output)
+        self.assertEqual(target.read_text(encoding="utf-8"), "dup\ndup\n")
+
+    def test_edit_file_replace_all_replaces_every_occurrence(self):
+        workdir = Path(tempfile.mkdtemp())
+        target = workdir / "file.txt"
+        target.write_text("dup\ndup\ndup\n", encoding="utf-8")
+
+        output = execute_tool_call(
+            "edit_file",
+            {
+                "path": str(target),
+                "old_string": "dup",
+                "new_string": "single",
+                "replace_all": True,
+            },
+            terminal=self.terminal,
+        )
+        self.assertTrue(output.startswith("replaced 3 occurrence"))
+        self.assertEqual(
+            target.read_text(encoding="utf-8"), "single\nsingle\nsingle\n"
+        )
+
+    def test_edit_file_rejects_equal_old_and_new_string(self):
+        workdir = Path(tempfile.mkdtemp())
+        target = workdir / "file.txt"
+        target.write_text("same\n", encoding="utf-8")
+
+        output = execute_tool_call(
+            "edit_file",
+            {"path": str(target), "old_string": "same", "new_string": "same"},
+            terminal=self.terminal,
+        )
+        self.assertTrue(output.startswith("error:"))
+
+    def test_edit_file_missing_file_reports_error(self):
+        output = execute_tool_call(
+            "edit_file",
+            {
+                "path": "/definitely/not/a/real/path.txt",
+                "old_string": "a",
+                "new_string": "b",
+            },
+            terminal=self.terminal,
+        )
+        self.assertTrue(output.startswith("error:"))
+
 
 if __name__ == "__main__":
     unittest.main()
