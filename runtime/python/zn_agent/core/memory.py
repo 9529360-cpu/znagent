@@ -31,6 +31,47 @@ _RESPONSE_PREFERENCE_KEYS = {
     "response verbosity": "verbosity",
     "reply verbosity": "verbosity",
     "\u56de\u7b54\u8be6\u7ec6\u7a0b\u5ea6": "verbosity",
+    "\u56de\u590d\u8be6\u7ec6\u7a0b\u5ea6": "verbosity",
+}
+
+
+_PREFERENCE_SCOPE_RE = re.compile(
+    r"(?:回答|回复|回应|答复|answer|repl(?:y|ies)|respond|responses?)", re.IGNORECASE
+)
+_PREFERENCE_DURABLE_RE = re.compile(
+    r"(?:记住|以后|今后|从现在起|长期|默认|偏好|我(?:更)?喜欢|请一直|"
+    r"remember|from now on|going forward|in the future|i prefer|my preference|always)",
+    re.IGNORECASE,
+)
+_PREFERENCE_CORRECTION_RE = re.compile(
+    r"(?:改成|改为|换成|更正|纠正|actually|instead|change(?: it)? to|switch to)",
+    re.IGNORECASE,
+)
+_PREFERENCE_VALUES: dict[str, tuple[tuple[str, str], ...]] = {
+    "language": (
+        ("Chinese", r"(?:中文|汉语|chinese)"),
+        ("English", r"(?:英文|英语|english)"),
+    ),
+    "style": (
+        ("professional", r"(?:专业|professional)"),
+        ("formal", r"(?:正式|formal)"),
+        ("friendly", r"(?:友好|亲切|friendly)"),
+        ("casual", r"(?:随意|轻松|casual)"),
+    ),
+    "verbosity": (
+        ("concise", r"(?:简洁|简短|精简|短一点|少一点|concise|brief|shorter)"),
+        ("detailed", r"(?:详细|详尽|展开|多解释|detailed|thorough|more detail)"),
+    ),
+}
+_CANONICAL_PREFERENCE_KEYS = {
+    "language": "response language",
+    "style": "response style",
+    "verbosity": "response verbosity",
+}
+_PREFERENCE_ALIASES = {
+    "language": ("reply language", "preferred language", "回复语言", "回答语言"),
+    "style": ("reply style", "回复风格", "回答风格"),
+    "verbosity": ("reply verbosity", "回答详细程度", "回复详细程度"),
 }
 
 
@@ -66,6 +107,82 @@ class StructuredMemory:
 
     def forget(self, key: str) -> None:
         self.store.delete_fact(key)
+
+    def capture_explicit_user_preferences(self, text: str) -> tuple[dict[str, str], ...]:
+        """Persist only explicit, allowlisted presentation preferences.
+
+        This is deliberately not general autobiographical extraction. Raw chat,
+        credentials, health data, permissions and inferred traits never cross
+        this write boundary. A correction replaces the single canonical value
+        for that presentation dimension; ambiguous conflicting statements are
+        ignored rather than guessed.
+        """
+        raw = unicodedata.normalize("NFKC", str(text or ""))[:4000]
+        if not raw.strip():
+            return ()
+        has_scope = _PREFERENCE_SCOPE_RE.search(raw) is not None
+        durable = _PREFERENCE_DURABLE_RE.search(raw) is not None
+        correction = _PREFERENCE_CORRECTION_RE.search(raw) is not None
+        records = self.store.list_facts()
+        by_dimension: dict[str, list[dict[str, Any]]] = {
+            "language": [], "style": [], "verbosity": [],
+        }
+        for record in records:
+            dimension = _RESPONSE_PREFERENCE_KEYS.get(
+                self._context_normalize(str(record.get("key") or ""))
+            )
+            if dimension in by_dimension:
+                by_dimension[dimension].append(record)
+
+        writes: list[dict[str, str]] = []
+        lowered = raw.casefold()
+        for dimension in ("language", "style", "verbosity"):
+            existing = by_dimension[dimension]
+            if not ((durable and has_scope) or (correction and existing)):
+                continue
+            matches: list[tuple[int, str]] = []
+            for value, pattern in _PREFERENCE_VALUES[dimension]:
+                for match in re.finditer(pattern, raw, flags=re.IGNORECASE):
+                    prefix = lowered[max(0, match.start() - 14):match.start()]
+                    if re.search(r"(?:不|不要|别|not|don't|do not)\s*$", prefix):
+                        continue
+                    matches.append((match.start(), value))
+            if not matches:
+                continue
+            values = {value for _, value in matches}
+            if len(values) > 1 and not correction:
+                continue
+            selected = max(matches, key=lambda item: item[0])[1] if correction else matches[0][1]
+            key = _CANONICAL_PREFERENCE_KEYS[dimension]
+            canonical = next(
+                (item for item in existing if self._context_normalize(str(item.get("key") or "")) == key),
+                None,
+            )
+            old_value = canonical.get("value") if canonical is not None else None
+            conflicting_keys = [
+                str(item.get("key") or "")
+                for item in existing
+                if self._context_normalize(str(item.get("key") or "")) != key
+            ]
+            if old_value != selected:
+                self.remember(key, selected, aliases=_PREFERENCE_ALIASES[dimension])
+                writes.append({
+                    "dimension": dimension,
+                    "key": key,
+                    "value": selected,
+                    "action": "updated" if canonical is not None else "saved",
+                })
+            for conflict_key in conflicting_keys:
+                if conflict_key:
+                    self.forget(conflict_key)
+            if old_value == selected and conflicting_keys:
+                writes.append({
+                    "dimension": dimension,
+                    "key": key,
+                    "value": selected,
+                    "action": "deduplicated",
+                })
+        return tuple(writes)
 
     def recall(self, query: str) -> FactMatch | None:
         normalized = self._normalize(query)
