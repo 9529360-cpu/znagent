@@ -1,6 +1,6 @@
 import { execFile, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { constants as fsConstants, createReadStream, createWriteStream } from 'node:fs'
+import { constants as fsConstants, createReadStream } from 'node:fs'
 import { promises as fs } from 'node:fs'
 import * as http from 'node:http'
 import type { IncomingMessage } from 'node:http'
@@ -13,6 +13,7 @@ import { app } from 'electron'
 import { handleZnDesktopIpc } from './zn-ipc-trust'
 
 import { applyZnReleaseInstallerWithResidentGate } from './zn-release-application-gate'
+import { readZnBoundedUpdateBody, writeZnVerifiedUpdateBody } from './zn-release-download-safety'
 import {
   parseZnReleaseChannel,
   znUpdatePlatform,
@@ -25,6 +26,8 @@ import { verifyZnReleaseChannelSignature } from './zn-release-signature'
 const execFileAsync = promisify(execFile)
 const USER_AGENT = 'ZN-Desktop-Updater/2'
 const MAX_REDIRECTS = 6
+const MAX_UPDATE_CHANNEL_BYTES = 1_048_576
+const MAX_UPDATE_ERROR_BODY_BYTES = 65_536
 
 type ZnDownloadState = 'idle' | 'downloading' | 'ready' | 'failed'
 
@@ -150,15 +153,20 @@ function request(url: string, redirects = MAX_REDIRECTS): Promise<IncomingMessag
           return
         }
         if (status < 200 || status >= 300) {
-          const chunks: Buffer[] = []
-          response.on('data', chunk => chunks.push(Buffer.from(chunk)))
-          response.on('end', () => {
-            reject(
-              new Error(
-                `update request failed (${status}): ${Buffer.concat(chunks).toString('utf8').slice(0, 500)}`
+          void readZnBoundedUpdateBody(
+            response,
+            MAX_UPDATE_ERROR_BODY_BYTES,
+            'update error response'
+          ).then(
+            body => {
+              reject(
+                new Error(
+                  `update request failed (${status}): ${body.toString('utf8').slice(0, 500)}`
+                )
               )
-            )
-          })
+            },
+            reject
+          )
           return
         }
         resolve(response)
@@ -171,9 +179,12 @@ function request(url: string, redirects = MAX_REDIRECTS): Promise<IncomingMessag
 
 async function readJson(url: string): Promise<unknown> {
   const response = await request(url)
-  const chunks: Buffer[] = []
-  for await (const chunk of response) chunks.push(Buffer.from(chunk))
-  const document = JSON.parse(Buffer.concat(chunks).toString('utf8')) as unknown
+  const body = await readZnBoundedUpdateBody(
+    response,
+    MAX_UPDATE_CHANNEL_BYTES,
+    'update channel'
+  )
+  const document = JSON.parse(body.toString('utf8')) as unknown
   verifyZnReleaseChannelSignature(
     document,
     String(process.env.ZN_UPDATE_SIGNING_PUBLIC_KEYS || ''),
@@ -343,31 +354,15 @@ async function downloadVerified(plan: UpdatePlan, state: PreparationState): Prom
 
   try {
     const response = await request(plan.target.url)
-    const output = createWriteStream(temporaryPath, { flags: 'w' })
-    const hash = createHash('sha256')
-    let size = 0
-
-    await new Promise<void>((resolve, reject) => {
-      const fail = (error: Error) => {
-        output.destroy()
-        reject(error)
+    const size = await writeZnVerifiedUpdateBody({
+      response,
+      destination: temporaryPath,
+      expectedSize: plan.target.size,
+      expectedSha256: plan.target.sha256,
+      onProgress: downloadedBytes => {
+        state.downloadedBytes = downloadedBytes
       }
-      response.on('data', chunk => {
-        const bytes = Buffer.from(chunk)
-        size += bytes.length
-        state.downloadedBytes = size
-        hash.update(bytes)
-      })
-      response.once('error', fail)
-      output.once('error', fail)
-      output.once('finish', resolve)
-      response.pipe(output)
     })
-
-    const digest = hash.digest('hex')
-    if (size !== plan.target.size || digest !== plan.target.sha256) {
-      throw new Error('downloaded ZN update failed channel verification')
-    }
 
     await fs.rename(temporaryPath, finalPath)
     state.downloadedBytes = size
