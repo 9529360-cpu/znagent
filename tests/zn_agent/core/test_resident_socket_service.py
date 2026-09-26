@@ -296,6 +296,46 @@ class ResidentSocketServiceTests(unittest.TestCase):
                 thread.join(timeout=5.0)
                 resident.store.close()
 
+    def test_rpc_error_projection_redacts_secret_like_exception_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, rpc, _, thread, endpoint_path, endpoint = self._start_threaded_service(
+                Path(tmp)
+            )
+            original_handle = rpc.handle
+
+            def handle_with_secret_failure(request):
+                if request.get("method") == "status":
+                    raise RuntimeError(
+                        "provider failed; "
+                        "Authorization: Bearer bearer-secret-value "
+                        "api_key=plain-secret-value "
+                        "https://user:pass-secret@example.test/v1"
+                        "?access_token=query-secret-value"
+                    )
+                return original_handle(request)
+
+            rpc.handle = handle_with_secret_failure
+            try:
+                response = self._request(endpoint, "status")
+                self.assertFalse(response["ok"])
+                encoded = json.dumps(response, ensure_ascii=False, default=str)
+                for secret in (
+                    "bearer-secret-value",
+                    "plain-secret-value",
+                    "pass-secret",
+                    "query-secret-value",
+                ):
+                    self.assertNotIn(secret, encoded)
+                self.assertIn("RuntimeError", response["error"])
+                self.assertIn("<redacted", response["error"])
+                self.assertTrue(thread.is_alive())
+            finally:
+                rpc.handle = original_handle
+                self._request(endpoint, "shutdown")
+                thread.join(timeout=5.0)
+                self.assertFalse(endpoint_path.exists())
+                resident.store.close()
+
     def test_secret_never_appears_in_rpc_snapshots_or_errors(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident, _, _, thread, _, endpoint = self._start_threaded_service(Path(tmp))
