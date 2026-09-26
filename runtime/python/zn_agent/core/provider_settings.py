@@ -24,6 +24,10 @@ from .provider_bridge import apply_zn_cognitive_config
 _PROVIDER_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 
+class ProviderSettingsConsistencyError(RuntimeError):
+    """Raised when a failed provider update cannot be fully compensated."""
+
+
 def _validated_provider_base_url(value: object) -> str:
     base_url = str(value or "").strip()
     if not base_url:
@@ -73,8 +77,56 @@ class ProviderSettingsService:
         config = load_zn_config(self.config_path)
         return self._snapshot_from_config(config)
 
+    def _restore_credential(self, reference: str, previous_secret: str | None) -> None:
+        if previous_secret:
+            self.credentials.set(reference, previous_secret)
+        else:
+            self.credentials.delete(reference)
+
+    def _rollback_update(
+        self,
+        *,
+        original_config: dict[str, Any],
+        original_config_existed: bool,
+        config_committed: bool,
+        credential_reference: str,
+        previous_secret: str | None,
+        credential_mutated: bool,
+        restore_runtime: bool,
+    ) -> list[str]:
+        errors: list[str] = []
+
+        if credential_mutated:
+            try:
+                self._restore_credential(credential_reference, previous_secret)
+            except Exception as exc:
+                errors.append(f"credential rollback failed: {type(exc).__name__}: {exc}")
+
+        if config_committed:
+            try:
+                if original_config_existed:
+                    save_zn_config(original_config, self.config_path)
+                else:
+                    self.config_path.unlink(missing_ok=True)
+            except Exception as exc:
+                errors.append(f"config rollback failed: {type(exc).__name__}: {exc}")
+
+        if restore_runtime:
+            try:
+                apply_zn_cognitive_config(
+                    self.resident.kernel,
+                    original_config,
+                    credential_store=self.credentials,
+                )
+            except Exception as exc:
+                errors.append(f"runtime rollback failed: {type(exc).__name__}: {exc}")
+
+        return errors
+
     def update(self, params: Mapping[str, Any]) -> dict[str, Any]:
         config = load_zn_config(self.config_path)
+        original_config = copy.deepcopy(config)
+        original_config_existed = self.config_path.exists()
         if self._has_advanced_routes(config):
             raise ValueError(
                 "provider editor cannot replace advanced zn_kernel.routes; edit those routes explicitly"
@@ -120,29 +172,61 @@ class ProviderSettingsService:
             model_cfg.pop("credential_ref", None)
             model_cfg.pop("api_key", None)
 
+        credential_reference = ""
+        previous_secret: str | None = None
+        credential_mutated = False
         if clear_credential:
-            reference = previous_reference if not provider_changed else ""
-            if reference:
-                self.credentials.delete(reference)
+            credential_reference = previous_reference if not provider_changed else ""
             model_cfg.pop("credential_ref", None)
             model_cfg.pop("api_key", None)
         elif api_key:
-            reference = provider_credential_reference(provider)
-            self.credentials.set(reference, api_key)
-            model_cfg["credential_ref"] = reference
+            credential_reference = provider_credential_reference(provider)
+            model_cfg["credential_ref"] = credential_reference
             # UI-written provider config never persists the raw secret.
             model_cfg.pop("api_key", None)
         elif not provider_changed and previous_reference:
             model_cfg["credential_ref"] = previous_reference
 
+        if credential_reference:
+            previous_secret = self.credentials.get(credential_reference)
+
         updated = copy.deepcopy(config)
         updated["model"] = model_cfg
-        save_zn_config(updated, self.config_path)
-        apply_zn_cognitive_config(
-            self.resident.kernel,
-            updated,
-            credential_store=self.credentials,
-        )
+        config_committed = False
+        runtime_apply_started = False
+        try:
+            if credential_reference:
+                credential_mutated = True
+                if clear_credential:
+                    self.credentials.delete(credential_reference)
+                else:
+                    self.credentials.set(credential_reference, api_key)
+
+            save_zn_config(updated, self.config_path)
+            config_committed = True
+            runtime_apply_started = True
+            apply_zn_cognitive_config(
+                self.resident.kernel,
+                updated,
+                credential_store=self.credentials,
+            )
+        except Exception as exc:
+            rollback_errors = self._rollback_update(
+                original_config=original_config,
+                original_config_existed=original_config_existed,
+                config_committed=config_committed,
+                credential_reference=credential_reference,
+                previous_secret=previous_secret,
+                credential_mutated=credential_mutated,
+                restore_runtime=runtime_apply_started,
+            )
+            if rollback_errors:
+                detail = "; ".join(rollback_errors)
+                raise ProviderSettingsConsistencyError(
+                    f"provider settings update failed and rollback was incomplete: {detail}"
+                ) from exc
+            raise
+
         return self._snapshot_from_config(updated)
 
     def _snapshot_from_config(self, config: dict[str, Any]) -> dict[str, Any]:
