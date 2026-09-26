@@ -7,11 +7,14 @@ from pathlib import Path
 
 from zn_agent.core.browser import (
     BrowserActionAuthority,
+    BrowserActionKind,
     BrowserEffectEvidence,
     BrowserObservation,
     BrowserPermissionContext,
     BrowserPlane,
     BrowserSessionIdentity,
+    BrowserTarget,
+    BrowserTargetKind,
     BrowserTargetQueryKind,
 )
 from zn_agent.core.browser_rpc import BrowserResidentRpcServer
@@ -25,6 +28,7 @@ class _FakeManagedBrowser:
         self.sessions: dict[str, BrowserPermissionContext] = {}
         self.closed: set[str] = set()
         self.last_action = None
+        self.last_observation = None
         self.last_required_target_queries = ()
         self.call_threads: list[int] = []
 
@@ -72,7 +76,7 @@ class _FakeManagedBrowser:
             provider="fake-chromium",
             browser_name="chromium",
         )
-        return BrowserObservation(
+        observation = BrowserObservation(
             session=session,
             page_id=page_id or "page-1",
             captured_at=utc_now(),
@@ -80,23 +84,98 @@ class _FakeManagedBrowser:
             title="",
             load_state="complete",
         )
+        self.last_observation = observation
+        return observation
 
-    def act(self, action, authority: BrowserActionAuthority):
+    def observe_target(self, session_id: str, query, *, page_id: str = ""):
         self._record_thread()
+        if session_id not in self.sessions or session_id in self.closed:
+            raise ValueError("unknown fake session")
+        roles = {
+            BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME: "textbox",
+            BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME: "button",
+            BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME: "checkbox",
+        }
+        role = roles.get(query.kind)
+        if role is None:
+            raise ValueError("unsupported fake semantic query")
+        session = BrowserSessionIdentity(
+            session_id=session_id,
+            plane=BrowserPlane.MANAGED,
+            provider="fake-chromium",
+            browser_name="chromium",
+        )
+        captured_at = utc_now()
+        target = BrowserTarget(
+            session_id=session_id,
+            page_id=page_id or "page-1",
+            kind=BrowserTargetKind.ACCESSIBILITY_NODE,
+            target_id=f"fake:{role}:{query.value}",
+            observed_at=captured_at,
+            url="about:blank",
+            frame_id=query.frame_id,
+            role=role,
+            name=query.value,
+            selector_hint=f"{query.kind.value}:exact",
+        )
         observation = BrowserObservation(
-            session=BrowserSessionIdentity(
-                session_id=action.session_id,
-                plane=BrowserPlane.MANAGED,
-                provider="fake-chromium",
-                browser_name="chromium",
-            ),
-            page_id=action.page_id,
-            captured_at=authority.observation_captured_at,
+            session=session,
+            page_id=target.page_id,
+            captured_at=captured_at,
             url="about:blank",
             title="",
             load_state="complete",
+            target=target,
         )
-        authority.validate_current(action, observation, self.sessions[action.session_id])
+        self.last_observation = observation
+        return observation
+
+    def read_page(self, session_id: str, *, page_id: str = ""):
+        self._record_thread()
+        if session_id not in self.sessions or session_id in self.closed:
+            raise ValueError("unknown fake session")
+        return {
+            "page_id": page_id or "page-1",
+            "url": "about:blank",
+            "title": "",
+            "text": "fake readable page",
+            "provider": "fake-chromium",
+        }
+
+    def act(self, action, authority: BrowserActionAuthority):
+        self._record_thread()
+        if action.kind is BrowserActionKind.NAVIGATE:
+            observation = BrowserObservation(
+                session=BrowserSessionIdentity(
+                    session_id=action.session_id,
+                    plane=BrowserPlane.MANAGED,
+                    provider="fake-chromium",
+                    browser_name="chromium",
+                ),
+                page_id=action.page_id,
+                captured_at=authority.observation_captured_at,
+                url="about:blank",
+                title="",
+                load_state="complete",
+            )
+            authority.validate_current(action, observation, self.sessions[action.session_id])
+            self.last_action = action
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=utc_now(),
+                success=True,
+                page_id=action.page_id,
+                url_before="about:blank",
+                url_after=str(action.args["url"]),
+                postcondition="safe_current_page_observed",
+            )
+
+        authority.validate_current(
+            action,
+            self.last_observation,
+            self.sessions[action.session_id],
+        )
         self.last_action = action
         return BrowserEffectEvidence(
             action_id=action.action_id,
@@ -104,9 +183,18 @@ class _FakeManagedBrowser:
             observed_at=utc_now(),
             success=True,
             page_id=action.page_id,
-            url_before="about:blank",
-            url_after=str(action.args["url"]),
-            postcondition="safe_current_page_observed",
+            url_before=self.last_observation.url,
+            url_after=self.last_observation.url,
+            target_id=action.target.target_id if action.target else "",
+            postcondition=(
+                "same_exact_target_text_equals_requested"
+                if action.kind is BrowserActionKind.TYPE_TEXT
+                else "fresh_semantic_action_verified"
+            ),
+            data={
+                "provider": "fake-chromium",
+                "input_sent": action.kind is BrowserActionKind.TYPE_TEXT,
+            },
         )
 
     def close_session(self, session_id: str) -> None:
@@ -208,6 +296,117 @@ class ResidentBrowserRpcTests(unittest.TestCase):
                 adapter.close_session(session.session_id)
             finally:
                 self._close(server)
+            self.assertEqual(len(set(browser.call_threads)), 1)
+
+    def test_browser_rpc_open_routes_required_target_capability_before_session(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server, browser = self._server(Path(tmp))
+            try:
+                opened = server.handle(
+                    {
+                        "id": "open-semantic",
+                        "method": "browser_open",
+                        "params": {
+                            "required_target_queries": [
+                                BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME.value
+                            ]
+                        },
+                    }
+                )
+                self.assertTrue(opened["ok"])
+                self.assertEqual(
+                    browser.last_required_target_queries,
+                    (BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,),
+                )
+            finally:
+                self._close(server)
+
+    def test_browser_rpc_read_target_and_semantic_action_share_one_owner(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server, browser = self._server(Path(tmp))
+            try:
+                opened = server.handle(
+                    {
+                        "id": "open",
+                        "method": "browser_open",
+                        "params": {
+                            "permission": {
+                                "allow_page_interaction": True,
+                                "allow_text_entry": True,
+                            },
+                            "required_target_queries": [
+                                BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME.value
+                            ],
+                        },
+                    }
+                )
+                session_id = opened["result"]["session_id"]
+
+                page = server.handle(
+                    {
+                        "id": "read",
+                        "method": "browser_read_page",
+                        "params": {"session_id": session_id},
+                    }
+                )
+                self.assertEqual(page["result"]["text"], "fake readable page")
+
+                target = server.handle(
+                    {
+                        "id": "target",
+                        "method": "browser_observe_target",
+                        "params": {
+                            "session_id": session_id,
+                            "query": {
+                                "kind": BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME.value,
+                                "value": "Customer",
+                            },
+                        },
+                    }
+                )
+                self.assertEqual(target["result"]["target"]["role"], "textbox")
+                self.assertEqual(target["result"]["target"]["name"], "Customer")
+
+                acted = server.handle(
+                    {
+                        "id": "semantic",
+                        "method": "browser_semantic_action",
+                        "params": {
+                            "session_id": session_id,
+                            "kind": BrowserActionKind.TYPE_TEXT.value,
+                            "query": {
+                                "kind": BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME.value,
+                                "value": "Customer",
+                            },
+                            "args": {"text": "alice@example.test"},
+                        },
+                    }
+                )
+                self.assertTrue(acted["result"]["effect"]["success"])
+                self.assertEqual(acted["result"]["regrounds"], 0)
+                self.assertEqual(acted["result"]["observation"]["target"]["name"], "Customer")
+                self.assertIsNotNone(browser.last_action)
+                self.assertIs(browser.last_action.kind, BrowserActionKind.TYPE_TEXT)
+
+                with self.assertRaisesRegex(ValueError, "requires query kind"):
+                    server.handle(
+                        {
+                            "id": "bad-semantic",
+                            "method": "browser_semantic_action",
+                            "params": {
+                                "session_id": session_id,
+                                "kind": BrowserActionKind.TYPE_TEXT.value,
+                                "query": {
+                                    "kind": BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME.value,
+                                    "value": "Customer",
+                                },
+                                "args": {"text": "alice@example.test"},
+                            },
+                        }
+                    )
+            finally:
+                self._close(server)
+            self.assertGreaterEqual(len(browser.call_threads), 6)
             self.assertEqual(len(set(browser.call_threads)), 1)
 
     def test_browser_rpc_navigation_and_cleanup_stay_on_one_resident_owner_thread(self) -> None:
