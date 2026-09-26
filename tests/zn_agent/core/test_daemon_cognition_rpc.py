@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +10,14 @@ from unittest.mock import patch
 
 from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
+
+
+class _FailingProviderSettings:
+    def snapshot(self):
+        raise RuntimeError(
+            "provider failed Authorization: Bearer daemon-secret "
+            "api_key=daemon-api-secret"
+        )
 
 
 class ResidentCognitionRpcTests(unittest.TestCase):
@@ -54,6 +63,43 @@ class ResidentCognitionRpcTests(unittest.TestCase):
                     self.assertEqual(learning["result"], [])
                 finally:
                     resident.store.close()
+
+    def test_stdio_error_boundary_redacts_secret_like_exception_text(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=Path(tmp) / "kernel.db",
+            )
+            input_stream = io.StringIO(
+                json.dumps(
+                    {"id": "settings", "method": "provider_settings", "params": {}}
+                )
+                + "\n"
+                + json.dumps({"id": "stop", "method": "shutdown", "params": {}})
+                + "\n"
+            )
+            output_stream = io.StringIO()
+            server = ResidentRpcServer(
+                resident=resident,
+                input_stream=input_stream,
+                output_stream=output_stream,
+                provider_settings=_FailingProviderSettings(),
+                life_interval=60.0,
+            )
+
+            self.assertEqual(server.serve_forever(), 0)
+
+            payloads = [
+                json.loads(line)
+                for line in output_stream.getvalue().splitlines()
+                if line.strip()
+            ]
+            failure = next(item for item in payloads if item.get("id") == "settings")
+            encoded = json.dumps(failure, ensure_ascii=False)
+            self.assertFalse(failure["ok"])
+            self.assertNotIn("daemon-secret", encoded)
+            self.assertNotIn("daemon-api-secret", encoded)
+            self.assertIn("<redacted", failure["error"])
 
     def test_open_impasse_is_visible_through_rpc_after_event_failure(self):
         with tempfile.TemporaryDirectory() as tmp:
