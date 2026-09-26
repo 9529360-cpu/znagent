@@ -24,6 +24,27 @@ export type ZnWorkSubmitResult = {
   run: unknown
 }
 
+export type ZnAgentRunToolResult = {
+  toolUseId: string
+  name: string
+  output: unknown
+}
+
+export type ZnAgentRunStep = {
+  turn: number
+  assistantText: string
+  toolCalls: Array<Record<string, unknown>>
+  toolResults: ZnAgentRunToolResult[]
+}
+
+export type ZnAgentRunResult = {
+  completed: boolean
+  finalText: string
+  turnsUsed: number
+  stoppedReason: string
+  steps: ZnAgentRunStep[]
+}
+
 export type ZnWorkRecovery = {
   status: string
   kind: string
@@ -741,6 +762,50 @@ export async function submitZnWork(threadId: string, task: string): Promise<ZnWo
     thread: normalizeThread(result.thread),
     run: result.run
   }
+}
+
+function normalizeAgentRunStep(value: unknown): ZnAgentRunStep {
+  const step = record(value) || {}
+  const toolResults = Array.isArray(step.toolResults ?? step.tool_results)
+    ? (step.toolResults ?? step.tool_results) as unknown[]
+    : []
+  return {
+    turn: Number(step.turn ?? 0),
+    assistantText: String(step.assistantText ?? step.assistant_text ?? ''),
+    toolCalls: Array.isArray(step.toolCalls ?? step.tool_calls)
+      ? ((step.toolCalls ?? step.tool_calls) as unknown[]).map(call => record(call) || {})
+      : [],
+    toolResults: toolResults.map(item => {
+      const toolResult = record(item) || {}
+      return {
+        toolUseId: String(toolResult.toolUseId ?? toolResult.tool_use_id ?? ''),
+        name: String(toolResult.name ?? ''),
+        output: toolResult.output
+      }
+    })
+  }
+}
+
+function normalizeAgentRunResult(value: unknown): ZnAgentRunResult {
+  const result = record(value) || {}
+  const steps = Array.isArray(result.steps) ? result.steps : []
+  return {
+    completed: Boolean(result.completed),
+    finalText: String(result.finalText ?? result.final_text ?? ''),
+    turnsUsed: Number(result.turnsUsed ?? result.turns_used ?? 0),
+    stoppedReason: String(result.stoppedReason ?? result.stopped_reason ?? ''),
+    steps: steps.map(normalizeAgentRunStep)
+  }
+}
+
+export async function runZnAgent(task: string, options?: { maxTurns?: number }): Promise<ZnAgentRunResult> {
+  const normalized = task.trim()
+  if (!normalized) throw new Error('Task must not be empty')
+  const result = await desktop().resident.agentRun({
+    task: normalized,
+    ...(options?.maxTurns ? { maxTurns: options.maxTurns } : {})
+  })
+  return normalizeAgentRunResult(result)
 }
 
 export async function prepareZnMissingWorkRestore(

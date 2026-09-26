@@ -23,6 +23,7 @@ export type ZnResidentRequest = {
     | 'work_progress'
     | 'work_cancel'
     | 'work_submit'
+    | 'agent_run'
     | 'work_restore_prepare'
     | 'work_restore_approve'
     | 'work_restore_application'
