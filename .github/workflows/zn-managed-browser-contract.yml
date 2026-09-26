@@ -10,6 +10,7 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_select_option.py
       - runtime/python/zn_agent/core/browser_provider_registry.py
       - runtime/python/zn_agent/core/chrome_devtools_mcp_browser.py
       - runtime/python/zn_agent/core/stdio_mcp.py
@@ -59,6 +60,7 @@ on:
       - tests/zn_agent/core/test_browser_work_form_submit_recovery.py
       - tests/zn_agent/core/test_browser_work_named_button.py
       - tests/zn_agent/core/test_browser_work_named_checkbox.py
+      - tests/zn_agent/core/test_browser_work_named_select.py
       - tests/zn_agent/core/test_browser_work_named_text.py
       - tests/zn_agent/core/test_browser_work_named_text_recovery.py
       - tests/zn_agent/core/test_browser_work_natural_button.py
@@ -71,6 +73,7 @@ on:
       - tests/zn_agent/core/test_modern_text_resident_ownership.py
       - tests/zn_agent/core/test_resident_browser_rpc.py
       - tests/zn_agent/core/test_semantic_managed_browser.py
+      - tests/zn_agent/core/test_semantic_managed_browser_combobox.py
       - tests/zn_agent/core/test_semantic_managed_browser_button.py
       - tests/zn_agent/core/test_semantic_managed_browser_textbox.py
       - tests/zn_agent/core/test_spreadsheet_work.py
@@ -97,6 +100,7 @@ on:
       - runtime/python/zn_agent/resident.py
       - runtime/python/zn_agent/core/action.py
       - runtime/python/zn_agent/core/browser.py
+      - runtime/python/zn_agent/core/browser_select_option.py
       - runtime/python/zn_agent/core/browser_provider_registry.py
       - runtime/python/zn_agent/core/chrome_devtools_mcp_browser.py
       - runtime/python/zn_agent/core/stdio_mcp.py
@@ -146,6 +150,7 @@ on:
       - tests/zn_agent/core/test_browser_work_form_submit_recovery.py
       - tests/zn_agent/core/test_browser_work_named_button.py
       - tests/zn_agent/core/test_browser_work_named_checkbox.py
+      - tests/zn_agent/core/test_browser_work_named_select.py
       - tests/zn_agent/core/test_browser_work_named_text.py
       - tests/zn_agent/core/test_browser_work_named_text_recovery.py
       - tests/zn_agent/core/test_browser_work_natural_button.py
@@ -158,6 +163,7 @@ on:
       - tests/zn_agent/core/test_modern_text_resident_ownership.py
       - tests/zn_agent/core/test_resident_browser_rpc.py
       - tests/zn_agent/core/test_semantic_managed_browser.py
+      - tests/zn_agent/core/test_semantic_managed_browser_combobox.py
       - tests/zn_agent/core/test_semantic_managed_browser_button.py
       - tests/zn_agent/core/test_semantic_managed_browser_textbox.py
       - tests/zn_agent/core/test_spreadsheet_work.py

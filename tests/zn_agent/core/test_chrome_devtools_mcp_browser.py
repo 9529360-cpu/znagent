@@ -28,6 +28,9 @@ class _FakeChromeMcpClient:
         self.url = "about:blank"
         self.title = ""
         self.text_value = ""
+        self.select_value = "alpha"
+        self.select_label = "Alpha"
+        self.select_options = {"Alpha": "alpha", "Private Beta": "beta-private"}
         self.closed = False
 
     def start(self):
@@ -71,6 +74,21 @@ class _FakeChromeMcpClient:
                                 "role": "button",
                                 "name": "Submit",
                             },
+                            {
+                                "id": "1_3",
+                                "role": "combobox",
+                                "name": "Plan",
+                                "value": self.select_label,
+                                "children": [
+                                    {
+                                        "id": "1_4",
+                                        "role": "option",
+                                        "name": label,
+                                        "value": value,
+                                    }
+                                    for label, value in self.select_options.items()
+                                ],
+                            },
                         ],
                     }
                 }
@@ -82,6 +100,12 @@ class _FakeChromeMcpClient:
         if name == "fill":
             if args.get("uid") == "1_1":
                 self.text_value = str(args.get("value") or "")
+            elif args.get("uid") == "1_3":
+                label = str(args.get("value") or "")
+                if label not in self.select_options:
+                    raise AssertionError(f"unexpected option label: {label}")
+                self.select_label = label
+                self.select_value = self.select_options[label]
             return {"structuredContent": {}}
         if name == "click":
             if args.get("uid") == "1_2":
@@ -90,20 +114,61 @@ class _FakeChromeMcpClient:
         if name == "evaluate_script":
             fence = chr(96) * 3
             function = str(args.get("function") or "")
-            value = (
-                {
+            uid_args = list(args.get("args") or [])
+            uid = str(uid_args[0]) if uid_args else ""
+            if "matching_count" in function:
+                if 'const mode = "label";' in function and '"Private Beta"' in function:
+                    choice = {"label": "Private Beta", "value": "beta-private"}
+                elif 'const mode = "value";' in function and '"alpha"' in function:
+                    choice = {"label": "Alpha", "value": "alpha"}
+                else:
+                    choice = None
+                value = {
                     "connected": True,
-                    "sensitive": False,
+                    "supported": True,
                     "disabled": False,
-                    "read_only": False,
-                    "checked": None,
-                    "focused": False,
-                    "value": self.text_value,
-                    "selected_text": "",
+                    "multiple": False,
+                    "matching_count": 1 if choice is not None else 0,
+                    "same_label_count": 1 if choice is not None else 0,
+                    "label": "" if choice is None else choice["label"],
+                    "value": "" if choice is None else choice["value"],
                 }
-                if "selected_text" in function
-                else True
-            )
+            elif "selected_text" in function:
+                if uid == "1_3":
+                    value = {
+                        "connected": True,
+                        "sensitive": False,
+                        "disabled": False,
+                        "read_only": False,
+                        "checked": None,
+                        "focused": False,
+                        "value": "",
+                        "native_select": True,
+                        "multiple": False,
+                        "selected_value": self.select_value,
+                        "selected_text": self.select_label,
+                        "options_truncated": False,
+                        "options": [
+                            {"label": label, "value": value}
+                            for label, value in self.select_options.items()
+                        ],
+                    }
+                else:
+                    value = {
+                        "connected": True,
+                        "sensitive": False,
+                        "disabled": False,
+                        "read_only": False,
+                        "checked": None,
+                        "focused": False,
+                        "value": self.text_value,
+                        "native_select": False,
+                        "multiple": False,
+                        "selected_value": "",
+                        "selected_text": "",
+                    }
+            else:
+                value = True
             return {
                 "content": [
                     {
@@ -218,6 +283,64 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             self.assertTrue(typed.data["exact_node_continuity"])
             self.assertEqual(typed.data["text_length_after"], len("mature browser"))
 
+            combobox = browser.observe_target(
+                session.session_id,
+                BrowserTargetQuery(
+                    kind=BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME,
+                    value="Plan",
+                ),
+                page_id=typed.page_id,
+            )
+            select_label = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.SELECT_OPTION,
+                page_id=combobox.page_id,
+                target=combobox.target,
+                args={"label": "Private Beta"},
+            )
+            selected_label = browser.act(
+                select_label,
+                BrowserActionAuthority.from_observation(
+                    select_label, combobox, permission
+                ),
+            )
+            self.assertTrue(selected_label.success, selected_label.error)
+            self.assertEqual(
+                selected_label.postcondition,
+                "same_exact_target_selected_label",
+            )
+            self.assertTrue(selected_label.data["selected_label_matches"])
+            self.assertEqual(browser._sessions[session.session_id].client.select_value, "beta-private")
+
+            combobox_value = browser.observe_target(
+                session.session_id,
+                BrowserTargetQuery(
+                    kind=BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME,
+                    value="Plan",
+                ),
+                page_id=typed.page_id,
+            )
+            select_value = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.SELECT_OPTION,
+                page_id=combobox_value.page_id,
+                target=combobox_value.target,
+                args={"value": "alpha"},
+            )
+            selected_value = browser.act(
+                select_value,
+                BrowserActionAuthority.from_observation(
+                    select_value, combobox_value, permission
+                ),
+            )
+            self.assertTrue(selected_value.success, selected_value.error)
+            self.assertEqual(
+                selected_value.postcondition,
+                "same_exact_target_selected_value",
+            )
+            self.assertTrue(selected_value.data["selected_value_matches"])
+            self.assertEqual(browser._sessions[session.session_id].client.select_label, "Alpha")
+
             button = browser.observe_target(
                 session.session_id,
                 BrowserTargetQuery(
@@ -285,6 +408,41 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             self.assertEqual(client.fill_calls, 0)
         finally:
             browser.close()
+    def test_select_value_mapping_refuses_ambiguous_visible_provider_label(self):
+        browser = self._browser()
+        evidence = {
+            "connected": True,
+            "supported": True,
+            "disabled": False,
+            "multiple": False,
+            "matching_count": 1,
+            "same_label_count": 2,
+            "label": "Duplicate",
+            "value": "second",
+        }
+        with self.assertRaisesRegex(
+            Exception,
+            "ambiguous visible option label",
+        ):
+            browser._select_option_choice_from_evidence(evidence)
+
+    def test_select_label_mapping_requires_one_unique_fresh_option(self):
+        browser = self._browser()
+        evidence = {
+            "connected": True,
+            "supported": True,
+            "disabled": False,
+            "multiple": False,
+            "matching_count": 2,
+            "same_label_count": 0,
+            "label": "",
+            "value": "",
+        }
+        with self.assertRaisesRegex(
+            Exception,
+            "exactly one fresh native option",
+        ):
+            browser._select_option_choice_from_evidence(evidence)
 
     def test_command_uses_pinned_runtime_real_chrome_and_privacy_flags(self):
         with tempfile.TemporaryDirectory() as tmp:
