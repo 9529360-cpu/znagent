@@ -36,7 +36,18 @@ class ToolLoopError(RuntimeError):
 
 MAX_FILE_READ_CHARS = 200_000
 MAX_FILE_WRITE_CHARS = 2_000_000
-DEFAULT_MAX_TURNS = 25
+# Bounded, not unbounded: per the product direction of matching mainstream
+# coding agents (Codex/Claude Code) rather than ZN's older, more
+# conservative defaults, this is generous enough for a real multi-step
+# coding task (edit, run tests, read failures, edit again, ...) without
+# ever letting a stuck loop run forever -- max_turns is still enforced and
+# still overridable per call.
+DEFAULT_MAX_TURNS = 80
+# Same reasoning for the default per-command timeout: 60s was tuned for
+# quick inspection commands, not real builds/test suites, which routinely
+# run longer. Callers (or the model itself, via the `timeout` argument) can
+# still ask for more or less on any single call.
+DEFAULT_RUN_TERMINAL_TIMEOUT_SECONDS = 180.0
 
 TOOL_SCHEMA: tuple[dict[str, Any], ...] = (
     {
@@ -63,7 +74,7 @@ TOOL_SCHEMA: tuple[dict[str, Any], ...] = (
                 },
                 "timeout": {
                     "type": "number",
-                    "description": "Seconds before the command is killed. Default 60.",
+                    "description": "Seconds before the command is killed. Default 180.",
                 },
             },
             "required": ["command"],
@@ -174,9 +185,11 @@ def _execute_run_terminal(arguments: Mapping[str, Any], *, terminal: ZNLocalTerm
     workdir = arguments.get("workdir")
     timeout = arguments.get("timeout")
     try:
-        timeout_value = float(timeout) if timeout is not None else 60.0
+        timeout_value = (
+            float(timeout) if timeout is not None else DEFAULT_RUN_TERMINAL_TIMEOUT_SECONDS
+        )
     except (TypeError, ValueError):
-        timeout_value = 60.0
+        timeout_value = DEFAULT_RUN_TERMINAL_TIMEOUT_SECONDS
     request = TerminalRequest(
         command=command,
         workdir=str(workdir) if workdir else None,
