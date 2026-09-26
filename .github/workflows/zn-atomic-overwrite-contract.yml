@@ -66,8 +66,8 @@ jobs:
           if ($env:RUNNER_OS -ne 'Windows' -or $env:RUNNER_ARCH -ne 'X64') {
             throw "ZN atomic overwrite contract requires a GitHub-hosted Windows X64 runner; got $env:RUNNER_OS/$env:RUNNER_ARCH"
           }
-      - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: '0.11.6'
           enable-cache: false
