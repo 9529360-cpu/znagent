@@ -7,6 +7,8 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from .execution_mode import event_allows_effects
+
 _SET_PATTERNS = (
     re.compile(
         r"^(?:请|帮我|麻烦)?\s*(?:把)?\s*(?:系统)?(?:音量|声音)\s*"
@@ -46,7 +48,7 @@ class WindowsAudioVolumeReadGoal:
 
 
 def windows_audio_volume_set_goal(event: Any) -> WindowsAudioVolumeSetGoal | None:
-    if not _eligible_event(event):
+    if not event_allows_effects(event) or not _eligible_event(event):
         return None
     task = _task(event)
     if not task:

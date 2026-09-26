@@ -12,6 +12,7 @@ import json
 from typing import Any
 
 from .browser_named_goal import browser_named_text_request
+from .execution_mode import event_allows_effects
 from .goal_resident import ResidentGoalRuntime
 
 
@@ -31,6 +32,8 @@ _BROWSER_SEMANTIC_GOAL_KEY = "_resident_user_browser_semantic_goal"
 _BROWSER_SEMANTIC_LOOKUP_KIND = "user_browser_semantic_lookup"
 
 def _looks_like_foreground_browser_task(event) -> bool:
+    if not event_allows_effects(event):
+        return False
     if str(event.kind or "").strip().lower() != "desktop_user_event":
         return False
     payload = event.payload or {}

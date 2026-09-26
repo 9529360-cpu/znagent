@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from .body import BodyAction, BodyActionResult
+from .execution_mode import body_action_allowed_for_event
 from .models import utc_now
 
 
@@ -165,6 +166,20 @@ class AuthorityEnforcedBody:
         self._resident = resident
 
     def act(self, kind: str, *, event_id: str | None = None, **args: Any) -> BodyActionResult:
+        resident = self._resident
+        normalized_event = str(event_id or "").strip()
+        if resident is not None and normalized_event:
+            event = resident.store.get_event(normalized_event)
+            if event is not None and not body_action_allowed_for_event(event, kind):
+                return self._record_denial(
+                    kind,
+                    event_id=event_id,
+                    args=args,
+                    error=WorkerActionAuthorityError(
+                        "Ask mode permits observation only; switch to Agent to make changes"
+                    ),
+                )
+
         raw_context = args.pop(_AUTHORITY_ARG, None)
         if raw_context is not None:
             try:

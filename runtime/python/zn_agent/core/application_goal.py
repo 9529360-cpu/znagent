@@ -6,6 +6,8 @@ import re
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from .execution_mode import event_allows_effects
+
 APPLICATION_OPEN_GOAL_KIND = "open_installed_application"
 _OPEN_PATTERNS = (
     re.compile(r"^(?:请|帮我|麻烦)?\s*(?:打开|启动|运行)\s*(?P<name>.+?)\s*[。.!！]?$", re.I),
@@ -25,6 +27,8 @@ def application_open_goal_payload(goal: ApplicationOpenGoal) -> dict[str, Any]:
 
 
 def application_open_goal(event) -> ApplicationOpenGoal | None:
+    if not event_allows_effects(event):
+        return None
     payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
     if str(getattr(event, "kind", "") or "").strip().lower() != "desktop_user_event" or payload.get("body_action") or payload.get("native_action"):
         return None
@@ -35,6 +39,8 @@ def application_open_goal(event) -> ApplicationOpenGoal | None:
 
 
 def explicit_application_open_goal_hint(event) -> ApplicationOpenGoal | None:
+    if not event_allows_effects(event):
+        return None
     payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
     if str(getattr(event, "kind", "") or "").strip().lower() != "desktop_user_event" or payload.get("body_action") or payload.get("native_action"):
         return None
