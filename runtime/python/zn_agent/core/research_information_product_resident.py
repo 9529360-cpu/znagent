@@ -14,6 +14,8 @@ from .local_file_discovery import build_local_file_discovery_capability
 from .local_inference_runtime import LocalInferenceRuntimeDiscovery
 from .presentation_work_behavior import install_presentation_work_behavior
 from .document_work_behavior import install_document_work_behavior
+from .intention_event_handoff_behavior import install_intention_event_handoff_behavior
+from .recurring_will_behavior import install_recurring_will_behavior
 from .models import utc_now
 from .generic_action_resident import GenericActionResidentRuntime
 from .user_browser_extension_relay import UserBrowserExtensionRelayError
@@ -78,6 +80,8 @@ class ProductResearchInformationResidentRuntime(GenericActionResidentRuntime):
         install_windows_audio_reflex_behavior(self)
         install_presentation_work_behavior(self)
         install_document_work_behavior(self)
+        install_intention_event_handoff_behavior(self)
+        install_recurring_will_behavior(self)
 
     def _current_visual_stage_bridge(self, event):
         """Bind bounded visual cognition through current Work privacy/route policy."""
