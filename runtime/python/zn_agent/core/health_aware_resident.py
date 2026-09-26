@@ -11,6 +11,7 @@ import hashlib
 from typing import Any
 
 from .browser_work_resident import BrowserWorkResidentRuntime
+from .cognitive_failure import classify_cognitive_failure
 from .foreground_window_sense import ForegroundWindowObservation
 from .health_observation import ResidentHealthJournal
 from .models import ModelRoute
@@ -99,8 +100,24 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
         organ = self._cognitive_resource_health_organ(route)
         if error is None:
             self.health.record_success(organ)
-        else:
-            self.health.record_failure(organ, error)
+            return
+
+        disposition = classify_cognitive_failure(error)
+        if disposition is not None and not disposition.affects_route_health:
+            # A provider can reject this exact request while remaining a healthy
+            # route. Do not let request pressure/policy/input poison the durable
+            # circuit used by ModelRouter for later independent cognition.
+            return
+
+        self.health.record_failure(
+            organ,
+            error,
+            failure_class=(
+                disposition.failure_class
+                if disposition is not None
+                else None
+            ),
+        )
 
     def _resolve_cognitive_resource_health(self, route: ModelRoute) -> dict[str, Any] | None:
         """Return resident-owned health/runtime evidence for Router eligibility."""
