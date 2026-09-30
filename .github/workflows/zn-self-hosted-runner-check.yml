@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Publish runner check pending status
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             await github.rest.repos.createCommitStatus({
@@ -37,10 +37,10 @@ jobs:
             })
 
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Verify repository checkout and report runner identity
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const fs = require('node:fs')
@@ -179,7 +179,7 @@ jobs:
 
       - name: Publish runner check terminal status
         if: ${{ always() }}
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const result = '${{ job.status }}'

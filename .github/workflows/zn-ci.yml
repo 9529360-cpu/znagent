@@ -40,7 +40,7 @@ jobs:
     steps:
       - name: Publish source-boundary pending status
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const statusShas = [...new Set([
@@ -68,9 +68,9 @@ jobs:
           }
           Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: '0.11.6'
           enable-cache: false
@@ -91,7 +91,7 @@ jobs:
     steps:
       - name: Publish kernel pending status
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const statusShas = [...new Set([
@@ -119,9 +119,9 @@ jobs:
           }
           Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: '0.11.6'
           enable-cache: false
@@ -164,9 +164,9 @@ jobs:
     timeout-minutes: 55
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22.22.0'
       - name: Test product gate ownership and path matching
@@ -187,7 +187,7 @@ jobs:
     steps:
       - name: Publish desktop pending status
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const statusShas = [...new Set([
@@ -210,7 +210,7 @@ jobs:
             }
       - name: Decide pristine source startup proof
         id: source-start
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             if (context.eventName !== 'pull_request') {
@@ -252,9 +252,9 @@ jobs:
           }
           Write-Host "ZN CI runner: $env:RUNNER_NAME"
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22.22.0'
       - name: Install locked workspace dependencies
@@ -272,7 +272,7 @@ jobs:
 
       - name: Set up Python 3.12 for pristine source startup proof
         if: ${{ steps.source-start.outputs.run == 'true' }}
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
         with:
           python-version: '3.12'
       - name: Prove one-command source startup from clean checkout state
@@ -319,7 +319,7 @@ jobs:
     steps:
       - name: Publish readable CI statuses
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const normalize = (result) => result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
@@ -360,7 +360,7 @@ jobs:
     steps:
       - name: Publish readable CI statuses
         continue-on-error: true
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const normalize = (result) => result === 'success' ? 'success' : result === 'failure' ? 'failure' : 'error'
