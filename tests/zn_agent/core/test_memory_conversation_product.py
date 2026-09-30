@@ -200,7 +200,10 @@ class MemoryConversationProductTests(unittest.TestCase):
         self.fail("no endpoint")
 
     def socket_finish(self, endpoint, event_id):
-        deadline = time.monotonic() + 20
+        # This is a completion budget, not a product latency SLA. The desktop
+        # transport allows 120s per request; keep this contract test bounded at
+        # half that while tolerating normal GitHub-hosted Windows load variance.
+        deadline = time.monotonic() + 60
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -216,7 +219,7 @@ class MemoryConversationProductTests(unittest.TestCase):
             except TimeoutError:
                 # Desktop progress observation is read-only and retries transport
                 # errors. Keep the same bounded behavior while preserving this
-                # test's stricter 20s total completion budget.
+                # test's stricter 60s total completion budget.
                 continue
             if result["progress"]["finalized"]:
                 return result["thread"]
