@@ -211,13 +211,25 @@ class MemoryConversationProductTests(unittest.TestCase):
             time.sleep(0.7)
         working = self.resident.store.get_working_state()
         life = self.resident.life.snapshot()
+        import sys
+        import traceback
+        life_thread = next(
+            (thread for thread in threading.enumerate() if thread.name == "zn-life"),
+            None,
+        )
+        life_stack = ""
+        if life_thread is not None and life_thread.ident is not None:
+            frame = sys._current_frames().get(life_thread.ident)
+            if frame is not None:
+                life_stack = "".join(traceback.format_stack(frame))[-8000:]
         self.fail(
             "socket Work did not finish; "
             f"progress={last_progress!r}; "
             f"working_stage={working.stage!r}; "
             f"working_event={working.current_event_id!r}; "
             f"pulse_count={life.pulse_count!r}; "
-            f"provider_requests={len(self.requests)}"
+            f"provider_requests={len(self.requests)}; "
+            f"life_stack={life_stack!r}"
         )
 
     def test_authenticated_disconnect_reopen_and_process_reconstruction_keep_memory_and_work_aligned(self):
