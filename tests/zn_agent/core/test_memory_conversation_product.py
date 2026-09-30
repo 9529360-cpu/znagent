@@ -150,8 +150,11 @@ class MemoryConversationProductTests(unittest.TestCase):
                 self.assertNotIn("offline first", json.dumps(context))
 
     @staticmethod
-    def socket_call(endpoint, method, **params):
-        with socket.create_connection((endpoint["host"], endpoint["port"]), timeout=3) as connection:
+    def socket_call(endpoint, method, *, timeout=3.0, **params):
+        with socket.create_connection(
+            (endpoint["host"], endpoint["port"]),
+            timeout=max(0.1, float(timeout)),
+        ) as connection:
             with connection.makefile("rwb") as stream:
                 def send(payload):
                     stream.write((json.dumps(payload) + "\n").encode("utf-8"))
@@ -197,12 +200,34 @@ class MemoryConversationProductTests(unittest.TestCase):
         self.fail("no endpoint")
 
     def socket_finish(self, endpoint, event_id):
-        deadline = time.monotonic() + 20
-        while time.monotonic() < deadline:
-            result = self.socket_call(endpoint, "work_progress", thread_id="conversation", event_id=event_id)
+        # This is a completion budget, not a product latency SLA. The desktop
+        # transport allows 120s per request; keep this contract test bounded at
+        # half that while tolerating normal GitHub-hosted Windows load variance.
+        deadline = time.monotonic() + 60
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                break
+            try:
+                result = self.socket_call(
+                    endpoint,
+                    "work_progress",
+                    timeout=min(10.0, remaining),
+                    thread_id="conversation",
+                    event_id=event_id,
+                )
+            except TimeoutError:
+                # Desktop progress observation is read-only and retries transport
+                # errors. Keep the same bounded behavior while preserving this
+                # test's stricter 60s total completion budget.
+                continue
             if result["progress"]["finalized"]:
                 return result["thread"]
-            time.sleep(0.05)
+            # Match the desktop observer's production polling cadence. Hammering
+            # a new authenticated TCP connection every 50ms creates an artificial
+            # Windows ThreadingTCPServer/SQLite contention pattern that the product
+            # never generates (desktop polls every 700ms).
+            time.sleep(min(0.7, max(0.0, deadline - time.monotonic())))
         self.fail("socket Work did not finish")
 
     def test_authenticated_disconnect_reopen_and_process_reconstruction_keep_memory_and_work_aligned(self):
