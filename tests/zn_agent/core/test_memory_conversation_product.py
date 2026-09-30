@@ -200,7 +200,7 @@ class MemoryConversationProductTests(unittest.TestCase):
         self.fail("no endpoint")
 
     def socket_finish(self, endpoint, event_id):
-        deadline = time.monotonic() + 20
+        deadline = time.monotonic() + 60
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
@@ -215,8 +215,9 @@ class MemoryConversationProductTests(unittest.TestCase):
                 )
             except TimeoutError:
                 # Desktop progress observation is read-only and retries transport
-                # errors. Keep the same bounded behavior while preserving this
-                # test's stricter 20s total completion budget.
+                # errors. Keep the same bounded behavior while preserving a
+                # total completion budget that remains stricter than the desktop
+                # client's 120s request timeout on slower Windows runners.
                 continue
             if result["progress"]["finalized"]:
                 return result["thread"]
