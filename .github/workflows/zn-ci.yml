@@ -83,13 +83,21 @@ jobs:
         run: .\.ci\source-venv\Scripts\python.exe .agent/verify_zn_source_boundary.py
 
   kernel-tests:
-    name: ZN Kernel / Python / Windows / shard ${{ matrix.shard + 1 }} of 4
+    name: ZN Kernel / Python / Windows / shard ${{ matrix.label }} of 4
     runs-on: windows-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
-        shard: [0, 1, 2, 3]
+        include:
+          - shard: 0
+            label: 1
+          - shard: 1
+            label: 2
+          - shard: 2
+            label: 3
+          - shard: 3
+            label: 4
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
       ZN_TEST_SHARD: ${{ matrix.shard }}
