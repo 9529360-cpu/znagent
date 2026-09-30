@@ -92,19 +92,27 @@ jobs:
         include:
           - shard: 0
             label: 1
+            mode: sharded
           - shard: 1
             label: 2
+            mode: sharded
           - shard: 2
             label: 3
+            mode: sharded
           - shard: 3
             label: 4
+            mode: sharded
+          - shard: 0
+            label: stateful socket contract
+            mode: isolated
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
       ZN_TEST_SHARD: ${{ matrix.shard }}
       ZN_TEST_SHARD_COUNT: '4'
+      ZN_TEST_MODE: ${{ matrix.mode }}
     steps:
       - name: Publish kernel pending status
-        if: ${{ matrix.shard == 0 }}
+        if: ${{ matrix.mode == 'sharded' && matrix.shard == 0 }}
         continue-on-error: true
         uses: actions/github-script@v7
         with:
@@ -179,17 +187,27 @@ jobs:
 
           shard = int(os.environ["ZN_TEST_SHARD"])
           shard_count = int(os.environ["ZN_TEST_SHARD_COUNT"])
+          mode = os.environ["ZN_TEST_MODE"]
           test_dir = Path("tests/zn_agent/core")
+          isolated_name = "test_memory_conversation_product.py"
           files = sorted(test_dir.glob("test_*.py"))
-          selected_files = [
-              path
-              for index, path in enumerate(files)
-              if index % shard_count == shard
-          ]
-          if not selected_files:
-              raise SystemExit(
-                  f"ZN core shard {shard + 1}/{shard_count} selected no tests"
-              )
+
+          if mode == "isolated":
+              selected_files = [test_dir / isolated_name]
+              label = "stateful socket contract"
+          elif mode == "sharded":
+              shardable = [path for path in files if path.name != isolated_name]
+              selected_files = [
+                  path
+                  for index, path in enumerate(shardable)
+                  if index % shard_count == shard
+              ]
+              label = f"shard {shard + 1}/{shard_count}"
+          else:
+              raise SystemExit(f"unknown ZN_TEST_MODE: {mode}")
+
+          if not selected_files or any(not path.is_file() for path in selected_files):
+              raise SystemExit(f"ZN core {label} selected invalid tests")
 
           loader = unittest.defaultTestLoader
           suite = unittest.TestSuite()
@@ -200,10 +218,7 @@ jobs:
                       pattern=path.name,
                   )
               )
-          print(
-              f"ZN core shard {shard + 1}/{shard_count}: "
-              f"{len(selected_files)} test files"
-          )
+          print(f"ZN core {label}: {len(selected_files)} test files")
           result = unittest.TextTestRunner(verbosity=2).run(suite)
           raise SystemExit(0 if result.wasSuccessful() else 1)
           '@ | & $python -
