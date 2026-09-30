@@ -175,39 +175,36 @@ jobs:
           @'
           import os
           import unittest
+          from pathlib import Path
 
           shard = int(os.environ["ZN_TEST_SHARD"])
           shard_count = int(os.environ["ZN_TEST_SHARD_COUNT"])
-          discovered = unittest.defaultTestLoader.discover(
-              "tests/zn_agent/core",
-              pattern="test_*.py",
-          )
-
-          def flatten(suite):
-              for item in suite:
-                  if isinstance(item, unittest.TestSuite):
-                      yield from flatten(item)
-                  else:
-                      yield item
-
-          tests = list(flatten(discovered))
-          modules = sorted({test.__class__.__module__ for test in tests})
-          selected_modules = {
-              module
-              for index, module in enumerate(modules)
+          test_dir = Path("tests/zn_agent/core")
+          files = sorted(test_dir.glob("test_*.py"))
+          selected_files = [
+              path
+              for index, path in enumerate(files)
               if index % shard_count == shard
-          }
-          selected = [
-              test for test in tests
-              if test.__class__.__module__ in selected_modules
           ]
+          if not selected_files:
+              raise SystemExit(
+                  f"ZN core shard {shard + 1}/{shard_count} selected no tests"
+              )
+
+          loader = unittest.defaultTestLoader
+          suite = unittest.TestSuite()
+          for path in selected_files:
+              suite.addTests(
+                  loader.discover(
+                      str(test_dir),
+                      pattern=path.name,
+                  )
+              )
           print(
               f"ZN core shard {shard + 1}/{shard_count}: "
-              f"{len(selected_modules)} modules, {len(selected)} tests"
+              f"{len(selected_files)} test files"
           )
-          result = unittest.TextTestRunner(verbosity=2).run(
-              unittest.TestSuite(selected)
-          )
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
           raise SystemExit(0 if result.wasSuccessful() else 1)
           '@ | & $python -
 
