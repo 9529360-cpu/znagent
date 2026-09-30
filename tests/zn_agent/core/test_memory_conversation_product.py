@@ -198,16 +198,27 @@ class MemoryConversationProductTests(unittest.TestCase):
 
     def socket_finish(self, endpoint, event_id):
         deadline = time.monotonic() + 20
+        last_progress = None
         while time.monotonic() < deadline:
             result = self.socket_call(endpoint, "work_progress", thread_id="conversation", event_id=event_id)
-            if result["progress"]["finalized"]:
+            last_progress = result["progress"]
+            if last_progress["finalized"]:
                 return result["thread"]
             # Match the desktop observer's production polling cadence. Hammering
             # a new authenticated TCP connection every 50ms creates an artificial
             # Windows ThreadingTCPServer/SQLite contention pattern that the product
             # never generates (desktop polls every 700ms).
             time.sleep(0.7)
-        self.fail("socket Work did not finish")
+        working = self.resident.store.get_working_state()
+        life = self.resident.life.snapshot()
+        self.fail(
+            "socket Work did not finish; "
+            f"progress={last_progress!r}; "
+            f"working_stage={working.stage!r}; "
+            f"working_event={working.current_event_id!r}; "
+            f"pulse_count={life.pulse_count!r}; "
+            f"provider_requests={len(self.requests)}"
+        )
 
     def test_authenticated_disconnect_reopen_and_process_reconstruction_keep_memory_and_work_aligned(self):
         self.seed()
