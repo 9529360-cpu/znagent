@@ -82,14 +82,29 @@ jobs:
       - name: Verify active tree is ZN-only
         run: .\.ci\source-venv\Scripts\python.exe .agent/verify_zn_source_boundary.py
 
-  kernel:
-    name: ZN Kernel / Python / Windows
+  kernel-tests:
+    name: ZN Kernel / Python / Windows / shard ${{ matrix.label }} of 4
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: 0
+            label: 1
+          - shard: 1
+            label: 2
+          - shard: 2
+            label: 3
+          - shard: 3
+            label: 4
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
+      ZN_TEST_SHARD: ${{ matrix.shard }}
+      ZN_TEST_SHARD_COUNT: '4'
     steps:
       - name: Publish kernel pending status
+        if: ${{ matrix.shard == 0 }}
         continue-on-error: true
         uses: actions/github-script@v7
         with:
@@ -107,7 +122,7 @@ jobs:
                   sha,
                   state: 'pending',
                   context: statusContext,
-                  description: 'ZN Windows CI: running',
+                  description: 'ZN Windows CI: running 4 parallel core-test shards',
                   target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
                 })
               }
@@ -153,10 +168,63 @@ jobs:
           '@ | & $python -I -
       - name: Compile resident core
         run: .\.ci\runtime-venv\Scripts\python.exe -m compileall -q runtime/python/zn_agent/core
-      - name: Run ZN core tests against working tree
+      - name: Run ZN core test shard
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
-          & .\.ci\runtime-venv\Scripts\python.exe -m unittest discover -s tests/zn_agent/core -p 'test_*.py' -v
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\runtime-venv\Scripts\python.exe'
+          @'
+          import os
+          import unittest
+          from pathlib import Path
+
+          shard = int(os.environ["ZN_TEST_SHARD"])
+          shard_count = int(os.environ["ZN_TEST_SHARD_COUNT"])
+          test_dir = Path("tests/zn_agent/core")
+          files = sorted(test_dir.glob("test_*.py"))
+          selected_files = [
+              path
+              for index, path in enumerate(files)
+              if index % shard_count == shard
+          ]
+          if not selected_files:
+              raise SystemExit(
+                  f"ZN core shard {shard + 1}/{shard_count} selected no tests"
+              )
+
+          loader = unittest.defaultTestLoader
+          suite = unittest.TestSuite()
+          for path in selected_files:
+              suite.addTests(
+                  loader.discover(
+                      str(test_dir),
+                      pattern=path.name,
+                  )
+              )
+          print(
+              f"ZN core shard {shard + 1}/{shard_count}: "
+              f"{len(selected_files)} test files"
+          )
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          raise SystemExit(0 if result.wasSuccessful() else 1)
+          '@ | & $python -
+
+  kernel:
+    name: ZN Kernel / Python / Windows
+    if: ${{ always() }}
+    needs: [kernel-tests]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Require all parallel kernel shards
+        shell: bash
+        env:
+          KERNEL_TESTS_RESULT: ${{ needs['kernel-tests'].result }}
+        run: |
+          if [ "$KERNEL_TESTS_RESULT" != "success" ]; then
+            echo "Kernel shard matrix result: $KERNEL_TESTS_RESULT"
+            exit 1
+          fi
+          echo "All four ZN core-test shards passed."
 
   product-gate:
     name: ZN Product Contracts / gate
