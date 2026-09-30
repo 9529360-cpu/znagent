@@ -83,7 +83,7 @@ jobs:
         run: .\.ci\source-venv\Scripts\python.exe .agent/verify_zn_source_boundary.py
 
   kernel-tests:
-    name: ZN Kernel / Python / Windows / shard ${{ matrix.label }} of 4
+    name: ZN Kernel / Python / Windows / ${{ matrix.label }}
     runs-on: windows-latest
     timeout-minutes: 30
     strategy:
@@ -91,16 +91,16 @@ jobs:
       matrix:
         include:
           - shard: 0
-            label: 1
+            label: shard 1 of 4
             mode: sharded
           - shard: 1
-            label: 2
+            label: shard 2 of 4
             mode: sharded
           - shard: 2
-            label: 3
+            label: shard 3 of 4
             mode: sharded
           - shard: 3
-            label: 4
+            label: shard 4 of 4
             mode: sharded
           - shard: 0
             label: stateful socket contract
