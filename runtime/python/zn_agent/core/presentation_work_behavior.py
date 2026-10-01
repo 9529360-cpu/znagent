@@ -8,6 +8,7 @@ import re
 from pathlib import Path
 from typing import Any, Mapping
 
+from .execution_mode import event_allows_effects
 from .models import ExecutionPath, ResidentRunResult, utc_now
 from .presentation_document import create_pptx_from_spec
 from .presentation_spec import (
@@ -129,6 +130,8 @@ def _strip_json_response(text: str) -> dict[str, Any]:
 
 
 def _operation(resident: Any, event: Any) -> dict[str, Any] | None:
+    if not event_allows_effects(event):
+        return None
     if str(getattr(event, "kind", "") or "").strip().lower() != "desktop_user_event":
         return None
     payload = getattr(event, "payload", {}) or {}

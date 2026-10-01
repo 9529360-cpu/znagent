@@ -548,6 +548,12 @@ button, input, textarea { -webkit-tap-highlight-color: transparent; }
   font-weight: 900;
 }
 .zn-send:not(:disabled):hover { transform: translateY(-1px); filter: brightness(1.06); }
+.zn-send.zn-send-stop {
+  color: #fff;
+  border-color: rgba(245, 141, 151, .35);
+  background: linear-gradient(145deg, #d76571, #b84f5b);
+  box-shadow: 0 10px 24px rgba(156, 56, 68, .2), inset 0 1px 0 rgba(255,255,255,.2);
+}
 .zn-composer-caption { width: min(780px, 100%); margin: 8px auto 0; color: #59657a; font-size: 9.5px; text-align: center; }
 
 .zn-context-panel {
@@ -1355,6 +1361,37 @@ body {
   backdrop-filter: blur(20px) saturate(120%);
   -webkit-backdrop-filter: blur(20px) saturate(120%);
 }
+
+.zn-execution-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid rgba(159, 196, 255, .16);
+  border-radius: 10px;
+  background: rgba(10, 21, 38, .55);
+}
+
+.zn-execution-mode button {
+  height: 29px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 8px;
+  color: #7f91ad;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.zn-execution-mode button.active {
+  color: #dce9ff;
+  background: rgba(57, 121, 216, .3);
+}
+
+.zn-execution-mode button:disabled { opacity: .52; }
 
 .zn-composer-tool,
 .zn-send {

@@ -42,6 +42,7 @@ import {
   loadZnWorkThreads,
   startZnWork,
   updateZnProviderSettings,
+  type ZnExecutionMode,
   type ZnProviderSettings,
   type ZnResidentSnapshot,
   type ZnWorkProgress
@@ -72,6 +73,15 @@ type WindowMode = 'compact' | 'expanded'
 type SettingsSection = 'language' | 'models' | 'background' | 'updates'
 
 const PINNED_THREADS_STORAGE_KEY = 'zn.desktop.pinned-threads.v1'
+const EXECUTION_MODE_STORAGE_KEY = 'zn.desktop.execution-mode.v1'
+
+function loadExecutionMode(): ZnExecutionMode {
+  try {
+    return window.localStorage.getItem(EXECUTION_MODE_STORAGE_KEY) === 'ask' ? 'ask' : 'agent'
+  } catch {
+    return 'agent'
+  }
+}
 
 function loadPinnedThreadIds(): string[] {
   try {
@@ -260,6 +270,7 @@ export function ZnWorkbench() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('language')
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
+  const [executionMode, setExecutionMode] = useState<ZnExecutionMode>(loadExecutionMode)
   const [submissionBusy, setBusy] = useState(false)
   const [workProgress, setWorkProgress] = useState<ZnWorkProgress | null>(null)
   const [cancelBusy, setCancelBusy] = useState(false)
@@ -286,6 +297,15 @@ export function ZnWorkbench() {
     [activeThreadId, threads]
   )
   const activeWorkspace = activeThread?.workspace || null
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(EXECUTION_MODE_STORAGE_KEY, executionMode)
+    } catch {
+      // A blocked storage surface must not change the current mode selection.
+    }
+  }, [executionMode])
+
   const pinnedThreads = useMemo(() => threads.filter(thread => pinnedThreadIds.includes(thread.id)), [pinnedThreadIds, threads])
   const activeArtifacts = useMemo(() => activeThread?.artifacts || [], [activeThread])
   const activeWorkstationArtifact = useMemo(
@@ -590,7 +610,7 @@ export function ZnWorkbench() {
       )
 
       try {
-        const started = await startZnWork(threadId, task)
+        const started = await startZnWork(threadId, task, executionMode)
         residentAccepted = true
         replaceThread(started.thread)
         setActiveThreadId(started.thread.id)
@@ -633,7 +653,7 @@ export function ZnWorkbench() {
         setBusy(false)
       }
     },
-    [activeThread, draft, replaceThread, stoppingWork, submissionBusy, t]
+    [activeThread, draft, executionMode, replaceThread, stoppingWork, submissionBusy, t]
   )
 
   const saveProvider = useCallback(async (event: FormEvent) => {
@@ -1261,7 +1281,7 @@ export function ZnWorkbench() {
               <div className="zn-composer">
                 <textarea
                   aria-label={t('composer.messageAria')}
-                  placeholder={t('composer.placeholder')}
+                  placeholder={t(executionMode === 'ask' ? 'composer.askPlaceholder' : 'composer.placeholder')}
                   rows={2}
                   value={draft}
                   onChange={event => setDraft(event.target.value)}
@@ -1274,6 +1294,30 @@ export function ZnWorkbench() {
                 />
                 <div className="zn-composer-toolbar">
                   <div className="zn-composer-tools">
+                    <div className="zn-execution-mode" role="group" aria-label={t('composer.modeAria')}>
+                      <button
+                        className={executionMode === 'ask' ? 'active' : ''}
+                        type="button"
+                        aria-pressed={executionMode === 'ask'}
+                        title={t('composer.askHelp')}
+                        disabled={submissionBusy}
+                        onClick={() => setExecutionMode('ask')}
+                      >
+                        <Brain size={14} />
+                        <span>{t('composer.ask')}</span>
+                      </button>
+                      <button
+                        className={executionMode === 'agent' ? 'active' : ''}
+                        type="button"
+                        aria-pressed={executionMode === 'agent'}
+                        title={t('composer.agentHelp')}
+                        disabled={submissionBusy}
+                        onClick={() => setExecutionMode('agent')}
+                      >
+                        <Desktop size={14} />
+                        <span>{t('composer.agent')}</span>
+                      </button>
+                    </div>
                     <button
                       className="zn-composer-tool"
                       type="button"
@@ -1307,7 +1351,10 @@ export function ZnWorkbench() {
                 </div>
               </div>
               <div className="zn-composer-caption">
-                {workActive ? t('composer.background') : ''}{t('composer.shortcut')}
+                {workActive
+                  ? t('composer.background')
+                  : t(executionMode === 'ask' ? 'composer.askCaption' : 'composer.agentCaption')}
+                {t('composer.shortcut')}
               </div>
             </form>
           </>

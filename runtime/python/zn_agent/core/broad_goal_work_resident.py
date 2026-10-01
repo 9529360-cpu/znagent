@@ -17,6 +17,7 @@ from pathlib import Path
 from .action import NativeActionIntent
 from .cognition import CognitiveIncrement
 from .evidence_bound_work import EvidenceBoundSteerableWorkLedger
+from .execution_mode import event_allows_effects
 from .models import ExecutionPath, ResidentRunResult, utc_now
 from .user_browser_extension_resident import UserBrowserExtensionResidentRuntime
 from .steerable_work import WorkItem
@@ -38,6 +39,8 @@ class BroadGoalWorkResidentRuntime(UserBrowserExtensionResidentRuntime):
         self.work_ledger = EvidenceBoundSteerableWorkLedger(self)
 
     def _criterion_bound_root(self, event) -> WorkItem | None:
+        if not event_allows_effects(event):
+            return None
         thread_id = str(event.payload.get("work_thread_id") or "").strip()
         item_id = str(event.payload.get("work_item_id") or "").strip()
         if not thread_id or not item_id or not event.payload.get("workspace_path"):

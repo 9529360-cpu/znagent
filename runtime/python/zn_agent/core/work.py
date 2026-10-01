@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .execution_mode import normalize_execution_mode
 from .models import AgentEvent, EventStatus, ResidentRunResult, utc_now
 from .path_context import canonical_host_path, resolved_within
 
@@ -527,6 +528,12 @@ class ResidentWorkLedger:
         if not normalized_task:
             raise ValueError("work start requires task")
 
+        event_payload = dict(payload or {})
+        if "execution_mode" in event_payload:
+            event_payload["execution_mode"] = normalize_execution_mode(
+                event_payload.get("execution_mode")
+            )
+
         thread = self.create_thread(thread_id=thread_id)
         self._finalize_completed_runs(thread_id=thread.thread_id)
         active = self._active_run_for_thread(thread.thread_id)
@@ -550,7 +557,6 @@ class ResidentWorkLedger:
         )
         self._append(thread, user_message)
 
-        event_payload = dict(payload or {})
         event_payload["work_thread_id"] = thread.thread_id
         event_payload["work_message_id"] = user_message.message_id
         workspace = self.workspace_for(thread)

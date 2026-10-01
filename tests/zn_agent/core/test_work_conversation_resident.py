@@ -109,6 +109,52 @@ class WorkConversationResidentTests(unittest.TestCase):
         self.assertEqual([m.message_id for m in restored], [m.message_id for m in messages])
         self.assertEqual([m.text for m in restored], [m.text for m in messages])
 
+    def test_ask_mode_reaches_model_without_executing_explicit_body_effect(self):
+        factory = _CaptureFactory()
+        self.resident.kernel.reconfigure_resources(
+            routes=[ModelRoute(
+                "ask-local", "test", "bounded-resource",
+                {"general": 1.0, "reasoning": 1.0, "language_understanding": 1.0},
+                metadata={"local": True},
+            )],
+            worker_factory=factory,
+            resource_status={"available": True},
+            max_attempts=1,
+        )
+        target = Path(self.tmp.name) / "must-not-exist.txt"
+        event_id = self.start(
+            "ask-conversation",
+            "Explain tidal generation without changing my computer",
+            payload={
+                "execution_mode": "ask",
+                "body_action": {
+                    "kind": "write_text",
+                    "path": str(target),
+                    "content": "this must never be written",
+                },
+            },
+        )
+        messages = self.finish("ask-conversation", event_id)
+
+        self.assertTrue(factory.contexts, "Ask must still reach the configured cognitive resource")
+        self.assertFalse(target.exists(), "Ask must not execute an explicit write Body action")
+        self.assertFalse(
+            any(
+                action.event_id == event_id and action.kind == "write_text"
+                for action in self.resident.body.recent_actions(100)
+            )
+        )
+        self.assertTrue(
+            any(
+                message.role == "zn" and "moving seawater" in message.text
+                for message in messages
+            )
+        )
+        event = self.resident.store.get_event(event_id)
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event.payload.get("execution_mode"), "ask")
+
     def test_product_builder_keeps_route_policy_and_isolated_question_boundary(self):
         self.seed_history()
         policy = {"data_classification": "local_only"}

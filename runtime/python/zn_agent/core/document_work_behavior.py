@@ -13,6 +13,7 @@ from .document_spec import (
     normalize_document_section,
     normalize_document_spec,
 )
+from .execution_mode import event_allows_effects
 from .models import ExecutionPath, ResidentRunResult, utc_now
 from .office_document import create_docx_from_spec
 from .work import WorkArtifact
@@ -153,6 +154,8 @@ def _strip_json_response(text: str) -> dict[str, Any]:
 
 
 def _operation(resident: Any, event: Any) -> dict[str, Any] | None:
+    if not event_allows_effects(event):
+        return None
     if str(getattr(event, "kind", "") or "").strip().lower() != "desktop_user_event":
         return None
     payload = getattr(event, "payload", {}) or {}
