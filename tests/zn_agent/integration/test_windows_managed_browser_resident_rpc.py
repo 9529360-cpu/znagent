@@ -9,6 +9,7 @@ import time
 import unittest
 from pathlib import Path
 
+from zn_agent.core.browser import BrowserActionKind, BrowserTargetQueryKind
 from zn_agent.core.browser_rpc import BrowserResidentRpcServer
 from zn_agent.core.chrome_devtools_mcp_browser import (
     CHROME_DEVTOOLS_MCP_PROVIDER,
@@ -22,7 +23,9 @@ class _FixtureHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         payload = (
             "<!doctype html><html><head><title>ZN Resident Browser RPC</title></head>"
-            "<body><main>resident managed browser active caller</main></body></html>"
+            "<body><main>resident managed browser active caller</main>"
+            "<label>Customer<input aria-label='Customer' type='text'></label>"
+            "</body></html>"
         ).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
@@ -119,9 +122,14 @@ class ResidentManagedBrowserWindowsContract(unittest.TestCase):
                     {
                         "permission": {
                             "allow_navigation": True,
+                            "allow_page_interaction": True,
+                            "allow_text_entry": True,
                             "allow_private_network": True,
                             "allowed_origins": [self.origin],
-                        }
+                        },
+                        "required_target_queries": [
+                            BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME.value
+                        ],
                     },
                 )
                 self.assertTrue(opened["ok"], opened)
@@ -160,6 +168,57 @@ class ResidentManagedBrowserWindowsContract(unittest.TestCase):
                 self.assertTrue(observed["ok"], observed)
                 self.assertEqual(observed["result"]["url"], self.origin + "/")
                 self.assertEqual(observed["result"]["title"], "ZN Resident Browser RPC")
+
+                readable = self._request(
+                    endpoint,
+                    "read-page",
+                    "browser_read_page",
+                    {"session_id": session_id},
+                )
+                self.assertTrue(readable["ok"], readable)
+                self.assertEqual(readable["result"]["url"], self.origin + "/")
+                self.assertIn(
+                    "resident managed browser active caller",
+                    str(readable["result"].get("text") or ""),
+                )
+
+                target = self._request(
+                    endpoint,
+                    "observe-target",
+                    "browser_observe_target",
+                    {
+                        "session_id": session_id,
+                        "query": {
+                            "kind": BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME.value,
+                            "value": "Customer",
+                        },
+                    },
+                )
+                self.assertTrue(target["ok"], target)
+                self.assertEqual(target["result"]["target"]["role"], "textbox")
+                self.assertEqual(target["result"]["target"]["name"], "Customer")
+
+                semantic = self._request(
+                    endpoint,
+                    "semantic-type",
+                    "browser_semantic_action",
+                    {
+                        "session_id": session_id,
+                        "kind": BrowserActionKind.TYPE_TEXT.value,
+                        "query": {
+                            "kind": BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME.value,
+                            "value": "Customer",
+                        },
+                        "args": {"text": "alice@example.test"},
+                    },
+                )
+                self.assertTrue(semantic["ok"], semantic)
+                self.assertTrue(semantic["result"]["effect"]["success"], semantic)
+                self.assertEqual(semantic["result"]["regrounds"], 0)
+                self.assertEqual(
+                    semantic["result"]["observation"]["target"]["name"],
+                    "Customer",
+                )
 
                 closed = self._request(
                     endpoint,
