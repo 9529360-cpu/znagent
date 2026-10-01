@@ -19,6 +19,14 @@ boundary for anything higher-risk; this module does not touch them. See
 docs/ZN-NEXT-PHASE.md / ZN-IMPLEMENTATION-STATUS.md for that boundary and
 follow-up phases (relaxing fail-closed for reversible actions, wider
 capability coverage, durable-Work integration).
+
+This module's capability coverage was widened once already: edit_file adds
+a targeted find/replace edit alongside read_file/write_file, matching how
+Claude Code/Codex-style agents avoid re-emitting whole files for small
+changes. It stays inside the same local-text-file risk boundary as
+write_file (same atomic-write helper, same size cap) rather than crossing
+into the Body/Action Fabric/Work ownership this phase intentionally leaves
+alone.
 """
 
 import os
@@ -89,8 +97,9 @@ TOOL_SCHEMA: tuple[dict[str, Any], ...] = (
         "description": (
             "Write complete text content to a local file, creating it or "
             "atomically overwriting it. This always writes the FULL file "
-            "content passed in; there is no partial/patch edit. Read the "
-            "file first if you need to preserve existing content."
+            "content passed in. Prefer edit_file for a small, targeted "
+            "change to an existing file; use write_file when creating a "
+            "new file or replacing one wholesale."
         ),
         "input_schema": {
             "type": "object",
@@ -99,6 +108,35 @@ TOOL_SCHEMA: tuple[dict[str, Any], ...] = (
                 "content": {"type": "string"},
             },
             "required": ["path", "content"],
+        },
+    },
+    {
+        "name": "edit_file",
+        "description": (
+            "Make a targeted edit to an existing local text file by "
+            "replacing one exact occurrence of old_string with new_string, "
+            "without rewriting the rest of the file. old_string must match "
+            "the file's current content exactly (including whitespace) and "
+            "must be unique in the file unless replace_all is set. Fails "
+            "with an error, and makes no change, if old_string is not "
+            "found or (without replace_all) matches more than once -- "
+            "read the file first to get an exact, unambiguous old_string."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string"},
+                "old_string": {"type": "string"},
+                "new_string": {"type": "string"},
+                "replace_all": {
+                    "type": "boolean",
+                    "description": (
+                        "Replace every occurrence instead of requiring "
+                        "exactly one. Default false."
+                    ),
+                },
+            },
+            "required": ["path", "old_string", "new_string"],
         },
     },
 )
@@ -237,6 +275,50 @@ def _execute_write_file(arguments: Mapping[str, Any]) -> str:
     return f"wrote {written} chars to {path}"
 
 
+def _execute_edit_file(arguments: Mapping[str, Any]) -> str:
+    raw_path = str(arguments.get("path") or "").strip()
+    if not raw_path:
+        return "error: edit_file requires a non-empty path"
+    old_string = arguments.get("old_string")
+    new_string = arguments.get("new_string")
+    if not isinstance(old_string, str) or not old_string:
+        return "error: edit_file requires a non-empty string old_string"
+    if not isinstance(new_string, str):
+        return "error: edit_file requires string new_string"
+    if old_string == new_string:
+        return "error: old_string and new_string must differ"
+    replace_all = bool(arguments.get("replace_all"))
+    path = Path(raw_path).expanduser()
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return f"error: file not found: {path}"
+    except IsADirectoryError:
+        return f"error: path is a directory, not a file: {path}"
+    except OSError as exc:
+        return f"error: could not read {path}: {exc}"
+    occurrences = text.count(old_string)
+    if occurrences == 0:
+        return f"error: old_string not found in {path}"
+    if occurrences > 1 and not replace_all:
+        return (
+            f"error: old_string matches {occurrences} times in {path}; "
+            "pass replace_all=true or give a more specific old_string"
+        )
+    new_text = text.replace(old_string, new_string, -1 if replace_all else 1)
+    if len(new_text) > MAX_FILE_WRITE_CHARS:
+        return (
+            f"error: resulting content too large ({len(new_text)} chars, "
+            f"limit {MAX_FILE_WRITE_CHARS})"
+        )
+    try:
+        written = _atomic_write_text(path, new_text)
+    except OSError as exc:
+        return f"error: could not write {path}: {exc}"
+    replaced = occurrences if replace_all else 1
+    return f"replaced {replaced} occurrence(s), wrote {written} chars to {path}"
+
+
 def execute_tool_call(
     name: str,
     arguments: Mapping[str, Any],
@@ -249,6 +331,8 @@ def execute_tool_call(
         return _execute_read_file(arguments)
     if name == "write_file":
         return _execute_write_file(arguments)
+    if name == "edit_file":
+        return _execute_edit_file(arguments)
     return f"error: unknown tool '{name}'"
 
 
