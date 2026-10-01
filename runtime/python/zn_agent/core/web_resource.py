@@ -13,10 +13,12 @@ through a small ZN-owned failover chain without reviving the old provider
 control plane.
 """
 
+import ipaddress
 import json
 import os
 from dataclasses import asdict, dataclass, field, replace
 from typing import Any, Mapping, Protocol
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -25,6 +27,29 @@ from .config import load_zn_config
 
 class WebResourceError(RuntimeError):
     pass
+
+
+def _validated_web_provider_api_url(value: str, *, provider: str) -> str:
+    normalized = str(value or "").strip().rstrip("/")
+    try:
+        parsed = urlsplit(normalized)
+    except ValueError as exc:
+        raise ValueError(f"{provider} API URL is invalid") from exc
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(f"{provider} API URL must be an http(s) URL with a hostname")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError(f"{provider} API URL must not contain embedded credentials")
+    if parsed.scheme == "http":
+        hostname = parsed.hostname.casefold()
+        loopback = hostname == "localhost"
+        if not loopback:
+            try:
+                loopback = ipaddress.ip_address(hostname).is_loopback
+            except ValueError:
+                loopback = False
+        if not loopback:
+            raise ValueError(f"remote {provider} API URL must use HTTPS")
+    return normalized
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,7 +93,10 @@ class TavilyWebResource:
         client: Any | None = None,
     ):
         self.api_key = str(api_key or "").strip()
-        self.base_url = str(base_url or "https://api.tavily.com").rstrip("/")
+        self.base_url = _validated_web_provider_api_url(
+            base_url or "https://api.tavily.com",
+            provider="Tavily",
+        )
         self.timeout = max(1.0, float(timeout))
         self._client = client
 
