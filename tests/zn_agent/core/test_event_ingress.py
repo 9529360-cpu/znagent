@@ -52,6 +52,31 @@ class EventIngressTests(unittest.TestCase):
             finally:
                 store.close()
 
+    def test_ingress_preserves_explicit_priority_without_changing_default_callers(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KernelStore(Path(tmp) / "kernel.db")
+            resident = SimpleNamespace(store=store)
+            try:
+                explicit = enqueue_event_once(
+                    resident,
+                    event_id=stable_external_event_id("will", "intent-1\0generation-1"),
+                    task="durable Will step",
+                    kind="intention_step",
+                    priority=7,
+                    payload={"intention_id": "intent-1"},
+                )
+                defaulted = enqueue_event_once(
+                    resident,
+                    event_id=stable_external_event_id("channel", "telegram:update:99"),
+                    task="ordinary channel event",
+                    kind="channel_message",
+                    payload={"message_id": "99"},
+                )
+                self.assertEqual(explicit.event.priority, 7)
+                self.assertEqual(defaulted.event.priority, 0)
+            finally:
+                store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
