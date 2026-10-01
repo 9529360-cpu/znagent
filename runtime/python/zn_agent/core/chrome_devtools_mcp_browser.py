@@ -31,6 +31,7 @@ from .browser import (
     BrowserTargetStaleError,
     BrowserTargetQueryKind,
 )
+from .browser_select_option import browser_select_option_request
 from .models import utc_now
 from .stdio_mcp import StdioMcpClient, StdioMcpCommand
 from .url_safety import is_safe_url
@@ -59,6 +60,7 @@ _QUERY_ROLES = {
     BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME: frozenset(
         {"textbox", "searchbox"}
     ),
+    BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME: frozenset({"combobox"}),
 }
 _NAVIGATION_TYPES = {
     BrowserActionKind.BACK: "back",
@@ -575,21 +577,51 @@ class ChromeDevToolsMcpManagedBrowser:
                         "includeSnapshot": True,
                     },
                 )
-        else:
-            value = str(action.args.get("value") or "")
-            if not value:
+        elif action.kind is BrowserActionKind.SELECT_OPTION:
+            try:
+                request = browser_select_option_request(action.args)
+            except ValueError as exc:
+                raise ChromeDevToolsMcpBrowserError(str(exc)) from exc
+            self._require_safe_select_target(state_before)
+            choice = self._select_option_choice(
+                session,
+                page_id,
+                target.target_id,
+                mode=request.mode,
+                requested=request.requested,
+            )
+            current = (
+                str(state_before.get("selected_value") or "")
+                if request.mode == "value"
+                else str(state_before.get("selected_text") or "")
+            )
+            if current == request.requested:
                 raise ChromeDevToolsMcpBrowserError(
-                    "select_option requires one explicit value"
+                    f"select_option requested {request.mode} is already selected before dispatch"
                 )
-            expected["selected_text"] = value
+            expected.update(
+                {
+                    "selection_mode": request.mode,
+                    "requested": request.requested,
+                    "requested_length": request.length,
+                    "requested_sha256": request.sha256,
+                    "requested_utf16_units": request.utf16_units,
+                    "selected_value": choice["value"],
+                    "selected_text": choice["label"],
+                }
+            )
             session.client.call_tool(
                 "fill",
                 {
                     "pageId": int(page_id),
                     "uid": target.target_id,
-                    "value": value,
+                    "value": choice["label"],
                     "includeSnapshot": True,
                 },
+            )
+        else:
+            raise ChromeDevToolsMcpBrowserError(
+                f"unsupported browser target action: {action.kind.value}"
             )
 
         after = self._capture(session, page_id)
@@ -673,14 +705,40 @@ class ChromeDevToolsMcpManagedBrowser:
                 None if success else "checked-state postcondition was not observed",
             )
         if action.kind is BrowserActionKind.SELECT_OPTION:
-            observed = str(fresh_state.get("selected_text") or "")
-            success = continuity and observed == expected["selected_text"]
-            data["selected_text_matches"] = success
+            observed_value = str(fresh_state.get("selected_value") or "")
+            observed_label = str(fresh_state.get("selected_text") or "")
+            value_matches = observed_value == str(expected["selected_value"])
+            label_matches = observed_label == str(expected["selected_text"])
+            mode = str(expected["selection_mode"])
+            observed_requested = (
+                observed_value if mode == "value" else observed_label
+            )
+            actual = self._text_fingerprint(observed_requested)
+            data.update(
+                {
+                    "selection_mode": mode,
+                    "selection_dispatched": True,
+                    "selected_value_matches": value_matches,
+                    "selected_label_matches": label_matches,
+                    f"selected_{mode}_length_after": actual["length"],
+                    f"selected_{mode}_sha256_after": actual["sha256"],
+                    f"expected_{mode}_length": int(expected["requested_length"]),
+                    f"expected_{mode}_sha256": str(expected["requested_sha256"]),
+                    "expected_utf16_units": int(expected["requested_utf16_units"]),
+                }
+            )
+            success = bool(
+                continuity
+                and value_matches
+                and label_matches
+                and actual["length"] == int(expected["requested_length"])
+                and actual["sha256"] == str(expected["requested_sha256"])
+            )
             return (
                 success,
-                "same_exact_target_selected_value",
+                f"same_exact_target_selected_{mode}",
                 data,
-                None if success else "selected-value postcondition was not observed",
+                None if success else "selected-option postcondition was not observed",
             )
         if action.kind is BrowserActionKind.FOCUS:
             focused = bool(fresh_state.get("focused"))
@@ -859,8 +917,14 @@ class ChromeDevToolsMcpManagedBrowser:
               const sensitive = type === 'password' ||
                 /(^|\\s)(current-password|new-password|one-time-code|cc-[^\\s]*)(\\s|$)/.test(autocomplete);
               const rawValue = !sensitive && typeof el.value === 'string' ? el.value : '';
-              const selectedText = tag === 'select' && el.selectedOptions?.length === 1
-                ? String(el.selectedOptions[0].textContent || '').trim()
+              const selectedOption = tag === 'select' && el.selectedOptions?.length === 1
+                ? el.selectedOptions[0]
+                : null;
+              const selectedText = selectedOption
+                ? String(selectedOption.label || '')
+                : '';
+              const selectedValue = selectedOption
+                ? String(selectedOption.value || '')
                 : '';
               return {
                 connected: Boolean(el.isConnected),
@@ -870,6 +934,9 @@ class ChromeDevToolsMcpManagedBrowser:
                 checked: typeof el.checked === 'boolean' ? el.checked : null,
                 focused: document.activeElement === el,
                 value: rawValue,
+                native_select: tag === 'select',
+                multiple: Boolean(el.multiple),
+                selected_value: selectedValue,
                 selected_text: selectedText,
               };
             }""",
@@ -1011,6 +1078,122 @@ class ChromeDevToolsMcpManagedBrowser:
                 f"{action.kind.value} requires one fresh semantic target"
             )
         return action.target
+
+    def _select_option_choice(
+        self,
+        session: _Session,
+        page_id: str,
+        uid: str,
+        *,
+        mode: str,
+        requested: str,
+    ) -> dict[str, str]:
+        function = """(el) => {
+          const requested = %s;
+          const mode = %s;
+          const connected = Boolean(el && el.isConnected);
+          const tag = String(el && el.tagName || '').toLowerCase();
+          const supported = tag === 'select';
+          const disabled = Boolean(el && el.disabled);
+          const multiple = Boolean(el && el.multiple);
+          if (!connected || !supported || disabled || multiple) {
+            return {
+              connected,
+              supported,
+              disabled,
+              multiple,
+              matching_count: 0,
+              same_label_count: 0,
+              label: '',
+              value: '',
+            };
+          }
+          const options = Array.from(el.options || []);
+          const field = (option) => mode === 'value'
+            ? String(option.value || '')
+            : String(option.label || '');
+          const matches = options.filter((option) => field(option) === requested);
+          if (matches.length !== 1) {
+            return {
+              connected,
+              supported,
+              disabled,
+              multiple,
+              matching_count: matches.length,
+              same_label_count: 0,
+              label: '',
+              value: '',
+            };
+          }
+          const choice = matches[0];
+          const label = String(choice.label || '');
+          const value = String(choice.value || '');
+          const sameLabelCount = options.filter(
+            (option) => String(option.label || '') === label
+          ).length;
+          return {
+            connected,
+            supported,
+            disabled,
+            multiple,
+            matching_count: 1,
+            same_label_count: sameLabelCount,
+            label: label.slice(0, 1025),
+            value: value.slice(0, 1025),
+          };
+        }""" % (
+            json.dumps(requested, ensure_ascii=False),
+            json.dumps(mode),
+        )
+        raw = self._evaluate_uid(session, page_id, uid, function)
+        return self._select_option_choice_from_evidence(raw)
+
+    @staticmethod
+    def _select_option_choice_from_evidence(raw: Any) -> dict[str, str]:
+        if not isinstance(raw, Mapping):
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option provider returned invalid native option evidence"
+            )
+        if not bool(raw.get("connected")):
+            raise ChromeDevToolsMcpBrowserError("select_option target is detached")
+        if not bool(raw.get("supported")):
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option currently requires a native select/combobox target"
+            )
+        if bool(raw.get("disabled")):
+            raise ChromeDevToolsMcpBrowserError("select_option target is disabled")
+        if bool(raw.get("multiple")):
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option first slice refuses multi-select targets"
+            )
+        if int(raw.get("matching_count") or 0) != 1:
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option must resolve to exactly one fresh native option"
+            )
+        if int(raw.get("same_label_count") or 0) != 1:
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option target maps to an ambiguous visible option label"
+            )
+        label = str(raw.get("label") or "")
+        value = str(raw.get("value") or "")
+        if not label or len(label) > 1024 or len(value) > 1024:
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option native option evidence is outside the bounded contract"
+            )
+        return {"label": label, "value": value}
+
+    @staticmethod
+    def _require_safe_select_target(state: Mapping[str, Any]) -> None:
+        if not bool(state.get("native_select")):
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option currently requires a native select/combobox target"
+            )
+        if bool(state.get("disabled")):
+            raise ChromeDevToolsMcpBrowserError("select_option target is disabled")
+        if bool(state.get("multiple")):
+            raise ChromeDevToolsMcpBrowserError(
+                "select_option first slice refuses multi-select targets"
+            )
 
     @staticmethod
     def _require_safe_text_target(state: Mapping[str, Any], text: str) -> None:

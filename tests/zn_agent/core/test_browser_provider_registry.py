@@ -238,6 +238,18 @@ class BrowserProviderRegistryTests(unittest.TestCase):
         self.assertEqual(semantic.provider, "mature")
         adapter.close_session(semantic.session_id)
 
+        combobox = adapter.open_session_for_requirements(
+            permission=BrowserPermissionContext(
+                allow_navigation=True,
+                allow_page_interaction=True,
+            ),
+            required_target_queries=(
+                BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME,
+            ),
+        )
+        self.assertEqual(combobox.provider, "mature")
+        adapter.close_session(combobox.session_id)
+
         legacy_dom = adapter.open_session_for_requirements(
             permission=BrowserPermissionContext(
                 allow_navigation=True,

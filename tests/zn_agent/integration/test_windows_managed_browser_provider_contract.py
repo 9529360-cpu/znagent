@@ -27,6 +27,10 @@ class _Handler(BaseHTTPRequestHandler):
 <title>Managed browser provider contract</title>
 <label for="query">Search</label>
 <input id="query" aria-label="Search" type="text">
+<select aria-label="Plan">
+  <option value="alpha" selected>Alpha</option>
+  <option value="beta-private">Private Beta</option>
+</select>
 <button aria-label="Submit" onclick="location.href='/done'">Submit</button>
 """
         self.send_response(200)
@@ -108,6 +112,41 @@ class ManagedBrowserProviderContractTests(unittest.TestCase):
             self.assertEqual(
                 typed.data.get("text_length_after"),
                 len("provider contract"),
+            )
+
+            combobox = browser.observe_target(
+                session.session_id,
+                BrowserTargetQuery(
+                    kind=BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME,
+                    value="Plan",
+                ),
+                page_id=typed.page_id,
+            )
+            select = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.SELECT_OPTION,
+                page_id=combobox.page_id,
+                target=combobox.target,
+                args={"label": "Private Beta"},
+            )
+            selected = browser.act(
+                select,
+                BrowserActionAuthority.from_observation(
+                    select,
+                    combobox,
+                    permission,
+                ),
+            )
+            self.assertTrue(selected.success, selected.error)
+            self.assertEqual(
+                selected.postcondition,
+                "same_exact_target_selected_label",
+            )
+            self.assertTrue(selected.data.get("exact_node_continuity"))
+            self.assertTrue(selected.data.get("selected_label_matches"))
+            self.assertEqual(
+                selected.data.get("provider"),
+                CHROME_DEVTOOLS_MCP_PROVIDER,
             )
 
             button = browser.observe_target(
