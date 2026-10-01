@@ -23,6 +23,7 @@ import {
   Pulse,
   PushPin,
   PuzzlePiece,
+  Robot,
   SidebarSimple,
   Sparkle,
   Stop,
@@ -40,6 +41,7 @@ import {
   loadZnResidentSnapshot,
   loadZnWorkThread,
   loadZnWorkThreads,
+  runZnAgent,
   startZnWork,
   updateZnProviderSettings,
   type ZnProviderSettings,
@@ -260,6 +262,7 @@ export function ZnWorkbench() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('language')
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
+  const [agentMode, setAgentMode] = useState(false)
   const [submissionBusy, setBusy] = useState(false)
   const [workProgress, setWorkProgress] = useState<ZnWorkProgress | null>(null)
   const [cancelBusy, setCancelBusy] = useState(false)
@@ -573,6 +576,44 @@ export function ZnWorkbench() {
     }
   }, [activeThread, cancelBusy, replaceThread, workProgress])
 
+  const runAgentTurn = useCallback(
+    async (threadId: string, task: string) => {
+      try {
+        const result = await runZnAgent(task)
+        const summary = result.finalText.trim() ||
+          t('composer.agentModeNoOutput', { reason: result.stoppedReason || 'unknown' })
+        setThreads(current =>
+          current.map(thread =>
+            thread.id === threadId
+              ? addZnThreadMessage(thread, 'zn', summary, {
+                  agentRun: true,
+                  completed: result.completed,
+                  turnsUsed: result.turnsUsed,
+                  stoppedReason: result.stoppedReason,
+                  stepCount: result.steps.length
+                })
+              : thread
+          )
+        )
+        setResidentError(null)
+        setResidentHealth('live')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        setThreads(current =>
+          current.map(thread =>
+            thread.id === threadId
+              ? addZnThreadMessage(thread, 'zn', message, { failed: true, agentRun: true })
+              : thread
+          )
+        )
+        setResidentError(message)
+      } finally {
+        setBusy(false)
+      }
+    },
+    [t]
+  )
+
   const submit = useCallback(
     async (event: FormEvent) => {
       event.preventDefault()
@@ -588,6 +629,11 @@ export function ZnWorkbench() {
           thread.id === threadId ? addZnThreadMessage(thread, 'user', task) : thread
         )
       )
+
+      if (agentMode) {
+        void runAgentTurn(threadId, task)
+        return
+      }
 
       try {
         const started = await startZnWork(threadId, task)
@@ -633,7 +679,7 @@ export function ZnWorkbench() {
         setBusy(false)
       }
     },
-    [activeThread, draft, replaceThread, stoppingWork, submissionBusy, t]
+    [activeThread, agentMode, draft, replaceThread, runAgentTurn, stoppingWork, submissionBusy, t]
   )
 
   const saveProvider = useCallback(async (event: FormEvent) => {
@@ -1288,6 +1334,17 @@ export function ZnWorkbench() {
                       <FolderSimple size={14} />
                       {activeWorkspace?.name || t('topbar.thisComputer')}
                     </span>
+                    <button
+                      className={agentMode ? 'zn-composer-tool active' : 'zn-composer-tool'}
+                      type="button"
+                      aria-pressed={agentMode}
+                      aria-label={t('composer.agentModeAria')}
+                      title={agentMode ? t('composer.agentModeOn') : t('composer.agentModeOff')}
+                      disabled={workActive}
+                      onClick={() => setAgentMode(current => !current)}
+                    >
+                      <Robot size={18} weight={agentMode ? 'fill' : 'regular'} />
+                    </button>
                   </div>
                   <div className="zn-composer-tools">
                     <span className="zn-model-chip" title={localizedProviderReadinessDetail}>

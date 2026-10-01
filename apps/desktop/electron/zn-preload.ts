@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('znDesktop', {
     workCancel: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:work-cancel', payload || {}),
     workSubmit: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-submit', payload || {}),
+    agentRun: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:agent-run', payload || {}),
     workRestorePrepare: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:work-restore-prepare', payload || {}),
     workRestoreApprove: (payload?: ZnDesktopPayload) =>

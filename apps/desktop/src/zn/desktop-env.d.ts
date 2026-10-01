@@ -54,6 +54,7 @@ type ZnDesktopResidentBridge = {
   workProgress: (payload: ZnDesktopPayload) => Promise<unknown>
   workCancel: (payload: ZnDesktopPayload) => Promise<unknown>
   workSubmit: (payload: ZnDesktopPayload) => Promise<unknown>
+  agentRun: (payload: ZnDesktopPayload) => Promise<unknown>
   workRestorePrepare: (payload: ZnDesktopPayload) => Promise<unknown>
   workRestoreApprove: (payload: ZnDesktopPayload) => Promise<unknown>
   workRestoreApplication: (payload: ZnDesktopPayload) => Promise<unknown>
