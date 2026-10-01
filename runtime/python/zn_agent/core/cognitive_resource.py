@@ -12,6 +12,7 @@ identity, memory, tools, session, planning loop or final decision.
 """
 
 import inspect
+import ipaddress
 import logging
 import os
 from contextlib import contextmanager
@@ -95,7 +96,27 @@ def _hostname(value: str | None) -> str:
 
 
 def _is_loopback_url(value: str | None) -> bool:
-    return _hostname(value) in {"localhost", "127.0.0.1", "::1", "0.0.0.0"}
+    host = _hostname(value)
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
+def _validated_provider_base_url(value: str) -> str:
+    try:
+        parsed = urlparse(value)
+    except ValueError as exc:
+        raise ValueError("provider base_url is invalid") from exc
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError("provider base_url must be an http(s) URL with a hostname")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("provider base_url must not contain embedded credentials")
+    if parsed.scheme == "http" and not _is_loopback_url(value):
+        raise ValueError("remote provider base_url must use HTTPS")
+    return value
 
 
 def _infer_provider(base_url: str | None, environ: Mapping[str, str]) -> str:
@@ -161,6 +182,7 @@ def resolve_openai_compatible_route(
         raise ValueError(
             f"route {route.route_id} provider {provider!r} requires an explicit base_url"
         )
+    base_url = _validated_provider_base_url(base_url)
 
     api_key = str(metadata.get("api_key") or "").strip()
     if not api_key and key_env:

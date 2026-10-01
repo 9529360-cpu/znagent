@@ -71,6 +71,44 @@ class CognitiveResourceTests(unittest.TestCase):
         )
         self.assertEqual(resolved.metadata["api_key"], "zn-local-noauth")
 
+    def test_all_ipv4_loopback_endpoints_can_use_local_noauth(self):
+        resolved = resolve_openai_compatible_route(
+            route(
+                provider="custom",
+                metadata={"base_url": "http://127.0.0.2:9000/v1"},
+            ),
+            environ={},
+        )
+        self.assertEqual(resolved.metadata["api_key"], "zn-local-noauth")
+
+    def test_unspecified_or_remote_http_endpoint_is_not_treated_as_local(self):
+        for base_url in (
+            "http://0.0.0.0:9000/v1",
+            "http://192.168.1.20:9000/v1",
+        ):
+            with self.subTest(base_url=base_url):
+                with self.assertRaisesRegex(ValueError, "must use HTTPS"):
+                    resolve_openai_compatible_route(
+                        route(
+                            provider="custom",
+                            metadata={"base_url": base_url},
+                        ),
+                        environ={},
+                    )
+
+    def test_transport_rejects_embedded_base_url_credentials(self):
+        with self.assertRaisesRegex(ValueError, "embedded credentials"):
+            resolve_openai_compatible_route(
+                route(
+                    provider="custom",
+                    metadata={
+                        "base_url": "https://user:password@provider.example/v1",
+                        "api_key": "explicit-key",
+                    },
+                ),
+                environ={},
+            )
+
     def test_resource_sends_only_bounded_context_and_question(self):
         client = _FakeClient()
         built = {}
