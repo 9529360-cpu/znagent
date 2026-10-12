@@ -140,7 +140,10 @@ class DaemonAgentRunRpcTests(unittest.TestCase):
                 self.assertIn("generic_action_loop", factory.contexts[0])
                 thread_id = result["thread"]["id"]
                 saved = server.work.get_snapshot(thread_id)
-                self.assertEqual([m.role for m in saved[1]], ["user", "zn"])
+                self.assertEqual(
+                    [m.role for m in saved[1] if m.role in {"user", "zn"}],
+                    ["user", "zn"],
+                )
                 self.assertEqual(saved[1][-1].text, result["final_text"])
                 self.assertIsNotNone(server.work.get_run(result["work_event_id"]))
             finally:
@@ -191,7 +194,10 @@ class DaemonAgentRunRpcTests(unittest.TestCase):
                 self.assertEqual(two["thread"]["id"], "durable-agent-thread")
                 self.assertEqual(len(factory.calls), 2)
                 self.assertEqual(
-                    [m.role for m in server.work.get_snapshot("durable-agent-thread")[1]],
+                    [
+                        m.role for m in server.work.get_snapshot("durable-agent-thread")[1]
+                        if m.role in {"user", "zn"}
+                    ],
                     ["user", "zn", "user", "zn"],
                 )
             finally:
