@@ -7,7 +7,9 @@ from zn_agent.core.project_team import (
     ProjectTeam,
     assemble_team,
     journal_message,
+    team_journal_role_prefix,
     team_memory_key,
+    team_memory_prefix,
 )
 
 
@@ -93,6 +95,37 @@ class MemoryKeyTests(unittest.TestCase):
         k2 = team_memory_key("t1", "测试-01", "api 地址")
         self.assertNotEqual(k1, k2)
         self.assertTrue(k1.startswith("team:t1:开发-01:"))
+
+    def test_prefixes_cover_everything(self):
+        self.assertEqual(team_memory_prefix("t1"), "team:t1:")
+        self.assertTrue(
+            team_memory_key("t1", "开发-01", "x").startswith(team_memory_prefix("t1"))
+        )
+        msg = journal_message("t1", "开发-01", "ok")
+        self.assertTrue(msg["role"].startswith(team_journal_role_prefix("t1")))
+
+
+class DisbandTests(unittest.TestCase):
+    def test_disband_plan_covers_everything(self):
+        team = assemble_team(
+            "X", ["researcher", "developer"], team_id="t9", work_thread_id="thread-9"
+        )
+        plan = team.disband_plan()
+        self.assertEqual(plan.team_id, "t9")
+        self.assertEqual(plan.work_thread_id, "thread-9")
+        self.assertEqual(plan.memory_key_prefix, "team:t9:")
+        self.assertEqual(plan.journal_role_prefix, "team:t9:")
+        self.assertEqual(
+            plan.plan_item_ids, tuple(item.item_id for item in team.plan)
+        )
+        # Every member memory key and journal message falls in scope.
+        for member in team.members:
+            self.assertTrue(
+                team_memory_key("t9", member.name, "k").startswith(
+                    plan.memory_key_prefix
+                )
+            )
+        self.assertIn("删除团队 t9", plan.describe())
 
 
 if __name__ == "__main__":

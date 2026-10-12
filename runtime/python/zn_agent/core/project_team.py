@@ -138,10 +138,56 @@ class ProjectTeam:
                 return specialist
         return None
 
+    def disband_plan(self) -> DisbandPlan:
+        """Compute the full deletion scope for disbanding this team."""
+        return DisbandPlan(
+            team_id=self.team_id,
+            work_thread_id=self.work_thread_id,
+            memory_key_prefix=team_memory_prefix(self.team_id),
+            journal_role_prefix=team_journal_role_prefix(self.team_id),
+            plan_item_ids=tuple(item.item_id for item in self.plan),
+        )
+
 
 def team_memory_key(team_id: str, specialist_name: str, key: str) -> str:
     """Project-scoped memory key so specialists don't pollute shared memory."""
     return f"team:{team_id}:{specialist_name}:{key}"
+
+
+def team_memory_prefix(team_id: str) -> str:
+    """Prefix covering every memory key owned by the team."""
+    return f"team:{team_id}:"
+
+
+def team_journal_role_prefix(team_id: str) -> str:
+    """Role prefix covering every journal message written by the team."""
+    return f"team:{team_id}:"
+
+
+@dataclass(slots=True)
+class DisbandPlan:
+    """Everything disbanding a team must delete. Executed by the coordinator
+    (slice 2) against the ledger; computed here so the rule stays in one place.
+
+    The user's disband instruction is the confirmation -- no second prompt.
+    """
+
+    team_id: str
+    work_thread_id: str | None
+    memory_key_prefix: str
+    journal_role_prefix: str
+    plan_item_ids: tuple[str, ...]
+
+    def describe(self) -> str:
+        parts = [
+            f"删除团队 {self.team_id}：",
+            f"- {len(self.plan_item_ids)} 个计划任务",
+            "- 项目记忆命名空间",
+            "- 项目共享日志",
+        ]
+        if self.work_thread_id:
+            parts.append("- 项目工作线程（含消息与产物，级联清理）")
+        return "\n".join(parts)
 
 
 def journal_message(

@@ -34,7 +34,10 @@
 2. resident 选角色模板（architect / researcher / developer / tester，可扩展）。
 3. 建 `work_thread` + roster + 初始 WorkItems（含验收标准与依赖链）。
 4. coordinator 按 readiness 派活（依赖满足的 WorkItem → 对应 specialist 的 WorkerRun）。
-5. 成员进展/交接写 journal；WorkItem 完成需验收；项目结束归档（记忆命名空间保留，可复用）。
+5. 成员进展/交接写 journal；WorkItem 完成需验收。
+6. **解散即删干净**：用户说"把这支团队删掉"，ZN 删除 roster、journal、
+   项目记忆命名空间、计划 WorkItems 以及项目 work_thread（级联清理），
+   不保留、不归档。解散指令来自用户即视为确认，不二次打扰。
 
 ## 切片
 
