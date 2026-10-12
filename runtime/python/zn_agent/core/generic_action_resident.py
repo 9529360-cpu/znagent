@@ -379,7 +379,7 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
         learning_evidence,
         thought=None,
     ):
-        if state.stage == "orient" and self._model_led_event_enabled(event):
+        if state.stage in {"orient", "model_led_prepare"} and self._model_led_event_enabled(event):
             return self._begin_model_led_event(event, state)
         if state.stage == self._GENERIC_ACTION_STAGE:
             return self._generic_action_step(event, state)
@@ -521,9 +521,13 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
             state.data.pop("native_action_intent", None)
             state.data.pop("local_failure", None)
             if loop.get("model_led") is True:
-                # Fresh verified Body feedback goes straight back to model
-                # cognition on this SAME event, without a second planner or
-                # an unnecessary native impasse gate between decisions.
+                # A fresh verified result must be checkpointed before the next
+                # cognition request reads the durable Work state. This stage
+                # also survives a crash between verification and model recall.
+                state.stage = "model_led_prepare"
+                state.next_action = "prepare model decision from verified Body evidence"
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
                 return self._begin_model_led_event(event, state)
             self.investigator.reopen_after_external(
                 event.event_id,
