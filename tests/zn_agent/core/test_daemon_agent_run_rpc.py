@@ -144,7 +144,10 @@ class DaemonAgentRunRpcTests(unittest.TestCase):
                     [m.role for m in saved[1] if m.role in {"user", "zn"}],
                     ["user", "zn"],
                 )
-                self.assertEqual(saved[1][-1].text, result["final_text"])
+                self.assertEqual(
+                    [message.text for message in saved[1] if message.role == "zn"][-1],
+                    result["final_text"],
+                )
                 self.assertIsNotNone(server.work.get_run(result["work_event_id"]))
             finally:
                 server.resident.store.close()
