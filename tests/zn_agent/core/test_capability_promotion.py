@@ -5,12 +5,14 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.capability_promotion import (
+    describe_capability_source,
     promote_capability,
     test_capability_source,
     validate_capability_source,
 )
 
-GOOD = """
+GOOD = '''"""Demo capability for tests. Trigger: never (test only). Side-effects: none."""
+
 class Cap:
     name = "demo-cap"
     priority = 0
@@ -25,7 +27,7 @@ def build_capability():
 
 def self_test():
     return True
-"""
+'''
 
 NO_BUILDER = """
 def something_else():
@@ -39,7 +41,7 @@ def build_capability(name):
     return None
 """
 
-NO_EXECUTE = """
+NO_EXECUTE = '''"""Bad capability missing execute."""
 class Cap:
     name = "bad-cap"
     def match(self, event):
@@ -47,7 +49,7 @@ class Cap:
 
 def build_capability():
     return Cap()
-"""
+'''
 
 FAILING_SELF_TEST = GOOD.replace("return True", 'return "boom"')
 
@@ -97,6 +99,24 @@ class ValidateTests(unittest.TestCase):
     def test_missing_file(self):
         violations = validate_capability_source(self.tmp / "nope.py")
         self.assertTrue(any("not found" in v for v in violations))
+
+    def test_missing_docstring(self):
+        violations = validate_capability_source(
+            self.write("nodoc.py", "def build_capability():\n    return None\n")
+        )
+        self.assertTrue(any("docstring" in v for v in violations))
+
+    def test_describe_extracts_docstring(self):
+        path = self.write("good.py", GOOD)
+        info = describe_capability_source(path)
+        self.assertIn("Demo capability", info["docstring"])
+        self.assertIn("build_capability", info["top_level_names"])
+        self.assertIn("Cap", info["top_level_names"])
+
+    def test_describe_broken_file(self):
+        path = self.write("bad.py", SYNTAX_ERROR)
+        info = describe_capability_source(path)
+        self.assertIsNone(info["docstring"])
 
 
 class ProbeTests(unittest.TestCase):
@@ -151,6 +171,7 @@ class PromoteTests(unittest.TestCase):
         )
         self.assertTrue(report.promoted, report.problems())
         self.assertEqual(report.capability_name, "demo-cap")
+        self.assertIn("Demo capability", report.description or "")
         self.assertTrue((self.promoted / "cand.py").is_file())
 
     def test_promote_bad_validate(self):

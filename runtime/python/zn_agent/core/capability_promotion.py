@@ -74,6 +74,28 @@ print(json.dumps(report))
 """
 
 
+def describe_capability_source(path: str | Path) -> dict[str, Any]:
+    """AST-derived description draft. Executes nothing.
+
+    Gives a reviewer something to read without importing the candidate:
+    the module docstring plus top-level defined names.
+    """
+    source = Path(path)
+    try:
+        tree = ast.parse(source.read_text(encoding="utf-8"), filename=source.name)
+    except (OSError, UnicodeError, SyntaxError):
+        return {"docstring": None, "top_level_names": []}
+    names = [
+        node.name for node in tree.body
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef))
+    ]
+    docstring = ast.get_docstring(tree)
+    return {
+        "docstring": docstring.strip() if docstring else None,
+        "top_level_names": names,
+    }
+
+
 @dataclass(slots=True)
 class PromotionReport:
     promoted: bool
@@ -81,6 +103,7 @@ class PromotionReport:
     test_issues: list[str] = field(default_factory=list)
     dest: str | None = None
     capability_name: str | None = None
+    description: str | None = None
 
     def problems(self) -> list[str]:
         return [*self.violations, *self.test_issues]
@@ -105,6 +128,12 @@ def validate_capability_source(path: str | Path) -> list[str]:
         tree = ast.parse(text, filename=source.name)
     except SyntaxError as exc:
         return [f"syntax error: {exc}"]
+    docstring = ast.get_docstring(tree)
+    if not docstring or not docstring.strip():
+        violations.append(
+            "module docstring required: document what the capability does, "
+            "its trigger conditions, and its side-effect profile"
+        )
     builders = [
         node for node in tree.body
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
@@ -195,12 +224,14 @@ def promote_capability(
     root.mkdir(parents=True, exist_ok=True)
     dest = root / f"{source.stem}.py"
     digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    description = describe_capability_source(source)["docstring"]
     if dest.exists():
         existing_digest = hashlib.sha256(dest.read_bytes()).hexdigest()
         if existing_digest == digest:
             return PromotionReport(
                 promoted=True, dest=str(dest),
                 capability_name=probe["name"] or None,
+                description=description,
             )
         return PromotionReport(
             promoted=False,
@@ -210,4 +241,5 @@ def promote_capability(
     shutil.copy2(source, dest)
     return PromotionReport(
         promoted=True, dest=str(dest), capability_name=probe["name"] or None,
+        description=description,
     )
