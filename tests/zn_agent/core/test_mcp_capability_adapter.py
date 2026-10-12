@@ -133,7 +133,9 @@ class ApprovedMcpAdapterTests(unittest.TestCase):
                 ActionRequest("mcp.demo.read_status", {"query": "x"})
             ).success)
             self.client.running = True
-            self.client.tool_definitions = (_definition(), {"unexpected": "metadata"})  # new catalog
+            changed = _definition()
+            changed["description"] = "a changed tool definition"
+            self.client.tool_definitions = (changed,)
             self.assertFalse(self.fabric.availability("mcp.demo.read_status").available)
             self.assertFalse(runtime.execute(
                 ActionRequest("mcp.demo.read_status", {"query": "x"})
