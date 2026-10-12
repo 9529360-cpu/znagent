@@ -371,6 +371,38 @@ missing proof that the intended result happened
 
 Do not ask a model to invent facts that an owned sensor or tool can establish. Do not force a deterministic local program to solve genuinely open-ended cognition merely to avoid model use. Use the strongest suitable resource when the task warrants it, and bind it to the tools and evidence it actually needs.
 
+### 1.10.1 The model-led Agent is an inner control loop, not another architecture
+
+The model provides open-ended thinking, planning and next-action selection;
+the Agent loop continuously turns those model decisions into grounded capability
+requests and feeds verified results back for the next decision. This is analogous
+to cognition driving one body, not a replacement for ZN's original organs.
+
+```text
+user goal → ZN durable Work / relevant Memory
+          → model cognition → Agent decision loop
+          → existing Action Fabric → ZN permission/Body
+          → real-world observation and verification
+          → same Work checkpoint → model cognition again
+```
+
+The **same** Resident, Work, Memory, ModelRouter, Body, action authority and
+completion/recovery owner must remain active. A separate model-tool runner may
+be a bounded reference implementation, but must not silently become another
+product task owner or bypass existing side-effect and completion semantics.
+For open-ended goals the strong model may make most planning decisions; ZN
+still enforces factual evidence, user permissions and safe execution.
+
+Capability expansion must work through replaceable, declared adapters rather
+than hand-written per-task browser/desktop scripts. Mature MCP, native APIs,
+specialist tools and future extensions may supply mechanics and typed tool
+schemas to ZN's existing Action Fabric. The protocol tool catalog is **not**
+an authority grant: provider identity/version, exact approved tools, effect
+classification, argument bounds and current availability must be verified
+locally. Unknown or write-capable plugins stay disabled until an explicit
+ZN-owned permission, replay and postcondition verification contract exists.
+Installing a plugin never gives it ZN identity, Memory or Root Work ownership.
+
 ### 1.11 Token and cognitive cost are product constraints, not the product goal
 
 ZN should not reproduce the common agent pattern where every click, wait, poll, known state transition or deterministic check causes another large-model round trip. That is expensive, slow and often less reliable than resident-owned state and tools.
