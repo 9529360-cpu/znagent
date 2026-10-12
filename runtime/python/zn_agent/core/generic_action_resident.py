@@ -33,6 +33,67 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
     _GENERIC_ACTION_MAX_PROTOCOL_REPAIRS = 2
     _GENERIC_ACTION_MAX_REVERIFY_ATTEMPTS = 8
 
+    def _model_led_event_enabled(self, event) -> bool:
+        """Explicitly selected model-led Work reuses the existing Resident loop.
+
+        A model chooses the next semantic Action Fabric step, but ZN still owns
+        the event, Work ledger, action authorization, verification and recovery.
+        Ordinary Work and isolated cognition questions keep their prior routes.
+        """
+        payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
+        return payload.get("agent_loop") is True and self._generic_action_request_enabled(event)
+
+    def _begin_model_led_event(self, event, state):
+        required = self._required_capabilities(event)
+        decision = self.budget.decide(
+            event,
+            memory_hit=False,
+            local_capability_available=False,
+        )
+        if not decision.use_model:
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason=f"model-led Work requires permitted cognition: {decision.reason}",
+            )
+
+        # This is the SAME Resident event and the SAME cognitive resource
+        # routing as ordinary Work. No separate model, tool or completion owner.
+        impasse = self.life.begin_impasse(
+            event,
+            reason="model-led Work needs the next grounded decision",
+            required_capabilities=required,
+            local_failure=None,
+        )
+        cognition = self._build_cognition_request(event, impasse, required)
+        state.data["impasse_id"] = impasse.impasse_id
+        state.data["cognitive_budget"] = {
+            "use_external_cognition": True,
+            "max_model_calls": decision.max_model_calls,
+            "reason": decision.reason,
+        }
+        state.data["cognition_request"] = {
+            "request_id": cognition.request_id,
+            "impasse_id": cognition.impasse_id,
+            "event_id": cognition.event_id,
+            "question": cognition.question,
+            "required_capabilities": list(cognition.required_capabilities),
+            "context": cognition.context,
+            "created_at": cognition.created_at,
+        }
+        loop = self._generic_action_loop_state(state)
+        loop["model_led"] = True
+        loop["status"] = (
+            "awaiting_next_model_decision" if loop["history"]
+            else "awaiting_first_model_decision"
+        )
+        state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
+        state.stage = "external_cognition"
+        state.next_action = "obtain first model decision using resident cognition"
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
+
     def _generic_action_request_enabled(self, event, context=None) -> bool:
         if str(getattr(event, "kind", "") or "") != "desktop_user_event":
             return False
@@ -318,6 +379,8 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
         learning_evidence,
         thought=None,
     ):
+        if state.stage in {"orient", "model_led_prepare"} and self._model_led_event_enabled(event):
+            return self._begin_model_led_event(event, state)
         if state.stage == self._GENERIC_ACTION_STAGE:
             return self._generic_action_step(event, state)
         if state.stage == self._GENERIC_ACTION_COMPLETION_STAGE:
@@ -457,6 +520,15 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
             state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
             state.data.pop("native_action_intent", None)
             state.data.pop("local_failure", None)
+            if loop.get("model_led") is True:
+                # A fresh verified result must be checkpointed before the next
+                # cognition request reads the durable Work state. This stage
+                # also survives a crash between verification and model recall.
+                state.stage = "model_led_prepare"
+                state.next_action = "prepare model decision from verified Body evidence"
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return self._begin_model_led_event(event, state)
             self.investigator.reopen_after_external(
                 event.event_id,
                 f"verified Action Fabric execution {summary['execution_id']} changed current reality",
@@ -503,6 +575,15 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
             or f"Action Fabric execution failed: {action_id}"
         )
         state.data["local_failure"] = str(failure)[:1600]
+        if loop.get("model_led") is True and descriptor.effect_class == "read_only":
+            # A failed read cannot have dispatched an effect. Let the model
+            # choose a different observation/tool directly from fresh failure
+            # evidence, rather than returning ownership to a native planner.
+            state.stage = "model_led_prepare"
+            state.next_action = "reconsider read tool after verified failure"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._begin_model_led_event(event, state)
         self.investigator.reopen_after_external(
             event.event_id,
             f"Action Fabric execution failed after accepted cognition: {str(failure)[:900]}",
@@ -628,6 +709,14 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
                 ),
             )
 
+        if loop.get("model_led") is True:
+            # The existing bounded protocol-repair budget still applies; the
+            # model should correct its proposal from the same Work evidence.
+            state.stage = "model_led_prepare"
+            state.next_action = "repair rejected model tool proposal"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._begin_model_led_event(event, state)
         self.investigator.reopen_after_external(
             event.event_id,
             f"generic Action Fabric cognition was rejected: {str(reason)[:900]}",

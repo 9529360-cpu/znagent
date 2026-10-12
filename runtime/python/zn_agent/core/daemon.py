@@ -7,10 +7,7 @@ import time
 from dataclasses import asdict
 from typing import Any, Callable, TextIO
 
-from .agentic_tool_loop import AgenticToolLoop, ToolLoopError
-from .anthropic_resource import AnthropicToolLoopClient
 from .error_safety import public_exception_text
-from .models import ModelRoute
 from .outcome_aware_work_control import OutcomeAwareRestoreWorkControl
 from .provider_bridge import build_resident_runtime_from_existing_stack
 from .provider_settings import ProviderSettingsService
@@ -326,18 +323,41 @@ class ResidentRpcServer:
             task = str(params.get("task") or "").strip()
             if not task:
                 raise ValueError("agent_run requires task")
-            loop_kwargs: dict[str, Any] = {}
-            max_turns_param = params.get("max_turns")
-            if max_turns_param is not None:
-                loop_kwargs["max_turns"] = int(max_turns_param)
-            route = self._select_agent_tool_loop_route()
-            client = AnthropicToolLoopClient(route)
-            loop = AgenticToolLoop(client, **loop_kwargs)
-            try:
-                loop_result = loop.run(task)
-            except ToolLoopError as exc:
-                raise ValueError(str(exc)) from exc
-            result = self._agent_run_result(loop_result)
+            if params.get("max_turns") is not None:
+                raise ValueError(
+                    "agent_run no longer owns a separate model tool loop; "
+                    "max_turns is unsupported by Resident Work"
+                )
+            thread_id = str(params.get("thread_id") or "").strip()
+            if not thread_id:
+                thread_id = self.work.create_thread(title=task[:100]).thread_id
+
+            # Drive the SAME durable Resident Work as work_submit. The model
+            # proposes semantic Action Fabric actions inside the Resident, and
+            # execution, permissions, verification and recovery remain ZN-owned.
+            snapshot, run = self.work.submit(
+                thread_id,
+                task,
+                payload={"agent_loop": True},
+            )
+            reason = (
+                "cancelled" if bool(getattr(run, "cancelled", False))
+                else "resident_completed" if run.success
+                else "resident_failed"
+            )
+            result = {
+                "completed": bool(run.success),
+                "final_text": str(run.response or ""),
+                "turns_used": int(run.model_invocations),
+                "model_invocations": int(run.model_invocations),
+                "stopped_reason": reason,
+                # Do not invent a second tool transcript; Work/Action Fabric
+                # retain the authoritative per-effect evidence and outcomes.
+                "steps": [],
+                "thread": self._work_snapshot(snapshot),
+                "work_event_id": run.event.event_id,
+                "execution_path": run.execution_path.value,
+            }
         elif method == "pulses":
             limit = self._limit(params)
             result = [
@@ -631,55 +651,6 @@ class ResidentRpcServer:
             "model_invocations": run.model_invocations,
             "capability_name": run.capability_name,
             "reason": run.reason,
-        }
-
-    def _select_agent_tool_loop_route(self) -> ModelRoute:
-        """Pick a configured Anthropic route for AgenticToolLoop (Phase 1).
-
-        Phase 1 of the model-driven closed loop (docs/ZN-NEXT-PHASE.md) only
-        wires the reference AnthropicToolLoopClient. Route selection here is
-        deliberately narrow: reuse whatever Anthropic route ZN's own
-        provider_settings config already resolved instead of inventing a
-        second credential/config path. This does not replace
-        ModelRouter.select for durable Work; it only unblocks exercising the
-        tool loop end-to-end through the resident RPC surface.
-        """
-
-        router = getattr(getattr(self.resident, "kernel", None), "router", None)
-        routes = tuple(getattr(router, "routes", ()) or ())
-        for route in routes:
-            provider = str(getattr(route, "provider", "") or "").strip().lower()
-            metadata = getattr(route, "metadata", None)
-            if provider == "anthropic" and isinstance(metadata, dict) and metadata.get("api_key"):
-                return route
-        raise ValueError(
-            "agent_run requires a configured Anthropic route with an api_key "
-            "(see provider_settings)"
-        )
-
-    @staticmethod
-    def _agent_run_result(loop_result) -> dict[str, Any]:
-        return {
-            "completed": loop_result.completed,
-            "final_text": loop_result.final_text,
-            "turns_used": loop_result.turns_used,
-            "stopped_reason": loop_result.stopped_reason,
-            "steps": [
-                {
-                    "turn": step.turn,
-                    "assistant_text": step.assistant_text,
-                    "tool_calls": [dict(call) for call in step.tool_calls],
-                    "tool_results": [
-                        {
-                            "tool_use_id": tool_result.tool_use_id,
-                            "name": tool_result.name,
-                            "output": tool_result.output,
-                        }
-                        for tool_result in step.tool_results
-                    ],
-                }
-                for step in loop_result.steps
-            ],
         }
 
     def _write(self, payload: dict[str, Any]) -> None:
