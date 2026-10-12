@@ -226,7 +226,18 @@ def attach_approved_mcp_read_tools(
                     or not _catalog_matches(client, name, digest)
                 ):
                     raise RuntimeError("approved MCP connection is no longer current")
-                response = client.call_tool(name, dict(action.args))
+                if any(
+                    isinstance(value, str) and len(value) > 16_384
+                    for value in action.args.values()
+                ):
+                    raise ValueError("MCP read arguments exceed bounded size")
+                try:
+                    response = client.call_tool(name, dict(action.args))
+                except Exception as exc:
+                    # Provider errors can contain private returned content.
+                    raise RuntimeError(
+                        f"approved MCP read failed: {type(exc).__name__}"
+                    ) from exc
                 if not isinstance(response, Mapping) or bool(response.get("isError")):
                     raise RuntimeError("MCP tool returned a failed or malformed read result")
                 text, truncated = _response_text(response)
