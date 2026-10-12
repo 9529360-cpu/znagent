@@ -5,9 +5,11 @@ import sys
 import threading
 import time
 from dataclasses import asdict
-from typing import Any, Callable, TextIO
+from typing import Any, Callable, Sequence, TextIO
 
 from .error_safety import public_exception_text
+from .mcp_read_capability_host import ApprovedMcpReadProvider, McpReadCapabilityHost
+from .stdio_mcp import StdioMcpClient
 from .outcome_aware_work_control import OutcomeAwareRestoreWorkControl
 from .provider_bridge import build_resident_runtime_from_existing_stack
 from .provider_settings import ProviderSettingsService
@@ -33,6 +35,8 @@ class ResidentRpcServer:
         output_stream: TextIO | None = None,
         life_interval: float = 2.0,
         provider_settings: ProviderSettingsService | None = None,
+        mcp_approvals: Sequence[ApprovedMcpReadProvider] = (),
+        mcp_client_factory: Callable[..., Any] = StdioMcpClient,
     ):
         self.resident = resident or build_resident_runtime_from_existing_stack()
         self.service = ResidentService(self.resident)
@@ -41,6 +45,11 @@ class ResidentRpcServer:
         self.resident.cognitive_delta_handler = self.work.publish_response_delta
         self.resident.cognitive_response_reset_handler = self.work.reset_response_stream
         self.provider_settings = provider_settings or ProviderSettingsService(self.resident)
+        # No plugin starts automatically. Only trusted host-approved entries can
+        # be explicitly connected. All effects still go through this Body.
+        self.mcp_capabilities = McpReadCapabilityHost(
+            self.resident, approvals=mcp_approvals, client_factory=mcp_client_factory,
+        )
         self.input = input_stream or sys.stdin
         self.output = output_stream or sys.stdout
         self.life_interval = max(0.25, float(life_interval))
@@ -78,6 +87,7 @@ class ResidentRpcServer:
                 self._write(response)
         finally:
             self._stop_life_loop()
+            self.mcp_capabilities.close()
             self.service.release()
             try:
                 self.resident.store.close()
@@ -105,6 +115,18 @@ class ResidentRpcServer:
             result = self.provider_settings.snapshot()
         elif method == "provider_settings_update":
             result = self.provider_settings.update(params)
+        elif method == "mcp_capabilities":
+            result = self.mcp_capabilities.catalog()
+        elif method == "mcp_connect":
+            provider_id = str(params.get("provider_id") or "").strip()
+            if not provider_id:
+                raise ValueError("mcp_connect requires provider_id")
+            result = self.mcp_capabilities.connect(provider_id)
+        elif method == "mcp_disconnect":
+            provider_id = str(params.get("provider_id") or "").strip()
+            if not provider_id:
+                raise ValueError("mcp_disconnect requires provider_id")
+            result = self.mcp_capabilities.disconnect(provider_id)
         elif method == "work_list":
             result = [
                 self._work_snapshot(snapshot, artifact_limit=1)
@@ -510,6 +532,7 @@ class ResidentRpcServer:
         elif method == "shutdown":
             self._shutdown = True
             self._life_stop.set()
+            self.mcp_capabilities.close()
             result = {"shutting_down": True}
         else:
             raise ValueError(f"unknown method: {method}")
