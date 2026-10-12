@@ -89,12 +89,14 @@ class RealMcpReadProviderContract(unittest.TestCase):
                 self.assertFalse(host.disconnect("ci_stdio")["connected"])
                 self.assertEqual(fabric.descriptors(), ())
                 self.assertEqual(body._external_read_handlers, {})
-                rejected = runtime.execute(ActionRequest(
-                    "mcp.ci_stdio.read_status",
-                    {"query": "not-allowed-after-stop"},
-                    event_id="real-ci-later",
-                ))
-                self.assertFalse(rejected.success)
+                # The canonical Action Fabric rejects unknown/uninstalled
+                # actions before they can enter Body (KeyError contract).
+                with self.assertRaises(KeyError):
+                    runtime.execute(ActionRequest(
+                        "mcp.ci_stdio.read_status",
+                        {"query": "not-allowed-after-stop"},
+                        event_id="real-ci-later",
+                    ))
                 self.assertTrue(host.connect("ci_stdio")["connected"])
             finally:
                 host.close()
