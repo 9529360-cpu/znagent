@@ -63,7 +63,13 @@ class SensitiveBodyActionRedactionTests(unittest.TestCase):
                     ["API_TOKEN", "CLIENT_SECRET"],
                 )
                 self.assertEqual(persisted["args"]["env_count"], 2)
-                self.assertEqual(persisted["args"]["command"], "tool --read-env")
+                # #460: command text itself may embed secrets (e.g. curl
+                # Authorization headers), so the audit row keeps only a
+                # digest. This replaces the earlier cleartext pinning.
+                command = persisted["args"]["command"]
+                self.assertTrue(command["redacted"])
+                self.assertEqual(command["chars"], len("tool --read-env"))
+                self.assertNotIn("tool --read-env", serialized)
                 self.assertEqual(persisted["args"]["timeout"], 5)
             finally:
                 store.close()
