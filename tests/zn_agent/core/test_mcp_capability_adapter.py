@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 import tempfile
 import unittest
 from pathlib import Path
@@ -98,7 +99,7 @@ class ApprovedMcpAdapterTests(unittest.TestCase):
             self.assertEqual(outcome.observations[0].data["text"], "status healthy")
             self.assertTrue(outcome.observations[0].data["untrusted_external_evidence"])
             self.assertEqual(self.client.calls, [("read_status", {"query": "private-query-2026"})])
-            with sqlite3.connect(self.body.store.path) as db:
+            with closing(sqlite3.connect(self.body.store.path)) as db:
                 saved_action, saved_result = db.execute(
                     "SELECT action_json, result_json FROM native_body_actions WHERE action_id=?",
                     (outcome.body_result.action_id,),
