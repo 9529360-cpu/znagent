@@ -99,14 +99,19 @@ class ApprovedMcpAdapterTests(unittest.TestCase):
             self.assertTrue(outcome.observations[0].data["untrusted_external_evidence"])
             self.assertEqual(self.client.calls, [("read_status", {"query": "private-query-2026"})])
             with sqlite3.connect(self.body.store.path) as db:
-                saved = db.execute(
-                    "SELECT action_json FROM native_body_actions WHERE action_id=?",
+                saved_action, saved_result = db.execute(
+                    "SELECT action_json, result_json FROM native_body_actions WHERE action_id=?",
                     (outcome.body_result.action_id,),
-                ).fetchone()[0]
-            record = json.loads(saved)
-            self.assertNotIn("private-query-2026", saved)
+                ).fetchone()
+            record = json.loads(saved_action)
+            audit = json.loads(saved_result)
+            self.assertNotIn("private-query-2026", saved_action)
+            self.assertNotIn("status healthy", saved_result)
             self.assertTrue(record["args"]["redacted"])
             self.assertEqual(record["args"]["names"], ["query"])
+            self.assertEqual(audit["output"], "")
+            self.assertTrue(audit["data"]["external_read_redacted"])
+            self.assertEqual(audit["data"]["result_chars"], len("status healthy"))
         finally:
             attachment.detach()
 
