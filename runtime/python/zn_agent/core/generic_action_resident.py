@@ -83,7 +83,10 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
         }
         loop = self._generic_action_loop_state(state)
         loop["model_led"] = True
-        loop["status"] = "awaiting_first_model_decision"
+        loop["status"] = (
+            "awaiting_next_model_decision" if loop["history"]
+            else "awaiting_first_model_decision"
+        )
         state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
         state.stage = "external_cognition"
         state.next_action = "obtain first model decision using resident cognition"
@@ -517,6 +520,11 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
             state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
             state.data.pop("native_action_intent", None)
             state.data.pop("local_failure", None)
+            if loop.get("model_led") is True:
+                # Fresh verified Body feedback goes straight back to model
+                # cognition on this SAME event, without a second planner or
+                # an unnecessary native impasse gate between decisions.
+                return self._begin_model_led_event(event, state)
             self.investigator.reopen_after_external(
                 event.event_id,
                 f"verified Action Fabric execution {summary['execution_id']} changed current reality",
