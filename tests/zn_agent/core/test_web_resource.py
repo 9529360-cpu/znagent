@@ -62,6 +62,21 @@ class WebResourceTests(unittest.TestCase):
         self.assertEqual(call["headers"]["X-Client-Name"], "zn-agent")
         self.assertEqual(call["json"]["max_results"], 3)
 
+    def test_tavily_api_endpoint_requires_tls_except_loopback(self):
+        self.assertEqual(
+            TavilyWebResource(base_url="http://127.0.0.2:8080").base_url,
+            "http://127.0.0.2:8080",
+        )
+        with self.assertRaisesRegex(ValueError, "must use HTTPS"):
+            TavilyWebResource(
+                api_key="must-not-be-sent",
+                base_url="http://search.example",
+            )
+        with self.assertRaisesRegex(ValueError, "embedded credentials"):
+            TavilyWebResource(
+                base_url="https://user:password@search.example",
+            )
+
     def test_keyless_tavily_preserves_reference_access_mode(self):
         client = _Client([_Response({"results": []})])
         resource = TavilyWebResource(client=client)
