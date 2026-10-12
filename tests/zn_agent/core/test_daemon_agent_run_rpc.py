@@ -167,6 +167,9 @@ class DaemonAgentRunRpcTests(unittest.TestCase):
                 outcome = server.resident.store.get_event_outcome(result["work_event_id"])
                 self.assertTrue(outcome.success)
                 self.assertEqual(outcome.model_invocations, 2)
+                # Both turns ran inside model-led Resident: no parallel
+                # investigation/planner was needed between verified actions.
+                self.assertIsNone(server.resident.investigator.current(result["work_event_id"]))
             finally:
                 server.resident.store.close()
 
