@@ -17,6 +17,34 @@ class LocalCapability(Protocol):
 
     def execute(self, event: AgentEvent, state: WorkingState) -> CapabilityResult: ...
 
+    def preview(self, event: AgentEvent, state: WorkingState) -> str | None:
+        """Optional human-readable preview of what execute() would change.
+
+        Mutating capabilities (replay_safe=False) SHOULD implement this so
+        the resident can show the user what would happen before executing.
+        Return None when the effect cannot be previewed. Absence of this
+        method is allowed for backward compatibility; callers must use
+        preview_capability() which handles that.
+        """
+        ...
+
+
+def preview_capability(
+    capability: object,
+    event: AgentEvent,
+    state: WorkingState,
+) -> str | None:
+    """Best-effort preview of a capability's effect. None if unavailable."""
+    preview = getattr(capability, "preview", None)
+    if not callable(preview):
+        return None
+    try:
+        result = preview(event, state)
+    except Exception:
+        return None
+    text = str(result or "").strip()
+    return text[:2000] if text else None
+
 
 @dataclass(slots=True)
 class CallableCapability:
@@ -37,6 +65,7 @@ class CallableCapability:
     handler: Callable[[AgentEvent, WorkingState], CapabilityResult]
     priority: int = 0
     replay_safe: bool = False
+    previewer: Callable[[AgentEvent, WorkingState], str | None] | None = None
 
     def match(self, event: AgentEvent) -> float:
         try:
@@ -46,6 +75,16 @@ class CallableCapability:
 
     def execute(self, event: AgentEvent, state: WorkingState) -> CapabilityResult:
         return self.handler(event, state)
+
+    def preview(self, event: AgentEvent, state: WorkingState) -> str | None:
+        if self.previewer is None:
+            return None
+        try:
+            result = self.previewer(event, state)
+        except Exception:
+            return None
+        text = str(result or "").strip()
+        return text[:2000] if text else None
 
 
 class ExactTaskCapability(CallableCapability):
