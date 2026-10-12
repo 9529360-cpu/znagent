@@ -85,7 +85,7 @@ class ApprovedMcpReadProvider:
         if len(pinned) != len(self.pinned_files) or str(executable) not in pinned:
             raise ValueError("approved MCP executable must be pinned exactly")
         if executable.name.lower() in _INTERPRETERS:
-            scripts = {str(item.path) for item in self.pinned_files[1:]}
+            scripts = {str(item.path) for item in self.pinned_files if item.path != executable}
             if not scripts.intersection(argv[1:]):
                 raise ValueError("interpreted MCP server needs a pinned script argument")
             if any(item in {"-e", "-c", "-m", "--eval"} for item in argv[1:]):
