@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import time
 import tempfile
 import threading
 import unittest
@@ -17,6 +18,8 @@ from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.mcp_read_capability_host import (
     ApprovedMcpReadProvider, McpReadCapabilityHost, PinnedMcpFile,
 )
+from zn_agent.core.resident_server import ResidentSocketService
+from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.research_information_product_resident import (
     ProductResearchInformationResidentRuntime,
 )
@@ -301,6 +304,59 @@ class McpReadCapabilityHostTests(unittest.TestCase):
         self.assertTrue(returned[0].success, returned[0].error)
         self.assertEqual(client.start_calls, 1)
         self.assertEqual(client.close_calls, 1)
+
+
+class McpSocketServiceCleanupTests(unittest.TestCase):
+    def test_socket_service_stop_retires_mcp_even_without_rpc_shutdown(self):
+        # Electron's production transport is ResidentSocketService, NOT the
+        # stdio RPC serve_forever path. A fatal/SIGTERM/service stop bypasses
+        # the explicit RPC "shutdown" handler but must retire child processes.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            approval = _approved(root)
+            factory = _Factory()
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+            rpc = ResidentRpcServer(
+                resident=resident,
+                life_interval=0.1,
+                mcp_approvals=(approval,),
+                mcp_client_factory=factory,
+            )
+            service = ResidentSocketService(
+                rpc,
+                endpoint_path=root / "resident-endpoint.json",
+            )
+            connected = rpc.handle({
+                "id": "connect", "method": "mcp_connect",
+                "params": {"provider_id": "demo"},
+            })
+            self.assertTrue(connected["ok"])
+            self.assertEqual(len(factory.created), 1)
+            client = factory.created[0]
+            self.assertTrue(client.running)
+            self.assertIsNotNone(resident.action_fabric.descriptor("mcp.demo.read_status"))
+
+            thread = threading.Thread(target=service.serve_forever, daemon=True)
+            thread.start()
+            try:
+                deadline = time.monotonic() + 5
+                while not service.endpoint_path.is_file() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(service.endpoint_path.is_file())
+                self.assertIsNotNone(service._server)
+            finally:
+                if service._server is not None:
+                    service._server.shutdown()
+                thread.join(timeout=8.0)
+
+            self.assertFalse(thread.is_alive())
+            self.assertFalse(client.running)
+            self.assertEqual(client.close_calls, 1)
+            self.assertIsNone(resident.action_fabric.descriptor("mcp.demo.read_status"))
+            self.assertFalse(service.endpoint_path.exists())
 
 
 class _ThinkingWorker:
