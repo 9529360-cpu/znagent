@@ -70,6 +70,7 @@ class ApprovedMcpAdapterTests(unittest.TestCase):
         self.client = _Client()
 
     def tearDown(self):
+        self.body.store.close()
         self.tmp.cleanup()
 
     def test_read_tool_can_be_discovered_and_called_through_normal_body(self):
