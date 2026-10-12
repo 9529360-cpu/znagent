@@ -206,6 +206,57 @@ class DaemonAgentRunRpcTests(unittest.TestCase):
             finally:
                 server.resident.store.close()
 
+    def test_real_desktop_work_start_uses_durable_model_led_execution(self):
+        # This is the asynchronous RPC used by the actual Electron client,
+        # not the proof-of-concept synchronous agent_run sidecar.
+        with tempfile.TemporaryDirectory() as tmp:
+            server, factory, body = _make_server(tmp)
+            try:
+                thread = server.work.create_thread(title="Desktop agent Work")
+                started = server.handle({
+                    "id": "start-work",
+                    "method": "work_start",
+                    "params": {
+                        "thread_id": thread.thread_id,
+                        "task": "read the current test value",
+                        "kind": "desktop_user_event",
+                        "payload": {"agent_loop": True},
+                    },
+                })
+                self.assertTrue(started["ok"])
+                progress = started["result"]["progress"]
+                event_id = progress["event_id"]
+                event = server.resident.store.get_event(event_id)
+                self.assertEqual(event.payload["agent_loop"], True)
+                self.assertEqual(event.payload["work_thread_id"], thread.thread_id)
+
+                for _ in range(25):
+                    if server.resident.result_for(event_id) is not None:
+                        break
+                    server.resident.live_once()
+                outcome = server.resident.result_for(event_id)
+                self.assertIsNotNone(outcome)
+                self.assertTrue(outcome.success, outcome)
+                self.assertEqual(outcome.response, "the fresh value was verified")
+                self.assertEqual(len(factory.calls), 2)
+                self.assertEqual(len(body.calls), 1)
+
+                updated = server.handle({
+                    "id": "progress",
+                    "method": "work_progress",
+                    "params": {"thread_id": thread.thread_id, "event_id": event_id},
+                })
+                self.assertTrue(updated["ok"])
+                self.assertTrue(updated["result"]["progress"]["finalized"])
+                self.assertEqual(updated["result"]["progress"]["status"], "completed")
+                roles = [
+                    m.role for m in server.work.get_snapshot(thread.thread_id)[1]
+                    if m.role in {"user", "zn"}
+                ]
+                self.assertEqual(roles, ["user", "zn"])
+            finally:
+                server.resident.store.close()
+
     def test_model_led_turn_starts_cognition_without_native_probe(self):
         with tempfile.TemporaryDirectory() as tmp:
             server, factory, body = _make_server(tmp)
