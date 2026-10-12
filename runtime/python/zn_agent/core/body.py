@@ -1283,6 +1283,7 @@ class NativeBody:
         if self.store is None:
             return
         action_record = asdict(action)
+        result_record = asdict(result)
         if action.kind.startswith("zn_mcp_read_"):
             # MCP arguments can contain local queries or personal context. Keep
             # a diagnostic digest instead of persisting raw tool inputs twice.
@@ -1294,6 +1295,26 @@ class NativeBody:
                 "redacted": True,
                 "names": sorted(str(name) for name in action.args),
                 "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+            }
+            # The ActionExecution/Work verifier receives full live evidence.
+            # This generic audit history must not duplicate external content.
+            raw_output = str(result.output or "")
+            raw_data = dict(result.data or {})
+            returned_text = str(raw_data.pop("text", "") or "")
+            digest_source = returned_text or raw_output
+            result_record["output"] = ""
+            result_record["error"] = (
+                "approved MCP read failed" if result.error else None
+            )
+            result_record["data"] = {
+                "external_read_redacted": True,
+                "provider_id": str(raw_data.get("provider_id") or "")[:80],
+                "tool": str(raw_data.get("tool") or "")[:100],
+                "result_chars": len(digest_source),
+                "result_sha256": hashlib.sha256(
+                    digest_source.encode("utf-8")
+                ).hexdigest(),
+                "truncated": bool(raw_data.get("truncated")),
             }
         with closing(self._connect()) as conn:
             conn.execute(
@@ -1307,7 +1328,7 @@ class NativeBody:
                     1 if result.success else 0,
                     result.completed_at,
                     json.dumps(action_record, ensure_ascii=False, separators=(",", ":")),
-                    json.dumps(asdict(result), ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(result_record, ensure_ascii=False, separators=(",", ":")),
                 ),
             )
             conn.execute(
