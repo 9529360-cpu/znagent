@@ -100,6 +100,16 @@ def _validated_schema(value: Any) -> dict[str, Any]:
     return result
 
 
+def _catalog_matches(client: McpReadOnlyClient, name: str, expected_digest: str) -> bool:
+    """Do not dispatch under a stale tool definition after provider changes."""
+    for item in client.tool_definitions:
+        if str(item.get("name") or "") != name:
+            continue
+        raw = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
+        return hashlib.sha256(raw.encode("utf-8")).hexdigest() == expected_digest
+    return False
+
+
 def _response_text(response: Mapping[str, Any]) -> tuple[str, bool]:
     chunks = []
     for part in response.get("content", []) or []:
@@ -158,7 +168,7 @@ def attach_approved_mcp_read_tools(
     if not set(approved).issubset(catalog) or not set(approved).issubset(client.tool_names):
         raise ValueError("approved MCP tool not present in current connected catalog")
 
-    prepared: list[tuple[ActionDescriptor, str]] = []
+    prepared: list[tuple[ActionDescriptor, str, str]] = []
     for tool_name in approved:
         if not re.fullmatch(r"[a-zA-Z][a-zA-Z0-9_.-]{0,79}", tool_name):
             raise ValueError("MCP tool name is not a stable identifier")
@@ -194,19 +204,26 @@ def attach_approved_mcp_read_tools(
             replay_semantics="read_only",
             tags=("mcp", "external", "read_only", provider_id),
         )
-        prepared.append((descriptor, tool_name))
+        fingerprint = hashlib.sha256(
+            json.dumps(raw, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
+        ).hexdigest()
+        prepared.append((descriptor, tool_name, fingerprint))
 
     registered: list[ActionDescriptor] = []
+    attached_kinds: list[str] = []
     try:
-        for descriptor, tool_name in prepared:
+        for descriptor, tool_name, fingerprint in prepared:
             assert descriptor.body_action_kind is not None
 
-            def call_read(action: BodyAction, started: str, *, name=tool_name) -> BodyActionResult:
+            def call_read(
+                action: BodyAction, started: str, *, name=tool_name, digest=fingerprint
+            ) -> BodyActionResult:
                 if (
                     not client.running
                     or client.server_name != expected_server_name
                     or client.server_version != expected_server_version
                     or name not in client.tool_names
+                    or not _catalog_matches(client, name, digest)
                 ):
                     raise RuntimeError("approved MCP connection is no longer current")
                 response = client.call_tool(name, dict(action.args))
@@ -231,15 +248,17 @@ def attach_approved_mcp_read_tools(
                 )
 
             body.register_external_read_handler(descriptor.body_action_kind, call_read)
+            attached_kinds.append(descriptor.body_action_kind)
             fabric.register(
                 descriptor,
-                availability_probe=lambda item, name=tool_name: ActionAvailability(
+                availability_probe=lambda item, name=tool_name, digest=fingerprint: ActionAvailability(
                     item.action_id,
                     "available" if (
                         client.running
                         and client.server_name == expected_server_name
                         and client.server_version == expected_server_version
                         and name in client.tool_names
+                        and _catalog_matches(client, name, digest)
                     ) else "unavailable",
                     reason="fresh approved MCP client state",
                     evidence={"provider_id": provider_id, "tool": name},
@@ -247,9 +266,9 @@ def attach_approved_mcp_read_tools(
             )
             registered.append(descriptor)
     except Exception:
-        for descriptor in prepared:
-            fabric.unregister(descriptor[0].action_id)
-            assert descriptor[0].body_action_kind is not None
-            body.unregister_external_read_handler(descriptor[0].body_action_kind)
+        for descriptor in registered:
+            fabric.unregister(descriptor.action_id)
+        for kind in attached_kinds:
+            body.unregister_external_read_handler(kind)
         raise
     return McpReadOnlyAttachment(fabric, body, tuple(registered))
