@@ -230,7 +230,8 @@ class McpReadCapabilityHost:
                     expected_server_names=(approval.expected_server_name,),
                     required_tools=approval.approved_tool_names,
                     timeout_seconds=approval.timeout_seconds,
-                )).start()
+                ))
+                session.start()
                 attachment = attach_approved_mcp_read_tools(
                     fabric=self._fabric,
                     body=self._body,
