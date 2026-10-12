@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import io
 import json
 import sqlite3
 from contextlib import closing
@@ -11,6 +12,7 @@ from zn_agent.core import KernelStore, ModelRoute, WorkerResult, ZNKernelRuntime
 from zn_agent.core.action_execution import ActionExecutionRuntime, ActionRequest
 from zn_agent.core.action_fabric import ActionFabricRegistry
 from zn_agent.core.body import NativeBody
+from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.generic_action_loop import build_generic_action_context
 from zn_agent.core.mcp_capability_adapter import attach_approved_mcp_read_tools
 from zn_agent.core.research_information_product_resident import (
@@ -247,6 +249,66 @@ class _LoopFactory:
 
 
 class McpReadOnlyResidentLoopTests(unittest.TestCase):
+    def test_desktop_model_led_work_invokes_mcp_through_original_body(self):
+        """Full desktop RPC -> Work -> model -> MCP Body -> model -> outcome."""
+        with tempfile.TemporaryDirectory() as root:
+            factory = _LoopFactory()
+            kernel = ZNKernelRuntime(
+                store=KernelStore(Path(root) / "kernel.db"),
+                routes=[ModelRoute("primary", "test", "model", {"general": 0.9})],
+                worker_factory=factory,
+            )
+            resident = ProductResearchInformationResidentRuntime(kernel=kernel)
+            client = _Client()
+            bound = _attach(resident.action_fabric, resident.body, client)
+            server = ResidentRpcServer(
+                resident=resident,
+                input_stream=io.StringIO(),
+                output_stream=io.StringIO(),
+            )
+            try:
+                thread = server.work.create_thread(title="External capability Work")
+                started = server.handle({
+                    "id": "desktop-start",
+                    "method": "work_start",
+                    "params": {
+                        "thread_id": thread.thread_id,
+                        "task": "read the external status",
+                        "kind": "desktop_user_event",
+                        "payload": {"agent_loop": True},
+                    },
+                })
+                self.assertTrue(started["ok"])
+                event_id = started["result"]["progress"]["event_id"]
+                for _ in range(25):
+                    if resident.result_for(event_id) is not None:
+                        break
+                    resident.live_once()
+                outcome = resident.result_for(event_id)
+                self.assertIsNotNone(outcome)
+                self.assertTrue(outcome.success, outcome)
+                self.assertEqual(outcome.response, "verified the external read")
+                self.assertEqual(outcome.model_invocations, 2)
+                self.assertEqual(client.calls, [("read_status", {"query": "status"})])
+                self.assertEqual(factory.evidence["action_id"], "mcp.demo.read_status")
+                self.assertTrue(factory.evidence["verified"])
+                self.assertIsNone(resident.investigator.current(event_id))
+                progress = server.handle({
+                    "id": "desktop-status",
+                    "method": "work_progress",
+                    "params": {"thread_id": thread.thread_id, "event_id": event_id},
+                })
+                self.assertTrue(progress["ok"])
+                self.assertTrue(progress["result"]["progress"]["finalized"])
+                self.assertEqual(
+                    [m.role for m in server.work.get_snapshot(thread.thread_id)[1]
+                     if m.role in {"user", "zn"}],
+                    ["user", "zn"],
+                )
+            finally:
+                bound.detach()
+                resident.store.close()
+
     def test_model_chooses_external_plugin_but_original_resident_owns_execution(self):
         with tempfile.TemporaryDirectory() as root:
             factory = _LoopFactory()
