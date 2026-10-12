@@ -230,7 +230,6 @@ class McpReadCapabilityHostTests(unittest.TestCase):
         for argv in (
             ("cmd.exe", "/c", "anything"),
             ("/bin/sh", "-c", "echo 1"),
-            (str(pin.path), "-c", "evil"),
         ):
             with self.subTest(argv=argv):
                 with self.assertRaises(ValueError):
@@ -260,6 +259,15 @@ class McpReadCapabilityHostTests(unittest.TestCase):
             (python_pin, script_pin),
         )
         self.assertEqual(len(valid.pinned_files), 2)
+        with self.assertRaisesRegex(ValueError, "inline/module"):
+            ApprovedMcpReadProvider(
+                "demo", "test", "1", ("read_status",),
+                StdioMcpCommand(
+                    (str(python_exe), "-c", "print('evil')", str(script)),
+                    self.root, {},
+                ),
+                (python_pin, script_pin),
+            )
 
     def test_disconnection_waits_for_inflight_read_and_cannot_relaunch_child(self):
         self.host.connect("demo")
