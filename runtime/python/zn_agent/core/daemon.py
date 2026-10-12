@@ -116,13 +116,19 @@ class ResidentRpcServer:
         elif method == "provider_settings_update":
             result = self.provider_settings.update(params)
         elif method == "mcp_capabilities":
+            if params:
+                raise ValueError("mcp_capabilities accepts no execution parameters")
             result = self.mcp_capabilities.catalog()
         elif method == "mcp_connect":
+            if set(params) != {"provider_id"}:
+                raise ValueError("mcp_connect accepts only a preapproved provider_id")
             provider_id = str(params.get("provider_id") or "").strip()
             if not provider_id:
                 raise ValueError("mcp_connect requires provider_id")
             result = self.mcp_capabilities.connect(provider_id)
         elif method == "mcp_disconnect":
+            if set(params) != {"provider_id"}:
+                raise ValueError("mcp_disconnect accepts only a preapproved provider_id")
             provider_id = str(params.get("provider_id") or "").strip()
             if not provider_id:
                 raise ValueError("mcp_disconnect requires provider_id")
