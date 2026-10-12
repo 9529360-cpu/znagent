@@ -13,6 +13,9 @@ on:
       - runtime/python/zn_agent/core/browser_provider_registry.py
       - runtime/python/zn_agent/core/chrome_devtools_mcp_browser.py
       - runtime/python/zn_agent/core/stdio_mcp.py
+      - runtime/python/zn_agent/core/mcp_read_capability_host.py
+      - runtime/python/zn_agent/core/mcp_capability_adapter.py
+      - tests/zn_agent/integration/test_mcp_read_provider_runtime.py
       - runtime/python/zn_agent/core/broad_goal_research_resident.py
       - runtime/python/zn_agent/core/browser_causal_popup.py
       - runtime/python/zn_agent/core/browser_scene_actions.py
@@ -100,6 +103,9 @@ on:
       - runtime/python/zn_agent/core/browser_provider_registry.py
       - runtime/python/zn_agent/core/chrome_devtools_mcp_browser.py
       - runtime/python/zn_agent/core/stdio_mcp.py
+      - runtime/python/zn_agent/core/mcp_read_capability_host.py
+      - runtime/python/zn_agent/core/mcp_capability_adapter.py
+      - tests/zn_agent/integration/test_mcp_read_provider_runtime.py
       - runtime/python/zn_agent/core/broad_goal_research_resident.py
       - runtime/python/zn_agent/core/browser_causal_popup.py
       - runtime/python/zn_agent/core/browser_scene_actions.py
@@ -235,6 +241,14 @@ jobs:
           npm install --prefix $chromeMcpRoot --no-save --package-lock=false --omit=dev --ignore-scripts chrome-devtools-mcp@1.9.0
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           "ZN_CHROME_DEVTOOLS_MCP_ROOT=$chromeMcpRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Prove approved MCP stdio process through real ZN Body
+        run: |
+          $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
+          $python = Join-Path $env:GITHUB_WORKSPACE '.ci\managed-browser-venv\Scripts\python.exe'
+          & $python -c "import mcp; print('Official MCP SDK loaded')"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $python -m unittest tests.zn_agent.integration.test_mcp_read_provider_runtime -v
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Run managed browser contract tests
         run: |
           $env:PYTHONPATH = Join-Path $env:GITHUB_WORKSPACE 'runtime\python'
