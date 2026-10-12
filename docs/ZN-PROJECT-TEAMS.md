@@ -31,7 +31,9 @@
 ## 组建流程
 
 1. 用户："给 XXX 项目组个开发团队"。
-2. resident 选角色模板（architect / researcher / developer / tester，可扩展）。
+2. resident 选角色模板。内置 4 个开发角色只是默认，不是封闭集合——
+   调用 `assemble_team` 时可传入自定义 `SpecialistRole`（设计、法务、
+   市场……），不改模块就能组非开发团队。
 3. 建 `work_thread` + roster + 初始 WorkItems（含验收标准与依赖链）。
 4. coordinator 按 readiness 派活（依赖满足的 WorkItem → 对应 specialist 的 WorkerRun）。
 5. 成员进展/交接写 journal；WorkItem 完成需验收。

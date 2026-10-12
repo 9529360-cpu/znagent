@@ -74,6 +74,43 @@ class AssembleTeamTests(unittest.TestCase):
             set(ROLE_TEMPLATES), {"researcher", "architect", "developer", "tester"}
         )
 
+    def test_custom_roles_are_not_hardcoded(self):
+        from zn_agent.core.project_team import SpecialistRole
+
+        designer = SpecialistRole(
+            key="designer",
+            title="设计",
+            responsibilities=("出视觉稿",),
+            default_objective="输出视觉设计稿",
+            default_acceptance=("设计稿通过评审",),
+            prompt_fragment="你是设计专员。",
+        )
+        team = assemble_team(
+            "品牌站", ["designer", "developer"],
+            team_id="t-custom",
+            roles={"designer": designer},
+        )
+        self.assertEqual(
+            [m.role_key for m in team.members], ["designer", "developer"]
+        )
+        self.assertEqual(team.members[0].name, "设计-01")
+        self.assertEqual(team.plan[0].objective, "输出视觉设计稿")
+
+    def test_unknown_role_still_rejected(self):
+        with self.assertRaises(ValueError):
+            assemble_team("X", ["ninja"])
+
+    def test_mismatched_role_entry_rejected(self):
+        from zn_agent.core.project_team import SpecialistRole
+
+        bad = SpecialistRole(
+            key="other", title="x", responsibilities=(),
+            default_objective="x", default_acceptance=(),
+            prompt_fragment="x",
+        )
+        with self.assertRaises(ValueError):
+            assemble_team("X", ["designer"], roles={"designer": bad})
+
 
 class JournalTests(unittest.TestCase):
     def test_message_format(self):

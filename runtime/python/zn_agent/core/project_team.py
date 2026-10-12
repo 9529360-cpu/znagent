@@ -212,11 +212,16 @@ def assemble_team(
     *,
     team_id: str | None = None,
     work_thread_id: str | None = None,
+    roles: dict[str, SpecialistRole] | None = None,
 ) -> ProjectTeam:
     """Build a team: roster of named specialists plus a dependency-chained plan.
 
     Plan order follows the given role order; each item depends on the previous
     one (research -> design -> build -> test by default).
+
+    ROLE_TEMPLATES are built-in defaults, not a closed set: pass ``roles`` with
+    extra (or overriding) SpecialistRole entries to assemble non-dev teams
+    (design, legal, marketing, ...) without touching this module.
     """
     if not project_title or not project_title.strip():
         raise ValueError("project_title must not be empty")
@@ -225,14 +230,22 @@ def assemble_team(
         raise ValueError("at least one role is required")
     if len(set(keys)) != len(keys):
         raise ValueError("duplicate roles are not allowed")
-    unknown = [key for key in keys if key not in ROLE_TEMPLATES]
+    registry: dict[str, SpecialistRole] = dict(ROLE_TEMPLATES)
+    if roles:
+        for role_key, role in roles.items():
+            if not isinstance(role, SpecialistRole) or role.key != role_key:
+                raise ValueError(
+                    f"role entry {role_key!r} must be a SpecialistRole with matching key"
+                )
+            registry[role_key] = role
+    unknown = [key for key in keys if key not in registry]
     if unknown:
         raise ValueError(f"unknown role(s): {', '.join(unknown)}")
 
     resolved_team_id = team_id or f"team-{uuid.uuid4().hex[:8]}"
     members: list[Specialist] = []
     for index, key in enumerate(keys):
-        role = ROLE_TEMPLATES[key]
+        role = registry[key]
         name = f"{role.title}-{index + 1:02d}"
         members.append(
             Specialist(
@@ -247,7 +260,7 @@ def assemble_team(
 
     plan: list[TeamPlanItem] = []
     for index, (key, specialist) in enumerate(zip(keys, members)):
-        role = ROLE_TEMPLATES[key]
+        role = registry[key]
         dependencies = (plan[index - 1].item_id,) if index > 0 else ()
         plan.append(
             TeamPlanItem(
