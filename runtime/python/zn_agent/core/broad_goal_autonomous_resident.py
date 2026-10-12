@@ -14,8 +14,19 @@ from .action_authority import install_worker_authority_gate
 from .broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from .cognition import CognitiveIncrement
 from .models import utc_now
+from .output_contract import OutputContract
 from .route_policy_intake import infer_thread_route_policy, merge_route_policy
 from .steerable_work import WorkItem
+
+# Declared once, validated at import: a bad contract fails fast here instead
+# of after a wasted model call. The instruction text stays verbatim so
+# provider-side prompt caching can hit the static prefix.
+_ROOT_ACCEPTANCE_CONTRACT = OutputContract(
+    top_level_key="zn_root_acceptance",
+    shape_example='{"zn_root_acceptance":{"criteria":["observable criterion", "observable criterion"]}}',
+    required_keys=("criteria",),
+    field_types={"criteria": "list"},
+)
 from .structured_proposal import (
     looks_like_structured_payload,
     normalize_exact_json_payload,
@@ -166,8 +177,7 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
             "You are a bounded cognitive resource assisting one durable ZN Root Work. "
             "ZN owns lifecycle, tools, permissions, execution, evidence, steering, and completion. "
             f"{self._ROOT_ACCEPTANCE_MARKER} "
-            "Return ONLY one JSON object shaped exactly as "
-            '{"zn_root_acceptance":{"criteria":["observable criterion", "observable criterion"]}}. '
+            f"{_ROOT_ACCEPTANCE_CONTRACT.instruction()} "
             f"Provide {self._MIN_ROOT_CRITERIA}-{self._MAX_ROOT_CRITERIA} concise criteria. "
             "Each criterion must describe user-visible or independently observable success, not an implementation "
             "recipe, model/tool action, or claim that work is already done. Cover the requested runnable core "
@@ -301,13 +311,19 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         return None
 
     def _parse_root_acceptance(self, content: str) -> list[str] | None:
+        # Strict shape first (existing semantics); the declared contract's
+        # salvage is the fallback for models that wrap the JSON in prose.
         raw = parse_exact_json_payload(content)
-        if not isinstance(raw, dict) or set(raw) != {"zn_root_acceptance"}:
+        inner: object = None
+        if isinstance(raw, dict) and set(raw) == {"zn_root_acceptance"}:
+            inner = raw.get("zn_root_acceptance")
+        if inner is None:
+            inner = _ROOT_ACCEPTANCE_CONTRACT.extract(content)
+        if not isinstance(inner, dict) or set(inner) != {"criteria"}:
             return None
-        contract = raw.get("zn_root_acceptance")
-        if not isinstance(contract, dict) or set(contract) != {"criteria"}:
+        if _ROOT_ACCEPTANCE_CONTRACT.validate(inner):
             return None
-        raw_criteria = contract.get("criteria")
+        raw_criteria = inner.get("criteria")
         if not isinstance(raw_criteria, list):
             return None
         if not self._MIN_ROOT_CRITERIA <= len(raw_criteria) <= self._MAX_ROOT_CRITERIA:
