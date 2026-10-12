@@ -25,6 +25,8 @@ class _ModelWorker:
         self.factory.contexts.append(context)
         if self.factory.mode == "plain":
             response = "model answered through Resident Work"
+        elif self.factory.mode == "invalid_first" and len(self.factory.calls) == 1:
+            response = '{"zn_action_proposal":{"action_id":"missing.tool","arguments":{}}}'
         else:
             loop = context.get("generic_action_loop") if isinstance(context, dict) else {}
             history = loop.get("recent_verified_executions") if isinstance(loop, dict) else []
@@ -58,14 +60,18 @@ class _ModelFactory:
 class _Body:
     def __init__(self):
         self.calls = []
+        self.fail_next_read = False
 
     def act(self, kind, *, event_id=None, **kwargs):
         self.calls.append((kind, event_id, dict(kwargs)))
+        should_fail = self.fail_next_read
+        self.fail_next_read = False
         return BodyActionResult(
             action_id=f"body-{len(self.calls)}",
             kind=kind,
-            success=True,
-            data={"value": "fresh"},
+            success=not should_fail,
+            data={"value": "fresh"} if not should_fail else {"dispatch_sent": False},
+            error="transient read unavailable" if should_fail else None,
             event_id=event_id,
         )
 
@@ -254,6 +260,44 @@ class DaemonAgentRunRpcTests(unittest.TestCase):
                     if m.role in {"user", "zn"}
                 ]
                 self.assertEqual(roles, ["user", "zn"])
+            finally:
+                server.resident.store.close()
+
+    def test_model_led_repairs_unknown_tool_in_same_resident(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server, factory, body = _make_server(tmp, mode="invalid_first")
+            try:
+                result = server.handle({
+                    "id": "repair", "method": "agent_run",
+                    "params": {"task": "read the test value"},
+                })["result"]
+                self.assertTrue(result["completed"], result)
+                self.assertEqual(result["final_text"], "the fresh value was verified")
+                self.assertEqual(len(factory.calls), 3)
+                self.assertEqual(len(body.calls), 1)
+                self.assertIn(
+                    "unknown or non-executable",
+                    factory.contexts[1]["generic_action_loop"]["last_protocol_error"],
+                )
+            finally:
+                server.resident.store.close()
+
+    def test_model_led_recovers_failed_read_by_reasking_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server, factory, body = _make_server(tmp)
+            body.fail_next_read = True
+            try:
+                result = server.handle({
+                    "id": "read-recovery", "method": "agent_run",
+                    "params": {"task": "read the test value"},
+                })["result"]
+                self.assertTrue(result["completed"], result)
+                self.assertEqual(len(factory.calls), 3)
+                self.assertEqual(len(body.calls), 2)
+                failed = factory.contexts[1]["generic_action_loop"]["last_failure"]
+                self.assertEqual(failed["action_id"], "test.read")
+                self.assertFalse(failed["verified"])
+                self.assertIsNone(server.resident.investigator.current(result["work_event_id"]))
             finally:
                 server.resident.store.close()
 
