@@ -575,6 +575,15 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
             or f"Action Fabric execution failed: {action_id}"
         )
         state.data["local_failure"] = str(failure)[:1600]
+        if loop.get("model_led") is True and descriptor.effect_class == "read_only":
+            # A failed read cannot have dispatched an effect. Let the model
+            # choose a different observation/tool directly from fresh failure
+            # evidence, rather than returning ownership to a native planner.
+            state.stage = "model_led_prepare"
+            state.next_action = "reconsider read tool after verified failure"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._begin_model_led_event(event, state)
         self.investigator.reopen_after_external(
             event.event_id,
             f"Action Fabric execution failed after accepted cognition: {str(failure)[:900]}",
@@ -700,6 +709,14 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
                 ),
             )
 
+        if loop.get("model_led") is True:
+            # The existing bounded protocol-repair budget still applies; the
+            # model should correct its proposal from the same Work evidence.
+            state.stage = "model_led_prepare"
+            state.next_action = "repair rejected model tool proposal"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._begin_model_led_event(event, state)
         self.investigator.reopen_after_external(
             event.event_id,
             f"generic Action Fabric cognition was rejected: {str(reason)[:900]}",
