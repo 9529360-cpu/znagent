@@ -18,6 +18,12 @@ class CognitiveFailureDisposition:
 
     failure_class: str
     affects_route_health: bool
+    # Terminal failures (dead key, exhausted quota) will not recover without
+    # human action: the route should be disqualified immediately instead of
+    # burning retry attempts waiting for a consecutive-failure threshold.
+    # Transient failures (rate limit, overload, network) keep the existing
+    # threshold behavior.
+    terminal: bool = False
 
 
 _CONTENT_POLICY_PATTERNS = (
@@ -127,9 +133,10 @@ def classify_cognitive_failure(
         return CognitiveFailureDisposition("request_context_or_payload", False)
 
     # Billing/quota codes can arrive as 403 from some providers, so classify
-    # them before the generic authentication branch.
+    # them before the generic authentication branch. Both are terminal: the
+    # credential or account will not recover on retry.
     if status == 402 or _contains(searchable, _BILLING_PATTERNS):
-        return CognitiveFailureDisposition("billing_or_quota", True)
+        return CognitiveFailureDisposition("billing_or_quota", True, terminal=True)
 
     if status == 429:
         if _contains(searchable, _OVERLOADED_PATTERNS):
@@ -144,7 +151,9 @@ def classify_cognitive_failure(
         return CognitiveFailureDisposition("network_or_service", True)
 
     if status in {401, 403}:
-        return CognitiveFailureDisposition("authentication_or_authorization", True)
+        return CognitiveFailureDisposition(
+            "authentication_or_authorization", True, terminal=True
+        )
 
     if status == 404 and _contains(searchable, _MODEL_PATTERNS):
         return CognitiveFailureDisposition("configuration_or_route", True)

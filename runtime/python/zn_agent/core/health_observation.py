@@ -32,12 +32,19 @@ class ResidentHealthJournal:
         self.store = store
         self._init_schema()
 
+    # Bounded recent-outcome window ("1" = success, "0" = failure). Catches
+    # flapping routes that keep resetting the consecutive counter with an
+    # occasional success but fail most of the time.
+    _RECENT_WINDOW = 10
+    _MIN_WINDOW_SAMPLES = 5
+
     def record_failure(
         self,
         organ: str,
         error: BaseException,
         *,
         failure_class: str | None = None,
+        terminal: bool = False,
     ) -> dict[str, Any]:
         organ_name = self._organ(organ)
         exception_type = type(error).__name__[:128]
@@ -53,8 +60,8 @@ class ResidentHealthJournal:
                 INSERT INTO resident_health_observations(
                     organ,total_failures,consecutive_failures,repeat_fingerprint_failures,
                     first_failure_at,last_failure_at,last_success_at,last_exception_type,
-                    last_fingerprint,last_failure_class
-                ) VALUES(?,1,1,1,?,?,NULL,?,?,?)
+                    last_fingerprint,last_failure_class,terminal_failure_class,recent_results
+                ) VALUES(?,1,1,1,?,?,NULL,?,?,?,?, '0')
                 ON CONFLICT(organ) DO UPDATE SET
                     total_failures=total_failures+1,
                     consecutive_failures=consecutive_failures+1,
@@ -66,7 +73,15 @@ class ResidentHealthJournal:
                     last_failure_at=excluded.last_failure_at,
                     last_exception_type=excluded.last_exception_type,
                     last_fingerprint=excluded.last_fingerprint,
-                    last_failure_class=excluded.last_failure_class
+                    last_failure_class=excluded.last_failure_class,
+                    terminal_failure_class=CASE
+                        WHEN ? THEN excluded.last_failure_class
+                        ELSE resident_health_observations.terminal_failure_class
+                    END,
+                    recent_results=substr(
+                        resident_health_observations.recent_results || '0',
+                        -?
+                    )
                 """,
                 (
                     organ_name,
@@ -75,12 +90,15 @@ class ResidentHealthJournal:
                     exception_type,
                     fingerprint,
                     resolved_failure_class,
+                    resolved_failure_class if terminal else None,
+                    1 if terminal else 0,
+                    self._RECENT_WINDOW,
                 ),
             )
             row = conn.execute(
                 "SELECT organ,total_failures,consecutive_failures,repeat_fingerprint_failures,"
                 "first_failure_at,last_failure_at,last_success_at,last_exception_type,"
-                "last_fingerprint,last_failure_class "
+                "last_fingerprint,last_failure_class,terminal_failure_class,recent_results "
                 "FROM resident_health_observations WHERE organ=?",
                 (organ_name,),
             ).fetchone()
@@ -94,9 +112,11 @@ class ResidentHealthJournal:
         with closing(self._connect()) as conn:
             cursor = conn.execute(
                 "UPDATE resident_health_observations "
-                "SET consecutive_failures=0,repeat_fingerprint_failures=0,last_success_at=? "
+                "SET consecutive_failures=0,repeat_fingerprint_failures=0,"
+                "last_success_at=?,terminal_failure_class=NULL,"
+                "recent_results=substr(recent_results || '1', -?) "
                 "WHERE organ=?",
-                (now, organ_name),
+                (now, self._RECENT_WINDOW, organ_name),
             )
             conn.commit()
         if cursor.rowcount <= 0:
@@ -109,7 +129,7 @@ class ResidentHealthJournal:
             row = conn.execute(
                 "SELECT organ,total_failures,consecutive_failures,repeat_fingerprint_failures,"
                 "first_failure_at,last_failure_at,last_success_at,last_exception_type,"
-                "last_fingerprint,last_failure_class "
+                "last_fingerprint,last_failure_class,terminal_failure_class,recent_results "
                 "FROM resident_health_observations WHERE organ=?",
                 (organ_name,),
             ).fetchone()
@@ -121,7 +141,7 @@ class ResidentHealthJournal:
             rows = conn.execute(
                 "SELECT organ,total_failures,consecutive_failures,repeat_fingerprint_failures,"
                 "first_failure_at,last_failure_at,last_success_at,last_exception_type,"
-                "last_fingerprint,last_failure_class "
+                "last_fingerprint,last_failure_class,terminal_failure_class,recent_results "
                 "FROM resident_health_observations "
                 "ORDER BY consecutive_failures DESC,last_failure_at DESC,organ ASC LIMIT ?",
                 (bounded,),
@@ -142,10 +162,17 @@ class ResidentHealthJournal:
 
     @staticmethod
     def _snapshot(row: sqlite3.Row) -> dict[str, Any]:
+        keys = set(row.keys())
         consecutive = max(0, int(row["consecutive_failures"] or 0))
+        recent = str(row["recent_results"] or "") if "recent_results" in keys else ""
+        recent = "".join(c for c in recent if c in "01")
+        success_rate: float | None = None
+        if len(recent) >= ResidentHealthJournal._MIN_WINDOW_SAMPLES:
+            success_rate = recent.count("1") / len(recent)
+        terminal_class = row["terminal_failure_class"] if "terminal_failure_class" in keys else None
         return {
             "organ": str(row["organ"]),
-            "healthy": consecutive == 0,
+            "healthy": consecutive == 0 and not terminal_class,
             "total_failures": max(0, int(row["total_failures"] or 0)),
             "consecutive_failures": consecutive,
             "repeat_fingerprint_failures": max(
@@ -157,6 +184,11 @@ class ResidentHealthJournal:
             "last_exception_type": row["last_exception_type"],
             "last_fingerprint": row["last_fingerprint"],
             "last_failure_class": str(row["last_failure_class"] or "unknown"),
+            "terminal_failure_class": (
+                str(terminal_class) if terminal_class else None
+            ),
+            "recent_success_rate": success_rate,
+            "recent_window_samples": len(recent),
         }
 
     @staticmethod
@@ -227,6 +259,16 @@ class ResidentHealthJournal:
                 conn.execute(
                     "ALTER TABLE resident_health_observations "
                     "ADD COLUMN last_failure_class TEXT NOT NULL DEFAULT 'unknown'"
+                )
+            if "terminal_failure_class" not in columns:
+                conn.execute(
+                    "ALTER TABLE resident_health_observations "
+                    "ADD COLUMN terminal_failure_class TEXT"
+                )
+            if "recent_results" not in columns:
+                conn.execute(
+                    "ALTER TABLE resident_health_observations "
+                    "ADD COLUMN recent_results TEXT NOT NULL DEFAULT ''"
                 )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_resident_health_unhealthy "

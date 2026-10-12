@@ -117,6 +117,7 @@ class HealthAwareResidentRuntime(BrowserWorkResidentRuntime):
                 if disposition is not None
                 else None
             ),
+            terminal=bool(disposition is not None and disposition.terminal),
         )
 
     def _resolve_cognitive_resource_health(self, route: ModelRoute) -> dict[str, Any] | None:

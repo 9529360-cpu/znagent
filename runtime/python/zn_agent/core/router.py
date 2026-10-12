@@ -43,6 +43,9 @@ class ModelRouter:
     _DYNAMIC_HEALTH_FAILURE_THRESHOLD = 3
     _DYNAMIC_HEALTH_BASE_BACKOFF_SECONDS = 5.0
     _DYNAMIC_HEALTH_MAX_BACKOFF_SECONDS = 60.0
+    # Recent-window success-rate floor for flapping routes. Only consulted
+    # when the consecutive-failure threshold has not tripped.
+    _DYNAMIC_HEALTH_MIN_SUCCESS_RATE = 0.5
 
     def __init__(
         self,
@@ -241,6 +244,14 @@ class ModelRouter:
             return None
         if snapshot.get("available") is False:
             return "route dynamically unavailable from resident runtime evidence"
+        terminal_class = snapshot.get("terminal_failure_class")
+        if terminal_class:
+            # Dead credential / exhausted quota: no backoff, no half-open
+            # probe. A later real success clears the terminal mark.
+            return (
+                "route terminally failed "
+                f"({terminal_class}); excluded until a success is observed"
+            )
         if snapshot.get("healthy") is not False:
             return None
         try:
@@ -261,6 +272,24 @@ class ModelRouter:
         except (TypeError, ValueError):
             threshold = self._DYNAMIC_HEALTH_FAILURE_THRESHOLD
         if consecutive < threshold:
+            # Flapping guard: an occasional success resets the consecutive
+            # counter, but a route failing most recent attempts is still bad.
+            rate = snapshot.get("recent_success_rate")
+            if isinstance(rate, (int, float)):
+                try:
+                    floor = float(
+                        metadata.get(
+                            "health_min_success_rate",
+                            self._DYNAMIC_HEALTH_MIN_SUCCESS_RATE,
+                        )
+                    )
+                except (TypeError, ValueError):
+                    floor = self._DYNAMIC_HEALTH_MIN_SUCCESS_RATE
+                if 0.0 <= floor <= 1.0 and float(rate) < floor:
+                    return (
+                        "route recent success rate "
+                        f"{float(rate):.2f} below floor {floor:.2f}"
+                    )
             return None
         try:
             base_backoff = max(
