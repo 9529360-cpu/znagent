@@ -15,6 +15,7 @@ from .broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from .cognition import CognitiveIncrement
 from .models import utc_now
 from .route_policy_intake import infer_thread_route_policy, merge_route_policy
+from .skills import SkillStore
 from .steerable_work import WorkItem
 from .structured_proposal import (
     looks_like_structured_payload,
@@ -37,6 +38,9 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         # Keep the one existing Body object and its recovery-aware concrete type;
         # only its act admission boundary is decorated.
         install_worker_authority_gate(self.body, resident=self)
+        # Skill bundles are file-based domain knowledge (data, not authority).
+        # An absent skills directory binds nothing.
+        self._skill_store = SkillStore()
 
     def _bind_work_route_policy(self, event, request):
         """Persist Work privacy policy before any external cognition.
@@ -158,6 +162,7 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         request = self._bind_work_route_policy(event, request)
         request = bind_work_conversation_context(self.work_ledger, event, request)
         request = self.memory.bind_cognition_context(event, request)
+        request = self._skill_store.bind_cognition_context(event, request)
         root = self._autonomous_root_candidate(event)
         if root is None:
             return request
