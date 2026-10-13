@@ -20,12 +20,12 @@ second time. A later Root verifier remains a separate Work step.
 """
 
 from .action import NativeActionIntent
-from .broad_goal_coding_resident import BroadGoalCodingResidentRuntime
 from .cognition import CognitiveIncrement
 from .result_semantics import normalize_action_result
+from .team_work_resident import TeamWorkResidentRuntime
 
 
-class BroadGoalRecoverableCodingResidentRuntime(BroadGoalCodingResidentRuntime):
+class BroadGoalRecoverableCodingResidentRuntime(TeamWorkResidentRuntime):
     """Turn durable model completion into a non-terminal Broad Work increment."""
 
     _OBSERVED_COMMAND_RESULT_KIND = "broad_observed_command_result"

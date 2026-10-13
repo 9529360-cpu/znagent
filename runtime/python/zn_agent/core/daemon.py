@@ -16,6 +16,7 @@ from .provider_settings import ProviderSettingsService
 from .recovery_bounded_work import RecoveryBoundedWorkLedger
 from .recovery_control import ResidentRecoveryRequired
 from .service import ResidentService
+from .team_request import parse_team_request
 
 
 class ResidentRpcServer:
@@ -208,6 +209,19 @@ class ResidentRpcServer:
             payload = params.get("payload")
             if payload is not None and not isinstance(payload, dict):
                 raise ValueError("work_start payload must be an object")
+            payload = dict(payload or {})
+            # Team entry: a user sentence asking for a team becomes durable
+            # resident-owned ingress metadata (like work_plan_version), so
+            # the resident's team driver picks it up instead of the generic
+            # agent loop swallowing it as free text. A caller-supplied
+            # team_request is never trusted -- the parse owns it.
+            payload.pop("team_request", None)
+            team_request = parse_team_request(task)
+            if team_request is not None:
+                payload["team_request"] = {
+                    "project_title": team_request.project_title,
+                    "role_keys": list(team_request.role_keys),
+                }
             snapshot, event = self.work_control.start(
                 thread_id,
                 task,
