@@ -143,6 +143,31 @@ export type ZnProviderSettings = {
   routeCount?: number
 }
 
+export type ZnSuggestionKind =
+  | 'failed_work'
+  | 'interrupted_work'
+  | 'recurring_due'
+  | 'recurring_upcoming'
+  | 'routine'
+
+export type ZnSuggestionSource = {
+  type: 'work' | 'schedule' | 'memory'
+  label: string
+  threadId?: string
+  intentionId?: string
+  factKey?: string
+  nextDueAt?: string
+}
+
+export type ZnSuggestion = {
+  key: string
+  kind: ZnSuggestionKind
+  title: string
+  task: string
+  threadId: string | null
+  source: ZnSuggestionSource
+}
+
 export type ZnProviderSettingsUpdate = {
   provider: string
   model: string
@@ -633,6 +658,82 @@ export async function loadZnResidentSnapshot(): Promise<ZnResidentSnapshot> {
     resident.self().catch(() => null)
   ])
   return { status, self }
+}
+
+function suggestionKind(value: unknown): ZnSuggestionKind | null {
+  if (
+    value === 'failed_work' ||
+    value === 'interrupted_work' ||
+    value === 'recurring_due' ||
+    value === 'recurring_upcoming' ||
+    value === 'routine'
+  ) return value
+  return null
+}
+
+function normalizeSuggestion(value: unknown): ZnSuggestion | null {
+  const item = record(value)
+  if (!item) return null
+  const key = String(item.key || '').trim()
+  const kind = suggestionKind(item.kind)
+  const title = String(item.title || '').trim()
+  const task = String(item.task || '').trim()
+  if (!key || !kind || !title || !task) return null
+  const source = record(item.source)
+  if (!source) return null
+  const sourceType = source.type
+  if (sourceType !== 'work' && sourceType !== 'schedule' && sourceType !== 'memory') return null
+  const label = String(source.label || '').trim()
+  if (!label) return null
+  const threadIdRaw = item.thread_id ?? item.threadId
+  const threadId = typeof threadIdRaw === 'string' && threadIdRaw.trim() ? threadIdRaw.trim() : null
+  // A work-backed suggestion must name its existing thread: clicking it
+  // resumes that Work, it never starts an orphan task.
+  if (sourceType === 'work' && !threadId) return null
+  const intentionId = typeof source.intention_id === 'string' && source.intention_id.trim()
+    ? source.intention_id.trim()
+    : typeof source.intentionId === 'string' && source.intentionId.trim()
+      ? source.intentionId.trim()
+      : undefined
+  const factKey = typeof source.fact_key === 'string' && source.fact_key.trim()
+    ? source.fact_key.trim()
+    : typeof source.factKey === 'string' && source.factKey.trim()
+      ? source.factKey.trim()
+      : undefined
+  const nextDueAt = typeof source.next_due_at === 'string' && source.next_due_at.trim()
+    ? source.next_due_at.trim()
+    : typeof source.nextDueAt === 'string' && source.nextDueAt.trim()
+      ? source.nextDueAt.trim()
+      : undefined
+  return {
+    key,
+    kind,
+    title,
+    task,
+    threadId,
+    source: {
+      type: sourceType,
+      label,
+      ...(threadId ? { threadId } : {}),
+      ...(intentionId ? { intentionId } : {}),
+      ...(factKey ? { factKey } : {}),
+      ...(nextDueAt ? { nextDueAt } : {})
+    }
+  }
+}
+
+export async function loadZnSuggestions(): Promise<ZnSuggestion[]> {
+  const result = await desktop().resident.suggestionsList({ limit: 8 })
+  if (!Array.isArray(result)) throw new Error('Resident returned invalid suggestions')
+  return result
+    .map(normalizeSuggestion)
+    .filter((item): item is ZnSuggestion => Boolean(item))
+}
+
+export async function dismissZnSuggestion(key: string): Promise<void> {
+  const normalized = key.trim()
+  if (!normalized) throw new Error('Suggestion key is required')
+  await desktop().resident.suggestionsDismiss({ key: normalized })
 }
 
 export async function loadZnProviderSettings(): Promise<ZnProviderSettings> {
