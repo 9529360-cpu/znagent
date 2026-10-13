@@ -152,12 +152,22 @@ class VeteranMcpClient:
         state_root: Path,
         command: VeteranRuntimeCommand | None = None,
         timeout_seconds: float = 30.0,
+        initialize_timeout_seconds: float | None = None,
         max_response_chars: int = 4_000_000,
         max_stderr_chars: int = 32_000,
     ) -> None:
         self.state_root = Path(state_root).resolve()
         self.command = command or resolve_veteran_runtime_command()
         self.timeout_seconds = max(1.0, min(float(timeout_seconds), 300.0))
+        if initialize_timeout_seconds is None:
+            # Cold start (Node boot + module graph + first handshake) is
+            # legitimately slower than a warm tool call. Never let a small
+            # per-call budget starve the first handshake on a loaded host.
+            self.initialize_timeout_seconds = max(self.timeout_seconds, 60.0)
+        else:
+            self.initialize_timeout_seconds = max(
+                1.0, min(float(initialize_timeout_seconds), 300.0)
+            )
         self.max_response_chars = max(4_096, int(max_response_chars))
         self.max_stderr_chars = max(1_024, int(max_stderr_chars))
         self._process: subprocess.Popen[str] | None = None
@@ -237,7 +247,9 @@ class VeteranMcpClient:
         return self
 
     def _initialize(self) -> None:
-        initialized = self._request_raw("initialize", {})
+        initialized = self._request_raw(
+            "initialize", {}, timeout_seconds=self.initialize_timeout_seconds
+        )
         server_info = initialized.get("serverInfo")
         if (
             initialized.get("protocolVersion") != VETERAN_PROTOCOL_VERSION
@@ -248,7 +260,9 @@ class VeteranMcpClient:
             raise VeteranSidecarError(
                 f"unexpected Veteran handshake: {initialized!r}"
             )
-        listed = self._request_raw("tools/list", {})
+        listed = self._request_raw(
+            "tools/list", {}, timeout_seconds=self.initialize_timeout_seconds
+        )
         tools = listed.get("tools")
         if not isinstance(tools, list):
             self.close()
@@ -333,6 +347,8 @@ class VeteranMcpClient:
         self,
         method: str,
         params: Mapping[str, Any],
+        *,
+        timeout_seconds: float | None = None,
     ) -> dict[str, Any]:
         with self._request_lock:
             process = self._process
@@ -360,8 +376,9 @@ class VeteranMcpClient:
                     + self._stderr_suffix()
                 ) from exc
 
+            budget = self.timeout_seconds if timeout_seconds is None else timeout_seconds
             try:
-                line = self._stdout_queue.get(timeout=self.timeout_seconds)
+                line = self._stdout_queue.get(timeout=budget)
             except queue.Empty as exc:
                 raise VeteranSidecarError(
                     f"Veteran sidecar timed out waiting for {method}"

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import socket
 import sqlite3
@@ -11,13 +12,39 @@ import tempfile
 import threading
 import time
 import unittest
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 
 from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.resident_server import ResidentSocketService
 from zn_agent.core.service import ResidentService
+
+
+@contextmanager
+def _temporary_directory(*, cleanup_timeout: float = 10.0):
+    """Temporary directory whose cleanup tolerates Windows handle release lag.
+
+    A killed child process (or an on-access scanner) can still hold a file
+    handle for a moment after the child is reaped, so a single rmtree can
+    fail with WinError 32 / PermissionError. Retry briefly instead of
+    letting the cleanup race fail an otherwise green test.
+    """
+    path = Path(tempfile.mkdtemp())
+    try:
+        yield path
+    finally:
+        deadline = time.monotonic() + cleanup_timeout
+        while True:
+            try:
+                shutil.rmtree(path)
+                break
+            except FileNotFoundError:
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.2)
 
 
 class ResidentSocketServiceTests(unittest.TestCase):
@@ -94,7 +121,7 @@ class ResidentSocketServiceTests(unittest.TestCase):
         endpoint_path: Path,
         child: subprocess.Popen,
         *,
-        timeout: float = 10.0,
+        timeout: float = 60.0,
     ) -> dict:
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
@@ -354,7 +381,7 @@ class ResidentSocketServiceTests(unittest.TestCase):
                 resident.store.close()
 
     def test_idle_runtime_upgrade_keeps_same_home_self_and_work_history(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _temporary_directory() as tmp:
             home = Path(tmp) / "zn-home"
             endpoint_path = home / "kernel" / "resident-endpoint.json"
             store_path = home / "kernel" / "kernel.db"
@@ -463,7 +490,7 @@ class ResidentSocketServiceTests(unittest.TestCase):
 
     @unittest.skipIf(os.name == "nt", "POSIX SIGTERM lifecycle contract")
     def test_sigterm_releases_lease_and_endpoint_before_process_exit(self):
-        with tempfile.TemporaryDirectory() as tmp:
+        with _temporary_directory() as tmp:
             root = Path(tmp)
             home = root / "zn-home"
             endpoint_path = home / "kernel" / "resident-endpoint.json"
