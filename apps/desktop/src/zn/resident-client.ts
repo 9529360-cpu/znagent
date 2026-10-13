@@ -693,7 +693,9 @@ export async function startZnWork(
     task: normalized,
     kind: 'desktop_user_event',
     priority: 0,
-    payload: { execution_mode: executionMode }
+    // This is the real desktop Work entrypoint. Model decisions run inside
+    // the existing durable Resident loop; Body/Work/permissions stay ZN-owned.
+    payload: { agent_loop: true, execution_mode: executionMode }
   }))
   if (!result) throw new Error('Resident returned an invalid work start result')
   return {
