@@ -79,7 +79,13 @@ class VeteranClientLifecycleTests(unittest.TestCase):
                 if stream is not None:
                     stream.close()
 
-    def client(self, mode: str = "normal", *, timeout: float = 10.0):
+    def client(
+        self,
+        mode: str = "normal",
+        *,
+        timeout: float = 10.0,
+        initialize_timeout: float | None = None,
+    ):
         client = veteran.VeteranMcpClient(
             state_root=self.root / "state",
             command=veteran.VeteranRuntimeCommand(
@@ -88,6 +94,7 @@ class VeteranClientLifecycleTests(unittest.TestCase):
                 env={}, runtime_root=self.root,
             ),
             timeout_seconds=timeout,
+            initialize_timeout_seconds=initialize_timeout,
         )
         self.addCleanup(client.close)
         return client
@@ -102,7 +109,7 @@ class VeteranClientLifecycleTests(unittest.TestCase):
             self.assertTrue(all(stream.closed for stream in (process.stdin, process.stdout, process.stderr)))
 
     def test_initialize_timeout_reaps_child_when_context_entry_fails(self) -> None:
-        client = self.client("hang_initialize", timeout=2.0)
+        client = self.client("hang_initialize", timeout=2.0, initialize_timeout=2.0)
         with self.assertRaisesRegex(veteran.VeteranSidecarError, "timed out waiting for initialize"):
             with client:
                 self.fail("failed context entry must not run its body")
@@ -110,7 +117,7 @@ class VeteranClientLifecycleTests(unittest.TestCase):
         client.close()
 
     def test_tool_discovery_timeout_reaps_initialized_child(self) -> None:
-        client = self.client("hang_tools", timeout=2.0)
+        client = self.client("hang_tools", timeout=2.0, initialize_timeout=2.0)
         with self.assertRaisesRegex(veteran.VeteranSidecarError, "timed out waiting for tools/list"):
             client.start()
         self.assert_retired(client)
