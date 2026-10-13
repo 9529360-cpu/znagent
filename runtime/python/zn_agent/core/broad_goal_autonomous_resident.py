@@ -15,12 +15,14 @@ from .broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from .cognition import CognitiveIncrement
 from .models import utc_now
 from .route_policy_intake import infer_thread_route_policy, merge_route_policy
+from .skills import SkillStore
 from .steerable_work import WorkItem
 from .structured_proposal import (
     looks_like_structured_payload,
     normalize_exact_json_payload,
     parse_exact_json_payload,
 )
+from .team_work_owner import TeamWorkOwner
 from .work_conversation_context import bind_work_conversation_context
 
 
@@ -37,6 +39,9 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         # Keep the one existing Body object and its recovery-aware concrete type;
         # only its act admission boundary is decorated.
         install_worker_authority_gate(self.body, resident=self)
+        # Skill bundles are file-based domain knowledge (data, not authority).
+        # An absent skills directory binds nothing.
+        self._skill_store = SkillStore()
 
     def _bind_work_route_policy(self, event, request):
         """Persist Work privacy policy before any external cognition.
@@ -99,6 +104,13 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
 
     def _autonomous_root_candidate(self, event) -> WorkItem | None:
         payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
+        # Team events already carry their own acceptance contract (the plan
+        # items' acceptance criteria, driven by TeamRunner). They are not
+        # broad goals awaiting Root intake -- the autonomous layer must not
+        # overwrite the live specialist's cognition question with a
+        # Root-acceptance request.
+        if TeamWorkOwner.handles(event):
+            return None
         thread_id = str(payload.get("work_thread_id") or "").strip()
         item_id = str(payload.get("work_item_id") or "").strip()
         if not thread_id or not item_id or not payload.get("workspace_path"):
@@ -158,6 +170,7 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         request = self._bind_work_route_policy(event, request)
         request = bind_work_conversation_context(self.work_ledger, event, request)
         request = self.memory.bind_cognition_context(event, request)
+        request = self._skill_store.bind_cognition_context(event, request)
         root = self._autonomous_root_candidate(event)
         if root is None:
             return request

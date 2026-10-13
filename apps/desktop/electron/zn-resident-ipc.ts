@@ -166,6 +166,26 @@ export function registerZnResidentIpc(): void {
       clear_credential: payload?.clearCredential === true
     })
   })
+  // The browser renderer can only select a preapproved provider ID. It
+  // cannot specify a command, install packages, add tools or grant authority.
+  const approvedProviderId = (value: unknown): string => {
+    const providerId = String(value || '').trim()
+    if (!/^[a-z][a-z0-9_]{0,39}$/.test(providerId)) throw new Error('invalid approved MCP provider ID')
+    return providerId
+  }
+  handleZnDesktopIpc('zn:resident:mcp-capabilities', async () => {
+    return getZnResidentProcess().request('mcp_capabilities')
+  })
+  handleZnDesktopIpc('zn:resident:mcp-connect', async (_event, payload) => {
+    return getZnResidentProcess().request('mcp_connect', {
+      provider_id: approvedProviderId(payload?.providerId)
+    })
+  })
+  handleZnDesktopIpc('zn:resident:mcp-disconnect', async (_event, payload) => {
+    return getZnResidentProcess().request('mcp_disconnect', {
+      provider_id: approvedProviderId(payload?.providerId)
+    })
+  })
   handleZnDesktopIpc('zn:resident:work-list', async (_event, payload) => {
     return getZnResidentProcess().request('work_list', {
       limit: Number(payload?.limit || 24),
