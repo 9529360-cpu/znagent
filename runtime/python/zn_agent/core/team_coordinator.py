@@ -63,8 +63,15 @@ class TeamCoordinator:
         self,
         ledger: TeamLedger,
         runs: Mapping[str, Any] | None = None,
+        id_map: Mapping[str, str] | None = None,
     ) -> list[CoordinatorDecision]:
-        """Compute the next decisions for the team, in plan order."""
+        """Compute the next decisions for the team, in plan order.
+
+        ``id_map`` translates plan item ids to real WorkItem ids when the
+        ledger owns identity (``create_child_item`` generates its own ids).
+        When omitted, plan item ids are used directly (synthetic ledgers).
+        ``runs`` is keyed by the same ids the items are looked up with.
+        """
         runs = runs or {}
         thread_id = self.team.work_thread_id or ""
         items = {item.work_item_id: item for item in ledger.list_work_items(thread_id)}
@@ -72,7 +79,12 @@ class TeamCoordinator:
         all_completed = True
 
         for plan_item in self.team.plan:
-            item = items.get(plan_item.item_id)
+            lookup_id = (
+                id_map.get(plan_item.item_id, plan_item.item_id)
+                if id_map
+                else plan_item.item_id
+            )
+            item = items.get(lookup_id)
             if item is None:
                 decisions.append(
                     self._journaled(
@@ -126,7 +138,10 @@ class TeamCoordinator:
                     )
                 )
                 continue
-            if run is None and item.status in ("proposed", "ready"):
+            if run is None and item.status in ("proposed", "ready", "running"):
+                # "running" with no WorkerRun means created but never given
+                # to an executor -- the real ledger creates plan children as
+                # "running", so this is the normal first-dispatch case.
                 decisions.append(self._dispatch(item, plan_item))
                 continue
             # Running but healthy, or an unexpected state: leave it alone.

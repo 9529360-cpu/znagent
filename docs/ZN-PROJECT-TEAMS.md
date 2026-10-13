@@ -53,6 +53,14 @@
   facts 表零 schema 改动；解散时按 `team:{team_id}:` 前缀删干净）与项目复盘
   （`distill_retrospective` 按 journal kind 确定性提炼决定/阻塞/交接为经验，
   `save_retrospective` 存入团队共享命名空间）。
+- **Slice 4**（已实现）：纵向闭环——`team_runner.py`。resident 侧的执行器，
+  把 coordinator 的决策真正作用到 Work ledger 上：`ensure_plan_items`
+  按依赖拓扑建 WorkItem（plan→work id 映射落盘，重启不重复建）；
+  `dispatch`→`start_worker_run`，`verify`→注入的 `Verifier` 做 fresh
+  observation 后 `record_worker_verification`，`complete`→`complete_child_item`，
+  `escalate`→上报用户，`team_complete`→提炼复盘并保存（永不自动解散）。
+  另给 `ResidentWorkLedger` 加了公开的 `append_message`（journal 写入口）。
+  `test_team_runner.py` 用真实 ledger 跑通组建→派活→验收→完成→复盘全链路。
 
 ## 与外部产品的差异
 
