@@ -21,6 +21,7 @@ from .structured_proposal import (
     normalize_exact_json_payload,
     parse_exact_json_payload,
 )
+from .team_work_owner import TeamWorkOwner
 from .work_conversation_context import bind_work_conversation_context
 
 
@@ -99,6 +100,13 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
 
     def _autonomous_root_candidate(self, event) -> WorkItem | None:
         payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
+        # Team events already carry their own acceptance contract (the plan
+        # items' acceptance criteria, driven by TeamRunner). They are not
+        # broad goals awaiting Root intake -- the autonomous layer must not
+        # overwrite the live specialist's cognition question with a
+        # Root-acceptance request.
+        if TeamWorkOwner.handles(event):
+            return None
         thread_id = str(payload.get("work_thread_id") or "").strip()
         item_id = str(payload.get("work_item_id") or "").strip()
         if not thread_id or not item_id or not payload.get("workspace_path"):
