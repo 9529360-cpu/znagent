@@ -2,6 +2,7 @@ from __future__ import annotations
 
 """Read-only discovery for local inference runtimes already supported by ZN."""
 
+import ipaddress
 import json
 from dataclasses import dataclass
 from typing import Any, Callable
@@ -13,6 +14,19 @@ from .models import ModelRoute, utc_now
 
 
 ModelsProbe = Callable[[str, str], tuple[str, ...] | None]
+
+
+def _is_loopback_base_url(value: str) -> bool:
+    parsed = urlparse(str(value or ""))
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        return False
+    hostname = parsed.hostname.casefold()
+    if hostname == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(hostname).is_loopback
+    except ValueError:
+        return False
 
 
 _RUNTIME_SPECS = (
@@ -89,12 +103,7 @@ class LocalInferenceRuntimeDiscovery:
         configured_base = str(
             (route.metadata or {}).get("base_url") or spec[1]
         ).strip()
-        parsed = urlparse(configured_base)
-        if (
-            parsed.scheme not in {"http", "https"}
-            or (parsed.hostname or "").casefold()
-            not in {"127.0.0.1", "localhost", "::1"}
-        ):
+        if not _is_loopback_base_url(configured_base):
             return None
 
         try:
@@ -189,12 +198,7 @@ def _probe_openai_models(
 ) -> tuple[str, ...] | None:
     """Return bounded model ids, or None when the loopback server is unavailable."""
 
-    parsed = urlparse(str(base_url or ""))
-    if (
-        parsed.scheme not in {"http", "https"}
-        or (parsed.hostname or "").casefold()
-        not in {"127.0.0.1", "localhost", "::1"}
-    ):
+    if not _is_loopback_base_url(base_url):
         return None
     endpoint = str(base_url).rstrip("/") + "/models"
     request = Request(endpoint, headers={"Accept": "application/json"})
