@@ -45,8 +45,9 @@
 
 - **Slice 1（本分支）**：数据模型 + journal 消息格式 + 组建逻辑 + 到 WorkItem 的映射。
   纯加法：一个新模块、一个测试文件，不动任何现有文件。
-- **Slice 2**：coordinator loop——按 `DependencyReadiness` 派活、读 journal 调度、
-  验收交接、blocked 升级。只接现有 Work/WorkerRun 接口。
+- **Slice 2**（已实现）：coordinator loop——`team_coordinator.py`，按 `DependencyReadiness`
+  做 dispatch/verify/escalate/wait/complete/team_complete 决策，resident 负责执行；
+  解散永不自动，只上报完成等用户指令。只接现有 Work/WorkerRun 接口。
 - **Slice 3**：成员长期记忆（project-scoped remember/recall）与项目复盘
  （把 journal 沉淀为可复用的团队经验）。
 
