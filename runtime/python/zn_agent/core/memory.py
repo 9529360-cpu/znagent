@@ -13,6 +13,14 @@ if TYPE_CHECKING:
 
 
 MAX_MEMORY_CONTEXT_BYTES = 8192
+
+# Supersession: a new fact that is topically close to an existing fact with
+# a near-identical value updates the old key instead of stacking a second
+# retrieval path. Thresholds are tuned for short key+value facts (bigram
+# jaccard underestimates short texts); merging is near-harmless because the
+# values agree and the superseded key is kept as an alias.
+_SUPERSESSION_FULL_THRESHOLD = 0.45
+_SUPERSESSION_VALUE_THRESHOLD = 0.8
 # Only explicitly saved presentation preferences are ambient context. Other
 # preferences/facts still require a relevant saved key or alias. No key here
 # represents tool permission, route policy, credentials, or execution authority.
@@ -32,6 +40,22 @@ _RESPONSE_PREFERENCE_KEYS = {
     "reply verbosity": "verbosity",
     "\u56de\u7b54\u8be6\u7ec6\u7a0b\u5ea6": "verbosity",
 }
+
+
+def _bigrams(text: str) -> set[str]:
+    """Character bigrams. CJK-aware without a segmenter: Chinese text has no
+    word boundaries, but bigrams still capture local similarity."""
+    if len(text) < 2:
+        return {text} if text else set()
+    return {text[i : i + 2] for i in range(len(text) - 1)}
+
+
+def _jaccard(left: set[str], right: set[str]) -> float:
+    if not left and not right:
+        return 1.0
+    if not left or not right:
+        return 0.0
+    return len(left & right) / len(left | right)
 
 
 def _context_size(value: dict[str, Any]) -> int:
@@ -62,7 +86,62 @@ class StructuredMemory:
         self.store = store
 
     def remember(self, key: str, value: Any, *, aliases: tuple[str, ...] = ()) -> None:
+        target = self._supersession_target(key, value)
+        if target is not None and target != str(key or "").strip():
+            # Near-duplicate of an existing fact: update it in place (union
+            # aliases) instead of stacking a second retrieval path.
+            existing = next(
+                (f for f in self.store.list_facts() if f["key"] == target), None
+            )
+            merged_aliases = list(aliases)
+            new_key = str(key or "").strip()
+            if new_key and new_key not in merged_aliases:
+                merged_aliases.append(new_key)
+            if existing is not None:
+                for alias in existing["aliases"]:
+                    if alias not in merged_aliases:
+                        merged_aliases.append(alias)
+            self.store.put_fact(target, value, aliases=tuple(merged_aliases))
+            return
         self.store.put_fact(key, value, aliases=aliases)
+
+    def _supersession_target(self, key: str, value: Any) -> str | None:
+        """Return the existing key a new fact should supersede, if any."""
+        candidate_full = self._similarity_text(key, value)
+        candidate_value = self._similarity_value(value)
+        if not candidate_full:
+            return None
+        candidate_bigrams = _bigrams(candidate_full)
+        candidate_value_bigrams = _bigrams(candidate_value)
+        best_key: str | None = None
+        best_score = 0.0
+        for fact in self.store.list_facts():
+            other_full = self._similarity_text(fact["key"], fact["value"])
+            if not other_full:
+                continue
+            full = _jaccard(candidate_bigrams, _bigrams(other_full))
+            val = _jaccard(
+                candidate_value_bigrams,
+                _bigrams(self._similarity_value(fact["value"])),
+            )
+            if (
+                full >= _SUPERSESSION_FULL_THRESHOLD
+                and val >= _SUPERSESSION_VALUE_THRESHOLD
+                and full > best_score
+            ):
+                best_score = full
+                best_key = fact["key"]
+        return best_key
+
+    def _similarity_text(self, key: str, value: Any) -> str:
+        return self._normalize(f"{key} {self._similarity_value(value)}")
+
+    def _similarity_value(self, value: Any) -> str:
+        try:
+            value_text = json.dumps(value, ensure_ascii=False, sort_keys=True)
+        except (TypeError, ValueError):
+            value_text = str(value)
+        return self._normalize(value_text)
 
     def forget(self, key: str) -> None:
         self.store.delete_fact(key)
