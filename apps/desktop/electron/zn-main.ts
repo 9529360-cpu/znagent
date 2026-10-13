@@ -216,19 +216,22 @@ function routeNavigation(value: string): void {
 }
 
 export function createZnDesktopWindow(): BrowserWindow {
+  // First launch opens the full workbench (expanded). Compact is a
+  // quick-capture affordance for tray / global-shortcut invocation,
+  // not the product's first impression.
   const window = new BrowserWindow({
     title: 'ZN',
-    width: ZN_WINDOW_BOUNDS.compact.width,
-    height: ZN_WINDOW_BOUNDS.compact.height,
+    width: ZN_WINDOW_BOUNDS.expanded.width,
+    height: ZN_WINDOW_BOUNDS.expanded.height,
     minWidth: 420,
     minHeight: 480,
     show: false,
-    backgroundColor: '#ffffff',
+    backgroundColor: '#0a0e18',
     backgroundMaterial: 'mica',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#ffffff',
-      symbolColor: '#747780',
+      color: '#0a0e18',
+      symbolColor: '#8994aa',
       height: 62
     },
     roundedCorners: true,
