@@ -19,7 +19,10 @@ from .browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserTargetQuery,
+    BrowserTargetQueryKind,
 )
+from .browser_semantic_action import execute_fresh_semantic_action
 from .continuity import ContinuitySnapshotService, compare_continuity_snapshots
 from .continuity_atomic_recovery import (
     atomic_overwrite_recovery_snapshot,
@@ -154,6 +157,15 @@ class _ResidentManagedBrowser:
             lambda: self._browser.observe_target(session_id, query, page_id=page_id)
         )
 
+    def read_page(self, session_id: str, *, page_id: str = ""):
+        reader = getattr(self._browser, "read_page", None)
+        if not callable(reader):
+            raise RuntimeError(
+                f"browser provider {getattr(self._browser, 'name', '<unknown>')} "
+                "does not support readable page evidence"
+            )
+        return self._owner.call(lambda: reader(session_id, page_id=page_id))
+
     def act(self, action, authority):
         return self._owner.call(lambda: self._browser.act(action, authority))
 
@@ -252,10 +264,21 @@ class BrowserResidentRpcServer(ResidentRpcServer):
 
         if method == "browser_open":
             permission = self._permission_from_params(params.get("permission"))
-            session = browser.open_session(
-                permission=permission,
-                headless=bool(params.get("headless", True)),
+            required_target_queries = self._required_target_queries_from_params(
+                params.get("required_target_queries")
             )
+            headless = bool(params.get("headless", True))
+            if required_target_queries:
+                session = browser.open_session_for_requirements(
+                    permission=permission,
+                    headless=headless,
+                    required_target_queries=required_target_queries,
+                )
+            else:
+                session = browser.open_session(
+                    permission=permission,
+                    headless=headless,
+                )
             with self._browser_permissions_lock:
                 self._browser_permissions[session.session_id] = permission
             result = _jsonable(asdict(session))
@@ -267,6 +290,58 @@ class BrowserResidentRpcServer(ResidentRpcServer):
                 page_id=str(params.get("page_id") or "").strip(),
             )
             result = _jsonable(asdict(observation))
+        elif method == "browser_read_page":
+            session_id = self._session_id(params, method)
+            self._require_known_session(session_id)
+            result = _jsonable(
+                browser.read_page(
+                    session_id,
+                    page_id=str(params.get("page_id") or "").strip(),
+                )
+            )
+        elif method == "browser_observe_target":
+            session_id = self._session_id(params, method)
+            self._require_known_session(session_id)
+            query = self._target_query_from_params(params.get("query"), method)
+            observation = browser.observe_target(
+                session_id,
+                query,
+                page_id=str(params.get("page_id") or "").strip(),
+            )
+            result = _jsonable(asdict(observation))
+        elif method == "browser_semantic_action":
+            session_id = self._session_id(params, method)
+            permission = self._require_known_session(session_id)
+            query = self._target_query_from_params(params.get("query"), method)
+            kind = self._semantic_action_kind_from_params(params.get("kind"), query)
+            args = self._object_param(params.get("args"), "browser_semantic_action args")
+            expected = self._object_param(
+                params.get("expected"),
+                "browser_semantic_action expected",
+            )
+            page_id = str(params.get("page_id") or "").strip()
+
+            def semantic_action() -> Any:
+                current = browser.observe(session_id, page_id=page_id)
+                outcome = execute_fresh_semantic_action(
+                    browser,
+                    session_id=session_id,
+                    permission=permission,
+                    query=query,
+                    kind=kind,
+                    page_id=page_id or current.page_id,
+                    args=args,
+                    expected=expected,
+                    expected_url_before=current.url,
+                    max_regrounds=1,
+                )
+                return {
+                    "observation": asdict(outcome.observation),
+                    "effect": asdict(outcome.effect),
+                    "regrounds": outcome.regrounds,
+                }
+
+            result = _jsonable(self._browser_owner.call(semantic_action))
         elif method == "browser_navigate":
             session_id = self._session_id(params, method)
             permission = self._require_known_session(session_id)
@@ -305,6 +380,85 @@ class BrowserResidentRpcServer(ResidentRpcServer):
             raise ValueError(f"unknown method: {method}")
 
         return {"id": request_id, "ok": True, "result": result}
+
+    @staticmethod
+    def _object_param(raw: Any, label: str) -> dict[str, Any]:
+        if raw is None:
+            return {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"{label} must be an object")
+        return dict(raw)
+
+    @staticmethod
+    def _target_query_kind(raw: Any, label: str) -> BrowserTargetQueryKind:
+        value = str(raw or "").strip()
+        if not value:
+            raise ValueError(f"{label} requires kind")
+        try:
+            return BrowserTargetQueryKind(value)
+        except ValueError as exc:
+            raise ValueError(f"unsupported browser target query kind: {value}") from exc
+
+    @classmethod
+    def _target_query_from_params(
+        cls,
+        raw: Any,
+        method: str,
+    ) -> BrowserTargetQuery:
+        if not isinstance(raw, dict):
+            raise ValueError(f"{method} requires query object")
+        kind = cls._target_query_kind(raw.get("kind"), f"{method} query")
+        return BrowserTargetQuery(
+            kind=kind,
+            value=str(raw.get("value") or ""),
+            frame_id=str(raw.get("frame_id") or "main"),
+        )
+
+    @classmethod
+    def _required_target_queries_from_params(
+        cls,
+        raw: Any,
+    ) -> tuple[BrowserTargetQueryKind, ...]:
+        if raw is None:
+            return ()
+        if not isinstance(raw, list):
+            raise ValueError("browser_open required_target_queries must be a list")
+        rows: list[BrowserTargetQueryKind] = []
+        for item in raw:
+            kind = cls._target_query_kind(
+                item,
+                "browser_open required_target_queries",
+            )
+            if kind not in rows:
+                rows.append(kind)
+        return tuple(rows)
+
+    @staticmethod
+    def _semantic_action_kind_from_params(
+        raw: Any,
+        query: BrowserTargetQuery,
+    ) -> BrowserActionKind:
+        value = str(raw or "").strip()
+        try:
+            kind = BrowserActionKind(value)
+        except ValueError as exc:
+            raise ValueError(f"unsupported browser semantic action kind: {value}") from exc
+        required_query = {
+            BrowserActionKind.TYPE_TEXT: BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
+            BrowserActionKind.CLICK: BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
+            BrowserActionKind.CHECK: BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
+            BrowserActionKind.UNCHECK: BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
+        }.get(kind)
+        if required_query is None:
+            raise ValueError(
+                "browser_semantic_action supports only type_text, click, check and uncheck"
+            )
+        if query.kind is not required_query:
+            raise ValueError(
+                f"browser semantic action {kind.value} requires query kind "
+                f"{required_query.value}"
+            )
+        return kind
 
     @staticmethod
     def _session_id(params: dict[str, Any], method: str) -> str:

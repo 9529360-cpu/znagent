@@ -146,6 +146,55 @@ class StructuredMemory:
     def forget(self, key: str) -> None:
         self.store.delete_fact(key)
 
+    def consolidate(self) -> dict[str, Any]:
+        """Merge facts that claim the same normalized alias.
+
+        Two different keys sharing an alias create retrieval ambiguity: one
+        cue injects both facts and wastes budget. Consolidation keeps the most
+        recently updated fact, unions all aliases onto it, and deletes the
+        losers. Values are never merged — the winner's value (latest user
+        intent) stands.
+
+        Returns a report: {"merged": [{"kept": key, "removed": [...],
+        "alias": alias}], "fact_count": n}.
+        """
+        facts = self.store.list_facts()
+        # alias -> list of fact keys claiming it (normalized, non-empty).
+        claimants: dict[str, list[str]] = {}
+        for fact in facts:
+            seen: set[str] = set()
+            for alias in (fact["key"], *fact["aliases"]):
+                normalized = self._normalize(alias)
+                if not normalized or normalized in seen:
+                    continue
+                seen.add(normalized)
+                claimants.setdefault(normalized, []).append(fact["key"])
+        by_key = {fact["key"]: fact for fact in facts}
+        merged: list[dict[str, Any]] = []
+        removed: set[str] = set()
+        for alias, keys in sorted(claimants.items()):
+            live = [key for key in keys if key not in removed]
+            if len(live) < 2:
+                continue
+            # Most recently updated wins; key order breaks ties.
+            live.sort(key=lambda k: (str(by_key[k]["updated_at"] or ""), k))
+            kept, losers = live[-1], live[:-1]
+            union: list[str] = []
+            for key in live:
+                for alias_text in (by_key[key]["key"], *by_key[key]["aliases"]):
+                    text = str(alias_text or "").strip()
+                    if text and text not in union:
+                        union.append(text)
+            # The fact's own key stays the key; the rest become aliases.
+            union = [a for a in union if a != kept]
+            winner = by_key[kept]
+            self.store.put_fact(kept, winner["value"], aliases=tuple(union))
+            for loser in losers:
+                self.store.delete_fact(loser)
+                removed.add(loser)
+            merged.append({"kept": kept, "removed": losers, "alias": alias})
+        return {"merged": merged, "fact_count": len(facts) - len(removed)}
+
     def recall(self, query: str) -> FactMatch | None:
         normalized = self._normalize(query)
         if not normalized:
