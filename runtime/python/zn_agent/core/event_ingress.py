@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-"""Idempotent ingress for durable external resident percepts.
+"""Idempotent ingress for durable resident percepts and handoffs.
 
-External organs may need restart-safe event identity before a route/checkpoint is
-persisted. This helper derives/stores an explicit AgentEvent without creating a
-second task system. Existing resident events are never replaced or re-queued.
+Resident-owned organs may need restart-safe event identity before a related
+route/checkpoint is persisted. This helper derives/stores an explicit
+``AgentEvent`` without creating a second task system. Existing resident events
+are never replaced or re-queued.
 """
 
 import hashlib
@@ -35,6 +36,7 @@ def enqueue_event_once(
     event_id: str,
     task: str,
     kind: str,
+    priority: int = 0,
     payload: Mapping[str, Any] | None = None,
 ) -> IngressResult:
     """Insert one durable resident event unless that exact id already exists."""
@@ -48,6 +50,7 @@ def enqueue_event_once(
         event_id=key,
         task=str(task or ""),
         kind=str(kind or "interactive"),
+        priority=int(priority),
         payload=dict(payload or {}),
     )
     resident.store.enqueue_event(event)

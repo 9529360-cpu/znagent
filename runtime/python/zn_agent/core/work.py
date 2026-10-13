@@ -385,6 +385,38 @@ class ResidentWorkLedger:
             ).fetchall()
         return [self._thread_from_row(row) for row in rows]
 
+    def append_message(
+        self,
+        thread_id: str,
+        *,
+        role: str,
+        text: str,
+        detail: dict[str, Any] | None = None,
+    ) -> WorkMessage:
+        """Append one message to a thread. Used for team journal entries.
+
+        Role carries routing (e.g. ``team:{team_id}:{author}``); the schema
+        is untouched. Unlike ``submit`` this does not start a resident run.
+        """
+        normalized_role = str(role or "").strip()
+        normalized_text = str(text or "").strip()
+        if not normalized_role:
+            raise ValueError("message role must not be empty")
+        if not normalized_text:
+            raise ValueError("message text must not be empty")
+        thread = self.get_thread(thread_id)
+        if thread is None:
+            raise ValueError(f"unknown work thread: {thread_id!r}")
+        message = WorkMessage(
+            message_id=_id("msg"),
+            thread_id=thread.thread_id,
+            role=normalized_role,
+            text=normalized_text,
+            detail=dict(detail or {}),
+        )
+        self._append(thread, message)
+        return message
+
     def list_messages(self, thread_id: str, *, limit: int = 120) -> list[WorkMessage]:
         normalized_id = self._normalize_thread_id(thread_id)
         bounded = max(1, min(500, int(limit)))
