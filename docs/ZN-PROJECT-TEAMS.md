@@ -48,8 +48,11 @@
 - **Slice 2**（已实现）：coordinator loop——`team_coordinator.py`，按 `DependencyReadiness`
   做 dispatch/verify/escalate/wait/complete/team_complete 决策，resident 负责执行；
   解散永不自动，只上报完成等用户指令。只接现有 Work/WorkerRun 接口。
-- **Slice 3**：成员长期记忆（project-scoped remember/recall）与项目复盘
- （把 journal 沉淀为可复用的团队经验）。
+- **Slice 3**（已实现）：成员长期记忆（`team_memory.py`——`TeamMemory`
+  按 `team:{team_id}:{name}:` 前缀隔离 remember/recall/forget，复用现有
+  facts 表零 schema 改动；解散时按 `team:{team_id}:` 前缀删干净）与项目复盘
+  （`distill_retrospective` 按 journal kind 确定性提炼决定/阻塞/交接为经验，
+  `save_retrospective` 存入团队共享命名空间）。
 
 ## 与外部产品的差异
 
