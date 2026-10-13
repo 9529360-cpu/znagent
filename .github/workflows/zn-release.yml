@@ -38,7 +38,7 @@ jobs:
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
@@ -59,13 +59,13 @@ jobs:
           Write-Host "ZN release packaging runner: $env:RUNNER_NAME session=$sessionId"
 
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22.22.0'
           cache: npm
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: '0.11.6'
           enable-cache: true
@@ -151,7 +151,7 @@ jobs:
         run: node apps/desktop/scripts/write-zn-release-manifest.mjs windows $env:ZN_RELEASE_VERSION_RESOLVED $env:ZN_RELEASE_TAG
 
       - name: Upload packaged Windows artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: zn-desktop-windows
           if-no-files-found: error
@@ -180,18 +180,18 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 
       - name: Set up Node
-        uses: actions/setup-node@v7
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22.22.0'
           cache: npm
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: '0.11.6'
           enable-cache: true
@@ -247,7 +247,7 @@ jobs:
         run: node apps/desktop/scripts/write-zn-release-manifest.mjs ${{ matrix.manifest_platform }} "${{ steps.version.outputs.version }}" "${{ steps.version.outputs.tag }}"
 
       - name: Upload dormant platform artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: zn-desktop-${{ matrix.manifest_platform }}
           if-no-files-found: error
@@ -270,7 +270,7 @@ jobs:
       statuses: write
     steps:
       - name: Publish package verification status
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const result = '${{ needs.package-windows.result }}'
@@ -299,13 +299,13 @@ jobs:
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
     steps:
       - name: Checkout release source
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
 
       - name: Download Windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: zn-desktop-windows
           path: dist
@@ -325,7 +325,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "update-channel signing failed with exit code $LASTEXITCODE" }
 
       - name: Upload public-channel audit artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: zn-public-channel-${{ github.ref_name }}
           if-no-files-found: error

@@ -62,6 +62,21 @@ class FirecrawlWebResourceTests(unittest.TestCase):
         self.assertEqual(call["json"]["limit"], 4)
         self.assertEqual(call["headers"]["Authorization"], "Bearer key")
 
+    def test_firecrawl_api_endpoint_requires_tls_except_loopback(self):
+        self.assertEqual(
+            FirecrawlWebResource(api_url="http://localhost:3002").api_url,
+            "http://localhost:3002",
+        )
+        with self.assertRaisesRegex(ValueError, "must use HTTPS"):
+            FirecrawlWebResource(
+                api_key="must-not-be-sent",
+                api_url="http://firecrawl.example",
+            )
+        with self.assertRaisesRegex(ValueError, "embedded credentials"):
+            FirecrawlWebResource(
+                api_url="https://user:password@firecrawl.example",
+            )
+
     def test_keyless_firecrawl_sends_no_authorization_header(self):
         client = _Client([_Response({"success": True, "data": []})])
         resource = FirecrawlWebResource(client=client)

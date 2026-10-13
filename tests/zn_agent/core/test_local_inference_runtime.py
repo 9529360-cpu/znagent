@@ -90,12 +90,17 @@ class LocalInferenceRuntimeDiscoveryTests(unittest.TestCase):
         self.assertFalse(snapshot.hardware.battery_saver)
 
     def test_probe_never_calls_non_loopback_endpoint(self) -> None:
-        self.assertIsNone(
-            _probe_openai_models(
-                "custom",
-                "https://example.com/v1",
-            )
-        )
+        for base_url in (
+            "https://example.com/v1",
+            "http://0.0.0.0:11434/v1",
+        ):
+            with self.subTest(base_url=base_url):
+                self.assertIsNone(
+                    _probe_openai_models(
+                        "custom",
+                        base_url,
+                    )
+                )
 
     def test_usable_provider_requires_reachable_endpoint_and_model(self) -> None:
         snapshot = LocalInferenceRuntimeDiscovery(
@@ -157,6 +162,27 @@ class LocalInferenceRuntimeDiscoveryTests(unittest.TestCase):
 
         self.assertTrue(result["available"])
         self.assertEqual(calls, [("ollama", "http://localhost:16666/v1")])
+
+    def test_route_health_accepts_full_ipv4_loopback_range(self) -> None:
+        calls = []
+        discovery = LocalInferenceRuntimeDiscovery(
+            _Graph(),
+            models_probe=lambda provider, base_url: (
+                calls.append((provider, base_url)) or ("qwen-test:latest",)
+            ),
+        )
+        result = discovery.route_health(
+            ModelRoute(
+                route_id="local-alt-loopback",
+                provider="ollama",
+                model="qwen-test:latest",
+                capabilities={"general": 0.8},
+                metadata={"base_url": "http://127.0.0.2:16666/v1"},
+            )
+        )
+
+        self.assertTrue(result["available"])
+        self.assertEqual(calls, [("ollama", "http://127.0.0.2:16666/v1")])
 
     def test_route_health_ignores_non_loopback_ollama_route(self) -> None:
         discovery = LocalInferenceRuntimeDiscovery(

@@ -388,6 +388,15 @@ class ResidentSocketService:
             self.channels.stop()
             self._stop_visual_loop()
             self.rpc._stop_life_loop()
+            # The reconnectable socket service is the actual desktop Resident
+            # process owner. Its fatal/SIGTERM path bypasses RPC "shutdown":
+            # release approved MCP child processes before retiring the lease.
+            try:
+                self.rpc.mcp_capabilities.close()
+            except Exception:
+                # A failed external process cleanup must not strand the
+                # Resident endpoint or lease; process exit remains the limit.
+                pass
             self._close_managed_browser()
             self.rpc.service.release()
             try:

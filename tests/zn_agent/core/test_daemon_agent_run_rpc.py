@@ -4,187 +4,357 @@ import io
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from types import SimpleNamespace
 
+from zn_agent.core import KernelStore, ModelRoute, WorkerResult, ZNKernelRuntime
+from zn_agent.core.action_execution import ActionExecutionRuntime
+from zn_agent.core.action_fabric import ActionAvailability, ActionDescriptor, ActionFabricRegistry
+from zn_agent.core.body import BodyActionResult
 from zn_agent.core.daemon import ResidentRpcServer
-from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
+from zn_agent.core.research_information_product_resident import ProductResearchInformationResidentRuntime
 
 
-_ANTHROPIC_ROUTE_CONFIG = {
-    "model": {
-        "provider": "anthropic",
-        "model": "claude-test",
-        "api_key": "test-key",
-    }
-}
+class _ModelWorker:
+    def __init__(self, factory):
+        self.factory = factory
+
+    def run(self, goal, kernel_context):
+        self.factory.calls.append(goal.task)
+        raw = goal.metadata.get("cognition_request")
+        context = raw.get("context") if isinstance(raw, dict) else {}
+        self.factory.contexts.append(context)
+        if self.factory.mode == "plain":
+            response = "model answered through Resident Work"
+        elif self.factory.mode == "invalid_first" and len(self.factory.calls) == 1:
+            response = '{"zn_action_proposal":{"action_id":"missing.tool","arguments":{}}}'
+        else:
+            loop = context.get("generic_action_loop") if isinstance(context, dict) else {}
+            history = loop.get("recent_verified_executions") if isinstance(loop, dict) else []
+            if not history:
+                response = '{"zn_action_proposal":{"action_id":"test.read","arguments":{}}}'
+            else:
+                execution_id = str(history[-1].get("execution_id") or "")
+                response = (
+                    '{"zn_action_completion":{"execution_ids":["'
+                    + execution_id
+                    + '"],"response":"the fresh value was verified"}}'
+                )
+        return WorkerResult(
+            success=True,
+            response=response,
+            verification_passed=True,
+            metrics={"model_invoked": True},
+        )
 
 
-class _FakeAnthropicToolLoopClient:
-    """Stands in for AnthropicToolLoopClient so tests never hit the network.
+class _ModelFactory:
+    def __init__(self, mode="actions"):
+        self.mode = mode
+        self.calls = []
+        self.contexts = []
 
-    Scripts a fixed sequence of create_turn() responses (the same shape
-    AnthropicToolLoopClient.create_turn returns) so AgenticToolLoop's real
-    control flow -- including real local tool execution -- is exercised
-    end-to-end through the daemon RPC surface.
-    """
-
-    def __init__(self, route, *, client_builder=None, max_tokens=None) -> None:
-        self.route = route
-
-    def create_turn(self, *, messages, system, tools):
-        return self._scripted.pop(0)
+    def create(self, route):
+        return _ModelWorker(self)
 
 
-def _make_server(tmp_dir: str, config: dict) -> ResidentRpcServer:
-    resident = build_resident_runtime_from_existing_stack(
-        config=config,
-        store_path=Path(tmp_dir) / "kernel.db",
+class _Body:
+    def __init__(self):
+        self.calls = []
+        self.fail_next_read = False
+
+    def act(self, kind, *, event_id=None, **kwargs):
+        self.calls.append((kind, event_id, dict(kwargs)))
+        should_fail = self.fail_next_read
+        self.fail_next_read = False
+        return BodyActionResult(
+            action_id=f"body-{len(self.calls)}",
+            kind=kind,
+            success=not should_fail,
+            data={"value": "fresh"} if not should_fail else {"dispatch_sent": False},
+            error="transient read unavailable" if should_fail else None,
+            event_id=event_id,
+        )
+
+
+class _Device:
+    def foreground_application(self):
+        return None
+
+
+def _make_server(tmp_dir: str, mode="actions"):
+    factory = _ModelFactory(mode)
+    kernel = ZNKernelRuntime(
+        store=KernelStore(Path(tmp_dir) / "kernel.db"),
+        routes=[ModelRoute("primary", "test", "model", {"general": 0.9})],
+        worker_factory=factory,
     )
-    return ResidentRpcServer(
+    resident = ProductResearchInformationResidentRuntime(kernel=kernel)
+    fabric = ActionFabricRegistry()
+    fabric.register(
+        ActionDescriptor(
+            action_id="test.read",
+            provider="test",
+            description="Read fresh test value",
+            body_action_kind="test_read",
+            input_schema={"type": "object", "additionalProperties": False},
+            effect_class="read_only",
+            verification=("fresh Body result",),
+        ),
+        availability_probe=lambda descriptor: ActionAvailability(
+            descriptor.action_id, "available", reason="available in test"
+        ),
+    )
+    body = _Body()
+    resident.action_fabric = fabric
+    resident.action_executor = ActionExecutionRuntime(fabric, body)
+    resident.device_capabilities = _Device()
+    server = ResidentRpcServer(
         resident=resident,
         input_stream=io.StringIO(),
         output_stream=io.StringIO(),
     )
+    return server, factory, body
 
 
 class DaemonAgentRunRpcTests(unittest.TestCase):
     def test_agent_run_requires_task(self):
         with tempfile.TemporaryDirectory() as tmp:
-            server = _make_server(tmp, _ANTHROPIC_ROUTE_CONFIG)
+            server, _, _ = _make_server(tmp)
             try:
-                with self.assertRaises(ValueError) as ctx:
-                    server.handle(
-                        {"id": "1", "method": "agent_run", "params": {}}
-                    )
-                self.assertIn("task", str(ctx.exception))
+                with self.assertRaisesRegex(ValueError, "requires task"):
+                    server.handle({"id": "1", "method": "agent_run", "params": {}})
             finally:
                 server.resident.store.close()
 
-    def test_agent_run_without_configured_anthropic_route_reports_clear_error(self):
+    def test_agent_run_uses_existing_model_router_and_saves_durable_thread(self):
         with tempfile.TemporaryDirectory() as tmp:
-            server = _make_server(tmp, {"model": {}})
+            server, factory, body = _make_server(tmp, mode="plain")
             try:
-                with self.assertRaises(ValueError) as ctx:
-                    server.handle(
-                        {
-                            "id": "2",
-                            "method": "agent_run",
-                            "params": {"task": "say hello"},
-                        }
-                    )
-                self.assertIn("Anthropic route", str(ctx.exception))
-            finally:
-                server.resident.store.close()
-
-    def test_agent_run_completes_without_tool_calls(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            server = _make_server(tmp, _ANTHROPIC_ROUTE_CONFIG)
-            try:
-                fake = _FakeAnthropicToolLoopClient
-                fake._scripted = [
-                    {
-                        "text": "4",
-                        "tool_calls": (),
-                        "stop_reason": "end_turn",
-                        "raw_content": "4",
-                    }
-                ]
-                with patch("zn_agent.core.daemon.AnthropicToolLoopClient", fake):
-                    response = server.handle(
-                        {
-                            "id": "3",
-                            "method": "agent_run",
-                            "params": {"task": "what is 2+2?"},
-                        }
-                    )
-                self.assertTrue(response["ok"], response.get("error"))
+                response = server.handle({
+                    "id": "2", "method": "agent_run",
+                    "params": {"task": "answer a question without moving the computer"},
+                })
+                self.assertTrue(response["ok"])
                 result = response["result"]
-                self.assertTrue(result["completed"])
-                self.assertEqual(result["final_text"], "4")
-                self.assertEqual(result["turns_used"], 1)
-                self.assertEqual(result["stopped_reason"], "end_turn")
-                self.assertEqual(len(result["steps"]), 1)
-                self.assertEqual(result["steps"][0]["tool_calls"], [])
+                self.assertTrue(result["completed"], result)
+                self.assertEqual(result["final_text"], "model answered through Resident Work")
+                self.assertEqual(result["execution_path"], "model")
+                self.assertEqual(result["stopped_reason"], "resident_completed")
+                self.assertEqual(result["steps"], [])
+                self.assertEqual(body.calls, [])
+                self.assertEqual(len(factory.calls), 1)
+                self.assertIn("generic_action_loop", factory.contexts[0])
+                thread_id = result["thread"]["id"]
+                saved = server.work.get_snapshot(thread_id)
+                self.assertEqual(
+                    [m.role for m in saved[1] if m.role in {"user", "zn"}],
+                    ["user", "zn"],
+                )
+                self.assertEqual(
+                    [message.text for message in saved[1] if message.role == "zn"][-1],
+                    result["final_text"],
+                )
+                self.assertIsNotNone(server.work.get_run(result["work_event_id"]))
             finally:
                 server.resident.store.close()
 
-    def test_agent_run_executes_a_real_tool_call_before_finishing(self):
+    def test_agent_run_cycles_model_and_verified_action_through_same_resident(self):
         with tempfile.TemporaryDirectory() as tmp:
-            server = _make_server(tmp, _ANTHROPIC_ROUTE_CONFIG)
+            server, factory, body = _make_server(tmp)
             try:
-                fake = _FakeAnthropicToolLoopClient
-                fake._scripted = [
-                    {
-                        "text": "",
-                        "tool_calls": (
-                            {
-                                "id": "call_1",
-                                "name": "run_terminal",
-                                "arguments": {"command": "echo hi"},
-                            },
-                        ),
-                        "stop_reason": "tool_use",
-                        "raw_content": "",
+                response = server.handle({
+                    "id": "3", "method": "agent_run",
+                    "params": {"task": "read the current test value"},
+                })
+                result = response["result"]
+                self.assertTrue(result["completed"], result)
+                self.assertEqual(result["final_text"], "the fresh value was verified")
+                self.assertEqual(result["execution_path"], "body")
+                self.assertEqual(len(factory.calls), 2)
+                self.assertEqual(len(body.calls), 1)
+                self.assertEqual(body.calls[0][0], "test_read")
+                self.assertTrue(factory.contexts[1]["generic_action_loop"]["recent_verified_executions"][0]["verified"])
+                event = server.resident.store.get_event(result["work_event_id"])
+                self.assertEqual(event.payload["agent_loop"], True)
+                outcome = server.resident.store.get_event_outcome(result["work_event_id"])
+                self.assertTrue(outcome.success)
+                self.assertEqual(outcome.model_invocations, 2)
+                # Both turns ran inside model-led Resident: no parallel
+                # investigation/planner was needed between verified actions.
+                self.assertIsNone(server.resident.investigator.current(result["work_event_id"]))
+            finally:
+                server.resident.store.close()
+
+    def test_agent_run_reuses_work_thread_instead_of_creating_model_session(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server, factory, _ = _make_server(tmp, mode="plain")
+            try:
+                one = server.handle({
+                    "id": "4", "method": "agent_run",
+                    "params": {"thread_id": "durable-agent-thread", "task": "first request"},
+                })["result"]
+                two = server.handle({
+                    "id": "5", "method": "agent_run",
+                    "params": {"thread_id": "durable-agent-thread", "task": "second request"},
+                })["result"]
+                self.assertTrue(one["completed"])
+                self.assertTrue(two["completed"])
+                self.assertEqual(one["thread"]["id"], "durable-agent-thread")
+                self.assertEqual(two["thread"]["id"], "durable-agent-thread")
+                self.assertEqual(len(factory.calls), 2)
+                self.assertEqual(
+                    [
+                        m.role for m in server.work.get_snapshot("durable-agent-thread")[1]
+                        if m.role in {"user", "zn"}
+                    ],
+                    ["user", "zn", "user", "zn"],
+                )
+            finally:
+                server.resident.store.close()
+
+    def test_real_desktop_work_start_uses_durable_model_led_execution(self):
+        # This is the asynchronous RPC used by the actual Electron client,
+        # not the proof-of-concept synchronous agent_run sidecar.
+        with tempfile.TemporaryDirectory() as tmp:
+            server, factory, body = _make_server(tmp)
+            try:
+                thread = server.work.create_thread(title="Desktop agent Work")
+                started = server.handle({
+                    "id": "start-work",
+                    "method": "work_start",
+                    "params": {
+                        "thread_id": thread.thread_id,
+                        "task": "read the current test value",
+                        "kind": "desktop_user_event",
+                        "payload": {"agent_loop": True},
                     },
-                    {
-                        "text": "printed hi",
-                        "tool_calls": (),
-                        "stop_reason": "end_turn",
-                        "raw_content": "printed hi",
-                    },
+                })
+                self.assertTrue(started["ok"])
+                progress = started["result"]["progress"]
+                event_id = progress["event_id"]
+                event = server.resident.store.get_event(event_id)
+                self.assertEqual(event.payload["agent_loop"], True)
+                self.assertEqual(event.payload["work_thread_id"], thread.thread_id)
+
+                for _ in range(25):
+                    if server.resident.result_for(event_id) is not None:
+                        break
+                    server.resident.live_once()
+                outcome = server.resident.result_for(event_id)
+                self.assertIsNotNone(outcome)
+                self.assertTrue(outcome.success, outcome)
+                self.assertEqual(outcome.response, "the fresh value was verified")
+                self.assertEqual(len(factory.calls), 2)
+                self.assertEqual(len(body.calls), 1)
+
+                updated = server.handle({
+                    "id": "progress",
+                    "method": "work_progress",
+                    "params": {"thread_id": thread.thread_id, "event_id": event_id},
+                })
+                self.assertTrue(updated["ok"])
+                self.assertTrue(updated["result"]["progress"]["finalized"])
+                self.assertEqual(updated["result"]["progress"]["status"], "completed")
+                roles = [
+                    m.role for m in server.work.get_snapshot(thread.thread_id)[1]
+                    if m.role in {"user", "zn"}
                 ]
-                with patch("zn_agent.core.daemon.AnthropicToolLoopClient", fake):
-                    response = server.handle(
-                        {
-                            "id": "4",
-                            "method": "agent_run",
-                            "params": {"task": "print hi via the shell"},
-                        }
-                    )
-                self.assertTrue(response["ok"], response.get("error"))
-                result = response["result"]
-                self.assertTrue(result["completed"])
-                self.assertEqual(result["final_text"], "printed hi")
-                self.assertEqual(result["turns_used"], 2)
-                first_step = result["steps"][0]
-                self.assertEqual(first_step["tool_calls"][0]["name"], "run_terminal")
-                self.assertEqual(len(first_step["tool_results"]), 1)
-                self.assertIn("hi", first_step["tool_results"][0]["output"])
+                self.assertEqual(roles, ["user", "zn"])
             finally:
                 server.resident.store.close()
 
-    def test_agent_run_respects_max_turns_override(self):
+    def test_model_led_repairs_unknown_tool_in_same_resident(self):
         with tempfile.TemporaryDirectory() as tmp:
-            server = _make_server(tmp, _ANTHROPIC_ROUTE_CONFIG)
+            server, factory, body = _make_server(tmp, mode="invalid_first")
             try:
-                fake = _FakeAnthropicToolLoopClient
-                fake._scripted = [
-                    {
-                        "text": "",
-                        "tool_calls": (
-                            {
-                                "id": "call_1",
-                                "name": "run_terminal",
-                                "arguments": {"command": "echo loop"},
-                            },
-                        ),
-                        "stop_reason": "tool_use",
-                        "raw_content": "",
-                    }
-                ] * 2
-                with patch("zn_agent.core.daemon.AnthropicToolLoopClient", fake):
-                    response = server.handle(
-                        {
-                            "id": "5",
-                            "method": "agent_run",
-                            "params": {"task": "loop forever", "max_turns": 2},
-                        }
-                    )
-                self.assertTrue(response["ok"], response.get("error"))
-                result = response["result"]
-                self.assertFalse(result["completed"])
-                self.assertEqual(result["turns_used"], 2)
-                self.assertEqual(result["stopped_reason"], "max_turns_exceeded")
+                result = server.handle({
+                    "id": "repair", "method": "agent_run",
+                    "params": {"task": "read the test value"},
+                })["result"]
+                self.assertTrue(result["completed"], result)
+                self.assertEqual(result["final_text"], "the fresh value was verified")
+                self.assertEqual(len(factory.calls), 3)
+                self.assertEqual(len(body.calls), 1)
+                self.assertIn(
+                    "unknown or non-executable",
+                    factory.contexts[1]["generic_action_loop"]["last_protocol_error"],
+                )
+            finally:
+                server.resident.store.close()
+
+    def test_model_led_recovers_failed_read_by_reasking_model(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server, factory, body = _make_server(tmp)
+            body.fail_next_read = True
+            try:
+                result = server.handle({
+                    "id": "read-recovery", "method": "agent_run",
+                    "params": {"task": "read the test value"},
+                })["result"]
+                self.assertTrue(result["completed"], result)
+                self.assertEqual(len(factory.calls), 3)
+                self.assertEqual(len(body.calls), 2)
+                failed = factory.contexts[1]["generic_action_loop"]["last_failure"]
+                self.assertEqual(failed["action_id"], "test.read")
+                self.assertFalse(failed["verified"])
+                self.assertIsNone(server.resident.investigator.current(result["work_event_id"]))
+            finally:
+                server.resident.store.close()
+
+    def test_model_led_turn_starts_cognition_without_native_probe(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server, factory, body = _make_server(tmp)
+            try:
+                event = server.resident.enqueue(
+                    "read the current test value",
+                    kind="desktop_user_event",
+                    payload={"agent_loop": True},
+                )
+                thought = SimpleNamespace(
+                    sequence=1, focus="task", chosen_action=None,
+                    action_kind=None, action_target=None, reason="task",
+                    confidence=1.0, possible_actions=(),
+                )
+                self.assertIsNone(
+                    server.resident.run_once(target_event_id=event.event_id, thought=thought)
+                )
+                state = server.resident.store.get_working_state()
+                self.assertEqual(state.stage, "external_cognition")
+                self.assertTrue(state.data["generic_action_loop"]["model_led"])
+                self.assertIn("generic_action_loop", state.data["cognition_request"]["context"])
+                self.assertIsNone(server.resident.investigator.current(event.event_id))
+                self.assertEqual(factory.calls, [])
+                self.assertEqual(body.calls, [])
+            finally:
+                server.resident.store.close()
+
+    def test_model_disabled_fails_closed_without_invoking_tools(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server, factory, body = _make_server(tmp)
+            try:
+                event = server.resident.enqueue(
+                    "run a model-led action",
+                    kind="desktop_user_event",
+                    payload={"agent_loop": True, "model_policy": "never"},
+                )
+                result = server.resident.run_once(target_event_id=event.event_id)
+                self.assertFalse(result.success)
+                self.assertIn("model-led Work requires permitted cognition", result.reason)
+                self.assertEqual(factory.calls, [])
+                self.assertEqual(body.calls, [])
+            finally:
+                server.resident.store.close()
+
+    def test_agent_run_rejects_old_sidecar_turn_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            server, factory, _ = _make_server(tmp)
+            try:
+                with self.assertRaisesRegex(ValueError, "max_turns is unsupported"):
+                    server.handle({
+                        "id": "6", "method": "agent_run",
+                        "params": {"task": "test", "max_turns": 2},
+                    })
+                self.assertEqual(factory.calls, [])
             finally:
                 server.resident.store.close()
 

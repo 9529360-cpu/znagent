@@ -4,6 +4,7 @@ import hashlib
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import sqlite3
@@ -12,7 +13,7 @@ import uuid
 from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Callable
 
 import psutil
 
@@ -70,8 +71,31 @@ class NativeBody:
     ):
         self.resident = resident
         self.store = store or (resident.store if resident is not None else None)
+        # Extension handlers live INSIDE this Body, never as a second tool runner.
+        # Only explicitly admitted read-only MCP tools may use this entry point.
+        self._external_read_handlers: dict[
+            str, Callable[[BodyAction, str], BodyActionResult]
+        ] = {}
         if self.store is not None:
             self._init_schema()
+
+    def register_external_read_handler(
+        self,
+        kind: str,
+        handler: Callable[[BodyAction, str], BodyActionResult],
+    ) -> None:
+        """Bind one approved read-only tool to the existing audited Body path."""
+        normalized = str(kind or "").strip().lower()
+        if not re.fullmatch(r"zn_mcp_read_[a-f0-9]{24}", normalized):
+            raise ValueError("external Body kind must be a stable namespaced MCP read kind")
+        if not callable(handler):
+            raise TypeError("external read action handler must be callable")
+        if normalized in self._external_read_handlers:
+            raise ValueError(f"external read action already registered: {normalized}")
+        self._external_read_handlers[normalized] = handler
+
+    def unregister_external_read_handler(self, kind: str) -> None:
+        self._external_read_handlers.pop(str(kind or "").strip().lower(), None)
 
     def sense(self) -> dict[str, Any]:
         disk = shutil.disk_usage(Path.cwd())
@@ -167,6 +191,17 @@ class NativeBody:
             return self._terminal_session(action, started, operation="input")
         if kind in {"terminal_resize", "command_resize"}:
             return self._terminal_session(action, started, operation="resize")
+        extension = self._external_read_handlers.get(kind)
+        if extension is not None:
+            result = extension(action, started)
+            if (
+                not isinstance(result, BodyActionResult)
+                or result.action_id != action.action_id
+                or result.kind != action.kind
+                or result.event_id != action.event_id
+            ):
+                raise ValueError("external read handler returned mismatched Body evidence")
+            return result
         raise ValueError(f"unknown body action kind: {kind or '<empty>'}")
 
     def _inspect_path(self, action: BodyAction, started: str) -> BodyActionResult:
@@ -1247,6 +1282,40 @@ class NativeBody:
     def _record(self, action: BodyAction, result: BodyActionResult) -> None:
         if self.store is None:
             return
+        action_record = asdict(action)
+        result_record = asdict(result)
+        if action.kind.startswith("zn_mcp_read_"):
+            # MCP arguments can contain local queries or personal context. Keep
+            # a diagnostic digest instead of persisting raw tool inputs twice.
+            encoded = json.dumps(
+                action.args, ensure_ascii=False, sort_keys=True, default=str,
+                separators=(",", ":"),
+            )
+            action_record["args"] = {
+                "redacted": True,
+                "names": sorted(str(name) for name in action.args),
+                "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+            }
+            # The ActionExecution/Work verifier receives full live evidence.
+            # This generic audit history must not duplicate external content.
+            raw_output = str(result.output or "")
+            raw_data = dict(result.data or {})
+            returned_text = str(raw_data.pop("text", "") or "")
+            digest_source = returned_text or raw_output
+            result_record["output"] = ""
+            result_record["error"] = (
+                "approved MCP read failed" if result.error else None
+            )
+            result_record["data"] = {
+                "external_read_redacted": True,
+                "provider_id": str(raw_data.get("provider_id") or "")[:80],
+                "tool": str(raw_data.get("tool") or "")[:100],
+                "result_chars": len(digest_source),
+                "result_sha256": hashlib.sha256(
+                    digest_source.encode("utf-8")
+                ).hexdigest(),
+                "truncated": bool(raw_data.get("truncated")),
+            }
         with closing(self._connect()) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO native_body_actions"
@@ -1258,8 +1327,8 @@ class NativeBody:
                     action.kind,
                     1 if result.success else 0,
                     result.completed_at,
-                    json.dumps(asdict(action), ensure_ascii=False, separators=(",", ":")),
-                    json.dumps(asdict(result), ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(action_record, ensure_ascii=False, separators=(",", ":")),
+                    json.dumps(result_record, ensure_ascii=False, separators=(",", ":")),
                 ),
             )
             conn.execute(

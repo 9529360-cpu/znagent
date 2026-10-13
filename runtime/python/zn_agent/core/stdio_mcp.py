@@ -52,6 +52,7 @@ class StdioMcpClient:
         self._client_cm = None
         self._client: Any | None = None
         self._tool_names: frozenset[str] = frozenset()
+        self._tool_definitions: tuple[dict[str, Any], ...] = ()
         self._server_name = ""
         self._server_version = ""
 
@@ -62,6 +63,11 @@ class StdioMcpClient:
     @property
     def tool_names(self) -> frozenset[str]:
         return self._tool_names
+
+    @property
+    def tool_definitions(self) -> tuple[dict[str, Any], ...]:
+        """Snapshot of tools from the connected MCP server, not ZN authority."""
+        return tuple(json.loads(json.dumps(item)) for item in self._tool_definitions)
 
     @property
     def server_name(self) -> str:
@@ -112,11 +118,15 @@ class StdioMcpClient:
                 )
 
             listed = self._portal.call(self._client.list_tools)
-            self._tool_names = frozenset(
-                str(tool.name or "").strip()
+            definitions = tuple(
+                tool.model_dump(mode="json", by_alias=True, exclude_none=True)
                 for tool in listed.tools
-                if str(tool.name or "").strip()
             )
+            names = tuple(str(item.get("name") or "").strip() for item in definitions)
+            if not all(names) or len(set(names)) != len(names):
+                raise StdioMcpError("MCP catalog has missing or duplicate tool names")
+            self._tool_definitions = definitions
+            self._tool_names = frozenset(names)
             missing = self.required_tools.difference(self._tool_names)
             if missing:
                 raise StdioMcpError(
@@ -137,6 +147,7 @@ class StdioMcpClient:
         self._portal = None
         self._portal_cm = None
         self._tool_names = frozenset()
+        self._tool_definitions = ()
         self._server_name = ""
         self._server_version = ""
         if client_cm is not None:
