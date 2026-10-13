@@ -426,3 +426,24 @@ test('single-instance argv deep links are normalized and deduplicated', () => {
     [{ url: 'zn://resident/status', route: 'resident', path: '/status', params: {} }]
   )
 })
+
+test('approved MCP capabilities use trusted desktop IPC without arbitrary process injection', () => {
+  const ipc = read('electron/zn-resident-ipc.ts')
+  const preload = read('electron/zn-preload.ts')
+  const processBridge = read('electron/zn-resident-process.ts')
+  const typedBridge = read('src/zn/desktop-env.d.ts')
+
+  assert.match(ipc, /handleZnDesktopIpc\('zn:resident:mcp-capabilities'/)
+  assert.match(ipc, /handleZnDesktopIpc\('zn:resident:mcp-connect'/)
+  assert.match(ipc, /handleZnDesktopIpc\('zn:resident:mcp-disconnect'/)
+  assert.match(ipc, /\^\[a-z\]\[a-z0-9_\]\{0,39\}\$/)
+  assert.match(ipc, /provider_id: approvedProviderId\(payload\?\.providerId\)/)
+  assert.doesNotMatch(ipc, /provider_id:.*payload\?\.command/)
+  assert.match(preload, /mcpCapabilities: \(\)/)
+  assert.match(preload, /mcpConnect: \(providerId: string\)/)
+  assert.match(preload, /mcpDisconnect: \(providerId: string\)/)
+  assert.match(processBridge, /'mcp_connect'/)
+  assert.match(processBridge, /'mcp_disconnect'/)
+  assert.match(typedBridge, /mcpCapabilities: \(\) => Promise<unknown>/)
+  assert.match(typedBridge, /mcpConnect: \(providerId: string\) => Promise<unknown>/)
+})

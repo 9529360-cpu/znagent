@@ -38,7 +38,7 @@ jobs:
             throw 'ZN runner bootstrap requires a logged-on interactive session, not Session 0.'
           }
       - name: Checkout
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Configure visible interactive runner watchdog
         shell: powershell -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ". '{0}'"
         run: .\.github\scripts\install-zn-interactive-runner-watchdog.ps1

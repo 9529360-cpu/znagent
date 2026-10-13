@@ -20,6 +20,11 @@ contextBridge.exposeInMainWorld('znDesktop', {
     providerSettings: () => ipcRenderer.invoke('zn:resident:provider-settings'),
     providerSettingsUpdate: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:provider-settings-update', payload || {}),
+    mcpCapabilities: () => ipcRenderer.invoke('zn:resident:mcp-capabilities'),
+    mcpConnect: (providerId: string) =>
+      ipcRenderer.invoke('zn:resident:mcp-connect', { providerId }),
+    mcpDisconnect: (providerId: string) =>
+      ipcRenderer.invoke('zn:resident:mcp-disconnect', { providerId }),
     workList: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-list', payload || {}),
     workCreate: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-create', payload || {}),
     workGet: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-get', payload || {}),

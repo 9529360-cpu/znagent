@@ -32,11 +32,20 @@ class ResidentHealthJournal:
         self.store = store
         self._init_schema()
 
-    def record_failure(self, organ: str, error: BaseException) -> dict[str, Any]:
+    def record_failure(
+        self,
+        organ: str,
+        error: BaseException,
+        *,
+        failure_class: str | None = None,
+    ) -> dict[str, Any]:
         organ_name = self._organ(organ)
         exception_type = type(error).__name__[:128]
         fingerprint = self._fingerprint(exception_type, str(error))
-        failure_class = self._classify(error)
+        resolved_failure_class = (
+            str(failure_class or "").strip().lower()[:128]
+            or self._classify(error)
+        )
         now = utc_now()
         with closing(self._connect()) as conn:
             conn.execute(
@@ -65,7 +74,7 @@ class ResidentHealthJournal:
                     now,
                     exception_type,
                     fingerprint,
-                    failure_class,
+                    resolved_failure_class,
                 ),
             )
             row = conn.execute(
