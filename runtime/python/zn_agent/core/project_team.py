@@ -111,14 +111,24 @@ class TeamPlanItem:
     assignee: str  # specialist name
     dependency_ids: tuple[str, ...] = ()
 
-    def as_work_item_kwargs(self, work_thread_id: str, plan_version: int) -> dict[str, Any]:
-        """Kwargs matching SteerableWorkLedger's WorkItem creation shape."""
+    def as_work_item_kwargs(
+        self,
+        work_thread_id: str,
+        plan_version: int,
+        parent_work_item_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Kwargs matching SteerableWorkLedger's WorkItem creation shape.
+
+        Pass the project Root WorkItem id as parent_work_item_id: the
+        dependency-readiness check requires plan items to hang under a Root.
+        """
         return {
             "work_thread_id": work_thread_id,
             "title": self.title,
             "objective": self.objective,
             "status": "proposed",
             "plan_version": plan_version,
+            "parent_work_item_id": parent_work_item_id,
             "acceptance_criteria": list(self.acceptance_criteria),
             "dependency_ids": list(self.dependency_ids),
         }
