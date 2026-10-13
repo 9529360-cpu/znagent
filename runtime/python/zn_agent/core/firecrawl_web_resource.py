@@ -15,7 +15,12 @@ from typing import Any, Callable
 import httpx
 
 from .url_safety import is_safe_url
-from .web_resource import WebDocument, WebResourceError, WebSearchItem
+from .web_resource import (
+    WebDocument,
+    WebResourceError,
+    WebSearchItem,
+    _validated_web_provider_api_url,
+)
 
 
 SafetyCheck = Callable[[str], bool]
@@ -84,7 +89,10 @@ class FirecrawlWebResource:
         environ: Mapping[str, str] | None = None,
     ):
         self.api_key = str(api_key or "").strip()
-        self.api_url = str(api_url or "https://api.firecrawl.dev").rstrip("/")
+        self.api_url = _validated_web_provider_api_url(
+            api_url or "https://api.firecrawl.dev",
+            provider="Firecrawl",
+        )
         self.timeout = max(1.0, float(timeout))
         self._client = client
         env = environ if environ is not None else os.environ

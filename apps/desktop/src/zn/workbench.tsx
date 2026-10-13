@@ -9,8 +9,6 @@ import {
   Brain,
   CaretDown,
   CheckCircle,
-  Clock,
-  Compass,
   ImageSquare,
   CircleNotch,
   ClockCounterClockwise,
@@ -22,7 +20,6 @@ import {
   Plus,
   Pulse,
   PushPin,
-  PuzzlePiece,
   SidebarSimple,
   Sparkle,
   Stop,
@@ -787,15 +784,6 @@ export function ZnWorkbench() {
             window.requestAnimationFrame(focusComposerInput)
           }}>
             <ImageSquare size={17} /><span>{t('sidebar.images')}</span>
-          </button>
-          <button className="zn-nav-link" type="button" disabled title={t('sidebar.comingSoon')}>
-            <Clock size={17} /><span>{t('sidebar.scheduled')}</span><small>{t('sidebar.soon')}</small>
-          </button>
-          <button className="zn-nav-link" type="button" disabled title={t('sidebar.comingSoon')}>
-            <PuzzlePiece size={17} /><span>{t('sidebar.plugins')}</span><small>{t('sidebar.soon')}</small>
-          </button>
-          <button className="zn-nav-link" type="button" disabled title={t('sidebar.comingSoon')}>
-            <Compass size={17} /><span>{t('sidebar.explore')}</span><small>{t('sidebar.soon')}</small>
           </button>
         </nav>
 
