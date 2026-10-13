@@ -61,6 +61,19 @@
   `escalate`→上报用户，`team_complete`→提炼复盘并保存（永不自动解散）。
   另给 `ResidentWorkLedger` 加了公开的 `append_message`（journal 写入口）。
   `test_team_runner.py` 用真实 ledger 跑通组建→派活→验收→完成→复盘全链路。
+- **Slice 5（已实现）**：用户入口接线——`team_request.py`（纯函数
+  `parse_team_request`：组队动词 + 项目标题 + 角色抽取，未提角色时默认
+  researcher/architect/developer/tester，非团队任务返回 `None` 不误判）；
+  `daemon.py` 的 `work_start` 把解析结果写进 Root WorkItem payload（调用方
+  自带的 `team_request` 一律丢弃）；`team_work_owner.py`（`TeamWorkOwner`：
+  首 pulse 调 `assemble_team` 建队、spec 存团队共享记忆，之后确定性重建；
+  每 pulse 调一次 `runner.step()`；claim 只认 Body-verified 证据）；
+  `team_work_resident.py`（`TeamWorkResidentRuntime`：deliberation 拦截、
+  专员 cognition 问题、write_file/run_python 落到 runner 的 child、散文 claim
+  守卫）；`BroadGoalAutonomousResidentRuntime` 把团队事件排除出 autonomous
+  intake。`test_team_entry.py` + `test_team_resident_entry.py` 用真实 ledger
+  跑通解析→建队→派活→Body 验证→claim→verify→完成→team_complete，磁盘上
+  真实生成专员产物文件。
 
 ## 与外部产品的差异
 
