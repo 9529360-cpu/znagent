@@ -262,6 +262,16 @@ export function registerZnResidentIpc(): void {
       application_id: applicationId
     })
   })
+  handleZnDesktopIpc('zn:resident:suggestions-list', async (_event, payload) => {
+    return getZnResidentProcess().request('suggestions_list', {
+      limit: Number(payload?.limit || 8)
+    })
+  })
+  handleZnDesktopIpc('zn:resident:suggestions-dismiss', async (_event, payload) => {
+    const key = String(payload?.key || payload?.suggestionKey || payload?.suggestion_key || '').trim()
+    if (!key) throw new Error('suggestion key is required')
+    return getZnResidentProcess().request('suggestions_dismiss', { key })
+  })
   handleZnDesktopIpc('zn:resident:pulses', async (_event, limit) => history('pulses', limit))
   handleZnDesktopIpc('zn:resident:situations', async (_event, limit) => history('situations', limit))
   handleZnDesktopIpc('zn:resident:thoughts', async (_event, limit) => history('thoughts', limit))

@@ -29,6 +29,8 @@ export type ZnResidentRequest = {
     | 'work_restore_prepare'
     | 'work_restore_approve'
     | 'work_restore_application'
+    | 'suggestions_list'
+    | 'suggestions_dismiss'
     | 'pulses'
     | 'situations'
     | 'thoughts'
