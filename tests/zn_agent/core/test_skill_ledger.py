@@ -34,7 +34,14 @@ from zn_agent.core.team_work_owner import TeamWorkOwner
 
 def _temp_store(test: unittest.TestCase) -> KernelStore:
     tmp = test.enterContext(tempfile.TemporaryDirectory())
-    return KernelStore(Path(tmp) / "kernel.db")
+    store = KernelStore(Path(tmp) / "kernel.db")
+    # Close the SQLite connection before the TemporaryDirectory cleanup
+    # runs: addCleanup is LIFO, so this runs before the temp dir is
+    # removed. On Windows an open connection holds kernel.db (and its
+    # -wal/-shm files) and rmtree fails with WinError 32; on POSIX the
+    # delete would silently succeed, which is why this only fails on CI.
+    test.addCleanup(store.close)
+    return store
 
 
 def _completed_event(
