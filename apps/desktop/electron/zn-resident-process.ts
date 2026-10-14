@@ -40,6 +40,8 @@ export type ZnResidentRequest = {
     | 'routine_delete'
     | 'routine_test_run'
     | 'routine_acknowledge'
+    | 'team_timeline'
+    | 'team_assign'
     | 'pulses'
     | 'situations'
     | 'thoughts'
