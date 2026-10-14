@@ -73,7 +73,7 @@ jobs:
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: '0.11.6'
-          enable-cache: false
+          enable-cache: true
       - name: Prepare unprivileged Python 3.12
         run: |
           uv python install 3.12
@@ -83,7 +83,7 @@ jobs:
         run: .\.ci\source-venv\Scripts\python.exe .agent/verify_zn_source_boundary.py
 
   kernel-tests:
-    name: ZN Kernel / Python / Windows / shard ${{ matrix.label }} of 4
+    name: ZN Kernel / Python / Windows / shard ${{ matrix.label }} of 8
     runs-on: windows-latest
     timeout-minutes: 30
     strategy:
@@ -98,10 +98,18 @@ jobs:
             label: 3
           - shard: 3
             label: 4
+          - shard: 4
+            label: 5
+          - shard: 5
+            label: 6
+          - shard: 6
+            label: 7
+          - shard: 7
+            label: 8
     env:
       UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
       ZN_TEST_SHARD: ${{ matrix.shard }}
-      ZN_TEST_SHARD_COUNT: '4'
+      ZN_TEST_SHARD_COUNT: '8'
     steps:
       - name: Publish kernel pending status
         if: ${{ matrix.shard == 0 }}
@@ -122,7 +130,7 @@ jobs:
                   sha,
                   state: 'pending',
                   context: statusContext,
-                  description: 'ZN Windows CI: running 4 parallel core-test shards',
+                  description: 'ZN Windows CI: running 8 parallel core-test shards',
                   target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
                 })
               }
@@ -139,7 +147,7 @@ jobs:
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: '0.11.6'
-          enable-cache: false
+          enable-cache: true
       - name: Prepare ZN home and isolated runtime
         run: |
           New-Item -ItemType Directory -Force -Path $env:ZN_AGENT_HOME | Out-Null
@@ -224,7 +232,7 @@ jobs:
             echo "Kernel shard matrix result: $KERNEL_TESTS_RESULT"
             exit 1
           fi
-          echo "All four ZN core-test shards passed."
+          echo "All eight ZN core-test shards passed."
 
   product-gate:
     name: ZN Product Contracts / gate
@@ -325,6 +333,7 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version: '22.22.0'
+          cache: 'npm'
       - name: Install locked workspace dependencies
         run: npm ci --ignore-scripts
       - name: Reject high-severity npm advisories

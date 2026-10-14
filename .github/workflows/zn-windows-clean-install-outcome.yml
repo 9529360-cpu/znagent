@@ -21,6 +21,10 @@ on:
     types:
       - completed
 
+concurrency:
+  group: zn-windows-clean-install-outcome-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
   actions: read
