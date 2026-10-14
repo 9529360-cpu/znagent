@@ -17,6 +17,7 @@ from .document_work_behavior import install_document_work_behavior
 from .intention_event_handoff_behavior import install_intention_event_handoff_behavior
 from .recurring_will_behavior import install_recurring_will_behavior
 from .routine import install_routine_behavior
+from .user_goals import install_user_goal_behavior
 from .models import utc_now
 from .generic_action_resident import GenericActionResidentRuntime
 from .user_browser_extension_relay import UserBrowserExtensionRelayError
@@ -84,6 +85,7 @@ class ProductResearchInformationResidentRuntime(GenericActionResidentRuntime):
         install_intention_event_handoff_behavior(self)
         install_recurring_will_behavior(self)
         install_routine_behavior(self)
+        install_user_goal_behavior(self)
 
     def _current_visual_stage_bridge(self, event):
         """Bind bounded visual cognition through current Work privacy/route policy."""
