@@ -40,6 +40,20 @@ contextBridge.exposeInMainWorld('znDesktop', {
       ipcRenderer.invoke('zn:resident:work-restore-approve', payload || {}),
     workRestoreApplication: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:work-restore-application', payload || {}),
+    routinePropose: (payload: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:routine-propose', payload),
+    routineConfirm: (payload: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:routine-confirm', payload),
+    routineList: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-list', payload || {}),
+    routineGet: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-get', payload),
+    routineRuns: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-runs', payload),
+    routinePause: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-pause', payload),
+    routineResume: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-resume', payload),
+    routineEdit: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-edit', payload),
+    routineDelete: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-delete', payload),
+    routineTestRun: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-test-run', payload),
+    routineAcknowledge: (payload: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:routine-acknowledge', payload),
     pulses: (limit?: number) => ipcRenderer.invoke('zn:resident:pulses', limit),
     situations: (limit?: number) => ipcRenderer.invoke('zn:resident:situations', limit),
     thoughts: (limit?: number) => ipcRenderer.invoke('zn:resident:thoughts', limit),
