@@ -22,6 +22,12 @@ verification and completion all live in the existing Work ledger. The
 runner never completes an item on a claim alone -- verification with
 fresh observation is the gate, and a failed verification stalls the item
 until the coordinator escalates to the user.
+
+Two feedback loops keep a live specialist from spinning: a rejected
+structured proposal records its reason and the next cognition call
+carries it (so the model can fix the real mistake), and a run that goes
+``_MAX_NO_EVIDENCE_PULSES`` consecutive pulses without new Body-verified
+evidence escalates instead of burning pulses with zero progress.
 """
 
 import hashlib
@@ -34,6 +40,10 @@ from .action import NativeActionIntent
 from .broad_goal_coding_resident import BroadGoalCodingResidentRuntime
 from .cognition import CognitiveIncrement
 from .models import utc_now
+from .structured_proposal import (
+    looks_like_structured_payload,
+    parse_exact_json_payload,
+)
 from .team_work_owner import (
     EVIDENCE_KEY,
     TEAM_CLAIM_STATE_KEY,
@@ -49,6 +59,16 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
     _TEAM_STEP_KEY = "team_specialist_step"
     _TEAM_SOURCE = "resident_team_specialist_choice"
     _TEAM_LIVE_CONTEXT_KEY = "team_live_context"
+    # Durable rejection feedback: the latest rejected proposal for the live
+    # run, fed into the next cognition call so the model learns why its
+    # proposal was refused instead of repeating it blind.
+    _TEAM_REJECTION_KEY = "team_proposal_rejection"
+    # Durable zero-evidence-progress counter for the live run. Cognition
+    # calls keep arriving even when nothing verifiable is produced, so a
+    # wall-clock stall timeout alone never fires: count consecutive pulses
+    # with no new verified evidence and escalate at the threshold.
+    _TEAM_NO_PROGRESS_KEY = "team_no_evidence_progress"
+    _MAX_NO_EVIDENCE_PULSES = 8
 
     # -- deliberation: one durable driver step per pulse -------------------
 
@@ -138,6 +158,35 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             self.store.save_working_state(state)
             return self._checkpoint_terminal_failure(event, state, reason=reason)
         if step.live_run_id:
+            # Feed the latest rejection for THIS run into the next cognition
+            # call (live context). Stale rejections from an earlier run never
+            # leak into a new specialist's question.
+            rejection = state.data.get(self._TEAM_REJECTION_KEY)
+            if (
+                isinstance(rejection, dict)
+                and str(rejection.get("run_id") or "") == step.live_run_id
+                and step.live_context is not None
+            ):
+                step.live_context["rejection_feedback"] = {
+                    "reason": str(rejection.get("reason") or "")[:600],
+                    "proposal_excerpt": str(rejection.get("proposal_excerpt") or "")[
+                        :600
+                    ],
+                }
+            # Zero-evidence-progress escalation: N consecutive pulses with
+            # no new Body-verified evidence escalate instead of letting
+            # "a fresh cognition call every pulse, zero progress" spin
+            # until the wall-clock stall timeout.
+            no_progress = self._count_no_evidence_pulse(
+                event, state, run_id=step.live_run_id
+            )
+            if no_progress is not None:
+                state.data["local_failure"] = no_progress[:3000]
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return self._checkpoint_terminal_failure(
+                    event, state, reason=no_progress
+                )
             state.next_action = (
                 f"专员 {step.live_specialist_name or 'specialist'} 执行下一步"
             )
@@ -165,6 +214,63 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         self.store.save_working_state(state)
         return None
 
+    def _count_no_evidence_pulse(self, event, state, *, run_id: str) -> str | None:
+        """Count one pulse with no new verified evidence for the live run.
+
+        Returns an escalation reason once the run has gone
+        ``_MAX_NO_EVIDENCE_PULSES`` consecutive pulses without producing new
+        Body-verified evidence; otherwise None. Evidence growth resets the
+        counter; a new run starts it over.
+        """
+        run = self.work_ledger.worker_run(run_id)
+        if run is None:
+            return None
+        evidence_count = len(verified_evidence(run))
+        progress = state.data.get(self._TEAM_NO_PROGRESS_KEY)
+        if not isinstance(progress, dict) or str(
+            progress.get("run_id") or ""
+        ) != run_id:
+            state.data[self._TEAM_NO_PROGRESS_KEY] = {
+                "run_id": run_id,
+                "evidence_count": evidence_count,
+                "pulses": 0,
+            }
+            return None
+        try:
+            previous_count = int(progress.get("evidence_count") or 0)
+        except (TypeError, ValueError):
+            previous_count = 0
+        if evidence_count > previous_count:
+            state.data[self._TEAM_NO_PROGRESS_KEY] = {
+                "run_id": run_id,
+                "evidence_count": evidence_count,
+                "pulses": 0,
+            }
+            return None
+        try:
+            pulses = int(progress.get("pulses") or 0) + 1
+        except (TypeError, ValueError):
+            pulses = 1
+        state.data[self._TEAM_NO_PROGRESS_KEY] = {
+            "run_id": run_id,
+            "evidence_count": evidence_count,
+            "pulses": pulses,
+        }
+        if pulses < self._MAX_NO_EVIDENCE_PULSES:
+            return None
+        rejection = state.data.get(self._TEAM_REJECTION_KEY)
+        reason = (
+            f"团队专员连续 {self._MAX_NO_EVIDENCE_PULSES} 个 pulse "
+            "没有产生可验证进展，已停止等待用户拍板。"
+        )
+        if isinstance(rejection, dict) and str(
+            rejection.get("run_id") or ""
+        ) == run_id:
+            detail = str(rejection.get("reason") or "").strip()
+            if detail:
+                reason += f"最近一次提案被拒原因：{detail[:600]}"
+        return reason
+
     # -- cognition: scope the question to the live specialist ----------------
 
     def _build_cognition_request(self, event, impasse, required, deliberation=None):
@@ -181,6 +287,18 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         if not isinstance(context, dict) or not context.get("run_id"):
             return request
         evidence = context.get("evidence") or []
+        rejection = context.get("rejection_feedback")
+        rejection_text = ""
+        if isinstance(rejection, dict):
+            reason = str(rejection.get("reason") or "").strip()
+            excerpt = str(rejection.get("proposal_excerpt") or "").strip()
+            if reason or excerpt:
+                rejection_text = (
+                    "Your last proposal was REJECTED and NOT executed. "
+                    f"Rejection reason: {reason or '结构化校验未通过'}. "
+                    "Do not repeat it: fix the reason and propose again. "
+                    f"Rejected proposal (excerpt): {excerpt[:600]} "
+                )
         request.question = (
             "You are the "
             f"{context.get('specialist_name') or 'specialist'} specialist on one "
@@ -194,12 +312,17 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             '{"zn_work_step":{"objective":"...","action":{"kind":"run_python",'
             '"path":"relative/script.py","args":[]},"acceptance":{"kind":"command",'
             '"expected_exit_code":0,"output_contains":["..."]}}}. '
-            "The path must be relative to the attached workspace. Do not emit "
+            "The path must be relative to the attached workspace. "
+            "The workspace starts EMPTY -- no subdirectories exist yet. "
+            "Prefer a path at the workspace root (for example \"notes.md\"). "
+            "If you use a subdirectory, its parent directory must already exist. "
+            "Do not emit "
             "shell commands, executable paths, background-process controls, or "
             "tool calls. If your item's acceptance criteria are ALREADY fully "
             "satisfied by the verified evidence below, reply with ONLY a short "
             "completion summary in plain text (no JSON) quoting which criteria "
             "are met. Do not claim completion without verified evidence. "
+            f"{rejection_text}"
             f"Your brief: {context.get('specialist_prompt') or ''} "
             f"Your item: {context.get('objective') or ''}. "
             f"Acceptance criteria: {json.dumps(context.get('acceptance_criteria') or [], ensure_ascii=False)}. "
@@ -247,7 +370,34 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             )
         increment = CognitiveIncrement.from_dict(raw)
 
-        proposal = self._parse_write_file_step(event, root, increment.content)
+        # Route the proposal to the parser matching its declared action
+        # kind, so the rejection reason (fed back to the next cognition
+        # call) describes the proposal the model actually sent -- not a
+        # kind mismatch from the other parser.
+        raw_shape = parse_exact_json_payload(increment.content)
+        declared_kind = ""
+        if isinstance(raw_shape, dict):
+            step_shape = raw_shape.get("zn_work_step")
+            if isinstance(step_shape, dict):
+                action_shape = step_shape.get("action")
+                if isinstance(action_shape, dict):
+                    declared_kind = str(action_shape.get("kind") or "").strip()
+        reasons: list[str] = []
+        proposal = None
+        parsed_python = None
+        if declared_kind == "run_python":
+            parsed_python = self._parse_run_python_step(
+                event, root, increment.content, reasons=reasons
+            )
+        else:
+            proposal = self._parse_write_file_step(
+                event,
+                root,
+                increment.content,
+                allow_missing_parent=True,
+                reasons=reasons,
+            )
+
         if proposal is not None:
             return self._begin_team_step(
                 event,
@@ -262,7 +412,12 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                         "path": proposal["absolute_path"],
                         "content": proposal["content"],
                         "append": False,
-                        "create_parents": False,
+                        # The parser already boundary-checked the path; a
+                        # missing parent is created here instead of
+                        # rejecting the proposal (the workspace starts
+                        # empty, so subdirectory proposals used to die on
+                        # a parent that did not exist yet).
+                        "create_parents": True,
                     },
                     expected_outcome={
                         "kind": "text_equals",
@@ -283,9 +438,6 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 },
             )
 
-        parsed_python = self._parse_run_python_step(
-            event, root, increment.content
-        )
         if parsed_python is not None:
             command = shlex.join(
                 [sys.executable, parsed_python["absolute_path"], *parsed_python["args"]]
@@ -328,6 +480,26 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 },
             )
 
+        # A rejected structured proposal must NOT fall through to the prose
+        # claim branch below: its text routinely contains "完成" (in the
+        # objective or content), and the old fall-through recorded those
+        # rejections as completion claims. Record the rejection reason so
+        # the next cognition call sees it, and re-ask from that feedback.
+        if looks_like_structured_payload(
+            increment.content, top_level_key="zn_work_step"
+        ):
+            reason = reasons[0] if reasons else "提案未通过结构化校验"
+            state.data[self._TEAM_REJECTION_KEY] = {
+                "run_id": str(context.get("run_id") or ""),
+                "reason": reason,
+                "proposal_excerpt": str(increment.content or "")[:600],
+            }
+            state.stage = "native_deliberation"
+            state.next_action = f"专员提案被拒：{reason}；按拒因重提"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+
         # Prose: the specialist claims the item is done. Record the claim and
         # keep the event alive -- the generic prose path would complete the
         # event with the model answer, but a team claim is only a claim:
@@ -340,6 +512,7 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         summary = str(increment.content or "").strip()
         completion_signals = (
             "完成",
+            "搞定了",
             "done",
             "complete",
             "finished",
@@ -469,6 +642,10 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         state.data.pop("cognition_integration", None)
         state.data.pop("cognition_request", None)
         state.data.pop("impasse_id", None)
+        # Verified progress supersedes the last rejection and resets the
+        # zero-evidence-progress counter: the specialist is moving again.
+        state.data.pop(self._TEAM_REJECTION_KEY, None)
+        state.data.pop(self._TEAM_NO_PROGRESS_KEY, None)
         state.stage = "native_deliberation"
         state.next_action = "choose the next bounded team specialist step from fresh evidence"
         self._sync_execution_context(event, state)

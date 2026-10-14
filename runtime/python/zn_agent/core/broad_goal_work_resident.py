@@ -338,23 +338,48 @@ class BroadGoalWorkResidentRuntime(UserBrowserExtensionResidentRuntime):
         event,
         root: WorkItem,
         content: str,
+        *,
+        reasons: list[str] | None = None,
+        allow_missing_parent: bool = False,
     ) -> dict[str, str] | None:
+        """Validate one bounded write_file proposal.
+
+        ``reasons`` (when given) collects why a proposal was rejected, so a
+        caller can feed the rejection back to the next cognition call
+        instead of leaving the model in a zero-feedback loop. The checks
+        themselves are unchanged: ``reasons`` is diagnostic-only and never
+        grants execution. ``allow_missing_parent`` relaxes only the
+        parent-directory existence check -- the workspace boundary check
+        still applies, and the caller must create the parent (Body
+        ``create_parents``) before the write executes.
+        """
+
+        def _reject(reason: str) -> None:
+            if reasons is not None:
+                reasons.append(reason)
+
         raw = parse_exact_json_payload(content)
         if not isinstance(raw, dict) or set(raw) != {"zn_work_step"}:
+            _reject("提案必须是恰好一个 zn_work_step JSON 对象")
             return None
         step = raw.get("zn_work_step")
         if not isinstance(step, dict):
+            _reject("zn_work_step 必须是对象")
             return None
         objective = " ".join(str(step.get("objective") or "").strip().split())
         action = step.get("action")
         acceptance = step.get("acceptance")
         if not objective or len(objective) > 600:
+            _reject("objective 为空或超过 600 字符")
             return None
         if not isinstance(action, dict) or not isinstance(acceptance, dict):
+            _reject("action 和 acceptance 都必须是对象")
             return None
         if str(action.get("kind") or "").strip() != "write_file":
+            _reject("write_file 提案的 action.kind 必须是 write_file")
             return None
         if str(acceptance.get("kind") or "").strip() != "text_equals":
+            _reject("write_file 提案的 acceptance.kind 必须是 text_equals")
             return None
 
         relative_path = str(action.get("path") or "").strip()
@@ -362,27 +387,49 @@ class BroadGoalWorkResidentRuntime(UserBrowserExtensionResidentRuntime):
         body = action.get("content")
         expected = acceptance.get("expected_text")
         if not relative_path or relative_path != acceptance_path:
+            _reject("action.path 与 acceptance.path 必须相同且非空")
             return None
-        if not isinstance(body, str) or not isinstance(expected, str) or body != expected:
+        if (
+            not isinstance(body, str)
+            or not isinstance(expected, str)
+            or body != expected
+        ):
+            _reject("action.content 与 acceptance.expected_text 必须相同")
             return None
         if len(body) > self._MAX_STEP_CONTENT:
+            _reject("文件内容超过单步上限")
             return None
 
         rel = Path(relative_path)
-        if rel.is_absolute() or not rel.parts or any(part in {"", ".", ".."} for part in rel.parts):
+        if (
+            rel.is_absolute()
+            or not rel.parts
+            or any(part in {"", ".", ".."} for part in rel.parts)
+        ):
+            _reject(
+                "路径必须是工作区内的相对路径，不能是绝对路径或包含 . / .."
+            )
             return None
         workspace = Path(str(event.payload.get("workspace_path") or "")).expanduser()
         try:
             root_path = workspace.resolve(strict=True)
             candidate = root_path.joinpath(*rel.parts)
-            parent = candidate.parent.resolve(strict=True)
+            if allow_missing_parent:
+                # Missing parents are created by the Body (create_parents);
+                # resolve(strict=False) still resolves symlinks in the
+                # existing prefix, so the boundary check stays real.
+                parent = candidate.parent.resolve(strict=False)
+            else:
+                parent = candidate.parent.resolve(strict=True)
             parent.relative_to(root_path)
             if candidate.exists():
                 candidate.resolve(strict=True).relative_to(root_path)
         except (OSError, RuntimeError, ValueError):
+            _reject("路径不在工作区内，或工作区不存在")
             return None
 
         if root.plan_version != self.work_ledger.plan_version(root.work_thread_id):
+            _reject("计划版本已变化，提案已过期")
             return None
         return {
             "objective": objective,
