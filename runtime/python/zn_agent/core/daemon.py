@@ -278,6 +278,35 @@ class ResidentRpcServer:
                 # team_handover_done RPC is the clean path (no error).
                 if parse_handover_done(task):
                     self._resolve_thread_handover(thread_id)
+            # Skill entry (P1-3): "存成技能" / "确认保存技能" / "/技能名 ..."
+            # become durable ingress metadata the same way. A
+            # caller-supplied skill payload is never trusted -- the parse
+            # owns it. The "/name" prefix is stripped from the task: a
+            # slash reference is a command, not part of the task text.
+            # Local import: the top-level import block is shared with
+            # main-side additions (team_timeline), and a top-level skill
+            # import there re-conflicts on every squash merge.
+            from .skill_request import (
+                parse_skill_confirm,
+                parse_skill_reference,
+                parse_skill_save_request,
+            )
+            payload.pop("skill_save_request", None)
+            payload.pop("skill_reference", None)
+            payload.pop("skill_confirm", None)
+            skill_save = parse_skill_save_request(task)
+            if skill_save is not None:
+                payload["skill_save_request"] = skill_save
+            elif parse_skill_confirm(task):
+                payload["skill_confirm"] = {"explicit": True}
+            else:
+                skill_reference = parse_skill_reference(task)
+                if skill_reference is not None:
+                    payload["skill_reference"] = {
+                        "name": skill_reference["name"],
+                        "raw": task,
+                    }
+                    task = skill_reference["remainder"]
             snapshot, event = self.work_control.start(
                 thread_id,
                 task,

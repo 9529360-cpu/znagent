@@ -50,6 +50,9 @@ class KernelStore:
             CREATE TABLE IF NOT EXISTS event_cancellation_requests(event_id TEXT PRIMARY KEY, requested_at TEXT NOT NULL, reason TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS working_state(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS facts(fact_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, aliases_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS skills(skill_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
+            CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status);
             CREATE TABLE IF NOT EXISTS runtime_metrics(id INTEGER PRIMARY KEY CHECK(id=1), tasks_total INTEGER NOT NULL DEFAULT 0, tasks_model INTEGER NOT NULL DEFAULT 0, model_invocations INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS resident_lease(id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL, pid INTEGER NOT NULL, hostname TEXT NOT NULL, started_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL);
             """)
@@ -937,6 +940,51 @@ class KernelStore:
     def delete_fact(self, key: str) -> None:
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM facts WHERE fact_key=?", (key,))
+
+    def save_skill(self, data: dict[str, Any]) -> None:
+        """Upsert one saved-skill row. The caller owns the lifecycle."""
+        skill_id = str(data.get("skill_id") or "").strip()
+        name = str(data.get("name") or "").strip()
+        status = str(data.get("status") or "").strip()
+        if not skill_id or not name or not status:
+            raise ValueError("skill requires skill_id, name and status")
+        now = utc_now()
+        with self._lock, self._conn:
+            existing = self._conn.execute("SELECT created_at FROM skills WHERE skill_id=?", (skill_id,)).fetchone()
+            created = existing["created_at"] if existing else now
+            self._conn.execute("INSERT OR REPLACE INTO skills VALUES(?,?,?,?,?,?)", (skill_id, name, status, self._dump(data), created, now))
+
+    def get_skill(self, skill_id: str) -> dict[str, Any] | None:
+        with self._lock:
+            row = self._conn.execute("SELECT data FROM skills WHERE skill_id=?", (str(skill_id or ""),)).fetchone()
+        return json.loads(row["data"]) if row else None
+
+    def get_skill_by_name(self, name: str, *, status: str | None = None) -> dict[str, Any] | None:
+        sql = "SELECT data FROM skills WHERE name=?"
+        params: list[Any] = [str(name or "")]
+        if status is not None:
+            sql += " AND status=?"
+            params.append(status)
+        sql += " ORDER BY created_at DESC LIMIT 1"
+        with self._lock:
+            row = self._conn.execute(sql, params).fetchone()
+        return json.loads(row["data"]) if row else None
+
+    def list_skills(self, *, status: str | None = None) -> list[dict[str, Any]]:
+        sql = "SELECT data FROM skills"
+        params: list[Any] = []
+        if status is not None:
+            sql += " WHERE status=?"
+            params.append(status)
+        sql += " ORDER BY created_at ASC"
+        with self._lock:
+            rows = self._conn.execute(sql, params).fetchall()
+        return [json.loads(r["data"]) for r in rows]
+
+    def delete_skill(self, skill_id: str) -> None:
+        """Delete only the skill row; Work records are never touched."""
+        with self._lock, self._conn:
+            self._conn.execute("DELETE FROM skills WHERE skill_id=?", (str(skill_id or ""),))
 
     def record_runtime_task(self, *, model_invocations: int, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
         inv = max(0, int(model_invocations))

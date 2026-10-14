@@ -30,7 +30,8 @@ from typing import Any
 from .action import NativeActionIntent
 from .broad_goal_work_resident import BroadGoalWorkResidentRuntime
 from .cognition import CognitiveIncrement
-from .models import utc_now
+from .models import ExecutionPath, ResidentRunResult, utc_now
+from .skill_ledger import SkillOwner, skill_reference_block
 from .steerable_work import WorkItem
 from .structured_proposal import parse_exact_json_payload
 from .work import title_for_work_task
@@ -73,6 +74,35 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         learning_evidence,
         thought=None,
     ):
+        # Skill requests (P1-3) are handled here, before the Veteran path:
+        # save-draft / confirm complete terminally without a model call, and
+        # a validated "/skill" reference falls through to normal cognition
+        # with the skill injected (see _build_cognition_request). Anything
+        # that is not a skill event falls through untouched.
+        skill_owner = SkillOwner(store=self.store, ledger=self.work_ledger)
+        if skill_owner.handles(event):
+            try:
+                response = skill_owner.handle(event)
+            except ValueError as exc:
+                return self._checkpoint_terminal_failure(
+                    event,
+                    state,
+                    reason=str(exc),
+                )
+            if response is not None:
+                state.stage = "complete"
+                state.next_action = "skill request handled without a model call"
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return ResidentRunResult(
+                    event=event,
+                    execution_path=ExecutionPath.BODY,
+                    success=True,
+                    response=response,
+                    reason="skill request handled from the durable skill ledger",
+                )
+            # Validated reference: fall through so normal cognition runs.
+
         if (
             not VeteranEngineeringWorkOwner.handles(event)
             or bool(state.data.get(self._VETERAN_HANDOFF_KEY))
@@ -282,6 +312,13 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             "child_count": len(items),
             "latest_execution": latest_execution,
         }
+        # P1-3: a validated "/skill" reference injects the confirmed skill.
+        # Layers above this one may overwrite the question (BroadGoalAutonomous
+        # replaces it with the Root acceptance contract); each overwriting
+        # layer re-appends the block via skill_reference_block.
+        skill_block = skill_reference_block(self.store, event)
+        if skill_block:
+            request.question = str(request.question or "") + "\n\n" + skill_block
         return request
 
     def _cognition_integration_step(

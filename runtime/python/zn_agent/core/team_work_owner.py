@@ -31,6 +31,7 @@ from .completion_verdict import (
     record_verdict_attempt,
 )
 from .project_team import ProjectTeam, assemble_team
+from .skill_ledger import SkillLedger
 from .team_memory import team_shared_memory
 from .team_runner import Escalation, TeamRunner, VerificationOutcome
 from .team_timeline import apply_assignee_overrides, assignee_overrides
@@ -219,6 +220,29 @@ class TeamWorkOwner:
         match = shared.recall(TeamRunner.PLAN_MAP_KEY)
         return dict(match.value) if match and isinstance(match.value, dict) else {}
 
+    def _skills_block_for(self, objective: str) -> str:
+        """Confirmed-skill block for a specialist item, or "" when none apply.
+
+        Advisory only: any failure here (no store, fake memory in tests,
+        ledger error) degrades to no skills, never breaks team dispatch.
+        """
+        try:
+            store = getattr(self.memory, "store", None)
+            if store is None:
+                return ""
+            skills = SkillLedger(store).relevant_skills(objective, max_skills=2)
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return ""
+        if not skills:
+            return ""
+        parts = [
+            "Relevant confirmed ZN skills (human-confirmed, advisory -- "
+            "follow their steps; approval boundaries still apply):"
+        ]
+        for skill in skills:
+            parts.append(SkillLedger.render_for_cognition(skill, max_chars=800))
+        return "\n".join(parts)
+
     def live_run(self, *, team: ProjectTeam) -> Any | None:
         """The currently-dispatched, unclaimed WorkerRun, if any."""
         id_map = self._plan_map(team)
@@ -369,13 +393,18 @@ class TeamWorkOwner:
                 if id_map.get(plan_item.item_id) == live.work_item_id:
                     step.live_specialist_name = plan_item.assignee
                     specialist = team.member(plan_item.assignee)
+                    brief = specialist.prompt_fragment if specialist else ""
+                    # P1-3: relevant confirmed skills ride along in the
+                    # specialist brief (which already flows into cognition).
+                    # Advisory only -- a skill failure never breaks dispatch.
+                    skill_block = self._skills_block_for(plan_item.objective)
+                    if skill_block:
+                        brief = f"{brief}\n\n{skill_block}" if brief else skill_block
                     step.live_context = {
                         "run_id": live.worker_run_id,
                         "work_item_id": live.work_item_id,
                         "specialist_name": plan_item.assignee,
-                        "specialist_prompt": (
-                            specialist.prompt_fragment if specialist else ""
-                        ),
+                        "specialist_prompt": brief,
                         "objective": plan_item.objective,
                         "acceptance_criteria": list(plan_item.acceptance_criteria),
                         "evidence": [
