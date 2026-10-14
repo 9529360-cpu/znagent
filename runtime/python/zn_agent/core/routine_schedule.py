@@ -18,7 +18,7 @@ routine will fire next.
 
 import re
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 MIN_ROUTINE_INTERVAL_SECONDS = 60
@@ -55,15 +55,30 @@ _DOW_NAMES = {
 }
 
 
-def resolve_timezone(name: str) -> ZoneInfo:
-    """Return the ZoneInfo for a timezone name; raise ValueError when unknown."""
+#: IANA names that are exactly UTC. Only these get a fallback when no
+#: timezone database is available (see resolve_timezone): any other name
+#: must still raise, so a misspelled zone is never silently treated as UTC.
+_UTC_ALIASES: frozenset[str] = frozenset({"UTC", "GMT", "Etc/UTC", "Etc/GMT"})
+
+
+def resolve_timezone(name: str) -> tzinfo:
+    """Return the tzinfo for a timezone name; raise ValueError when unknown.
+
+    ZoneInfo is preferred so DST rules are exact. On hosts without a system
+    timezone database and without the tzdata package (notably Windows), the
+    UTC aliases fall back to datetime.timezone.utc so the scheduler keeps
+    working instead of failing every schedule; any other name still raises.
+    """
     text = str(name or "").strip()
     if not text:
         raise ValueError("routine timezone must not be empty")
     try:
         return ZoneInfo(text)
-    except (ZoneInfoNotFoundError, ValueError) as exc:
-        raise ValueError(f"unknown routine timezone: {text}") from exc
+    except (ZoneInfoNotFoundError, ValueError):
+        pass
+    if text in _UTC_ALIASES:
+        return timezone.utc
+    raise ValueError(f"unknown routine timezone: {text}") from None
 
 
 def local_timezone_name() -> str:
@@ -200,7 +215,7 @@ def _cron_value(text: str, low: int, high: int, names: dict[str, int]) -> int:
 def next_cron_occurrence(
     expr: CronExpression,
     after: datetime,
-    tz: ZoneInfo,
+    tz: tzinfo,
 ) -> datetime:
     """First cron occurrence strictly after ``after``, in the schedule timezone."""
     if after.tzinfo is None:
@@ -261,7 +276,7 @@ def count_cron_occurrences(
     expr: CronExpression,
     start_exclusive: datetime,
     end_inclusive: datetime,
-    tz: ZoneInfo,
+    tz: tzinfo,
     *,
     cap: int = 10_000,
 ) -> int:
