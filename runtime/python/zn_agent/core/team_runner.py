@@ -21,16 +21,29 @@ the resident can do. The runner never fakes it -- it calls the injected
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from .evidence_bound_work import WorkerRun
-from .project_team import ProjectTeam, team_journal_role_prefix
+from .project_team import ProjectTeam, journal_message, team_journal_role_prefix
 from .steerable_work import WorkItem
 from .team_coordinator import TeamCoordinator
 from .team_memory import (
     distill_retrospective,
     save_retrospective,
     team_shared_memory,
+)
+from .team_termination import (
+    TerminationLimits,
+    TerminationResult,
+    TerminationState,
+    evaluate_termination,
+    load_termination_state,
+    record_token_usage,
+    record_tool_call,
+    request_stop,
+    save_termination_state,
+    take_stop,
 )
 from .team_timeline import evidence_from_refs
 
@@ -68,6 +81,12 @@ class TeamStepResult:
     escalations: list[Escalation] = field(default_factory=list)
     team_complete: bool = False
     retrospective_summary: str | None = None
+    # Hard termination (CP-1): when True, this step dispatched, verified,
+    # and completed nothing -- the team is stopped with ``stop_reason``.
+    stopped: bool = False
+    stop_reason: str | None = None
+    stop_trigger: dict[str, Any] = field(default_factory=dict)
+    stop_progress: dict[str, Any] = field(default_factory=dict)
 
 
 class TeamRunner:
@@ -91,6 +110,8 @@ class TeamRunner:
         root_work_item_id: str,
         tool_scope: tuple[str, ...] = ("terminal",),
         authority_scope: tuple[str, ...] | None = None,
+        termination_limits: TerminationLimits | None = None,
+        now_fn: Any | None = None,
     ):
         if not root_work_item_id or not str(root_work_item_id).strip():
             raise ValueError("root_work_item_id must not be empty")
@@ -109,10 +130,124 @@ class TeamRunner:
         self._coordinator = TeamCoordinator(
             team=team, root_work_item_id=self._root_id
         )
+        self._limits = termination_limits or TerminationLimits()
+        self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
 
     @property
     def team(self) -> ProjectTeam:
         return self._team
+
+    # -- hard termination (CP-1) -------------------------------------------
+
+    def termination_state(self) -> TerminationState:
+        """Current durable termination counters + stop record, if any."""
+        shared = team_shared_memory(self._memory, self._team.team_id)
+        return load_termination_state(shared)
+
+    def record_token_usage(self, total_tokens: int) -> TerminationState:
+        """Add real provider token usage to the team's running total."""
+        shared = team_shared_memory(self._memory, self._team.team_id)
+        state = load_termination_state(shared)
+        record_token_usage(state, total_tokens)
+        save_termination_state(shared, state)
+        return state
+
+    def record_tool_call(self) -> TerminationState:
+        """Count one executed specialist tool step against the tool cap."""
+        shared = team_shared_memory(self._memory, self._team.team_id)
+        state = load_termination_state(shared)
+        record_tool_call(state)
+        save_termination_state(shared, state)
+        return state
+
+    def request_stop(self, reason: str, *, detail: str = "") -> TerminationState:
+        """Request an external stop (``user_cancel`` | ``error``).
+
+        The stop takes effect on the next :meth:`step` -- no more work is
+        dispatched after it. ``converged`` is rejected here: only the CP-3
+        structured completion verdict may declare convergence.
+        """
+        shared = team_shared_memory(self._memory, self._team.team_id)
+        state = load_termination_state(shared)
+        request_stop(state, reason, detail=detail)
+        save_termination_state(shared, state)
+        return state
+
+    def _progress_snapshot(
+        self, state: TerminationState, *, now: datetime
+    ) -> dict[str, Any]:
+        """Read-only progress at stop time: counters + plan completion."""
+        from .team_termination import elapsed_seconds
+
+        thread_id = self._team.work_thread_id or ""
+        shared = team_shared_memory(self._memory, self._team.team_id)
+        id_map: dict[str, str] = {}
+        match = shared.recall(self.PLAN_MAP_KEY)
+        if match is not None and isinstance(match.value, dict):
+            id_map = dict(match.value)
+        items = {
+            item.work_item_id: item
+            for item in self._ledger.list_work_items(thread_id)
+        }
+        completed = sum(
+            1
+            for wid in id_map.values()
+            if items.get(wid) is not None and items[wid].status == "completed"
+        )
+        live_wid: str | None = None
+        for plan_item in self._team.plan:
+            wid = id_map.get(plan_item.item_id)
+            item = items.get(wid) if wid else None
+            if item is None or item.status != "completed":
+                live_wid = wid
+                break
+        return {
+            "team_id": self._team.team_id,
+            "pulses": max(0, int(state.pulses or 0)),
+            "elapsed_seconds": elapsed_seconds(state, now=now),
+            "tokens_used": max(0, int(state.tokens_used or 0)),
+            "tool_calls": max(0, int(state.tool_calls or 0)),
+            "plan_items_total": len(self._team.plan),
+            "plan_items_completed": completed,
+            "live_work_item_id": live_wid,
+        }
+
+    def _take_stop(
+        self,
+        shared: Any,
+        state: TerminationState,
+        result: TerminationResult,
+        *,
+        now: datetime,
+    ) -> TeamStepResult:
+        """Persist the stop, journal it, and report it. No work dispatched."""
+        progress = self._progress_snapshot(state, now=now)
+        taken = take_stop(state, result, now=now, progress=progress)
+        save_termination_state(shared, state)
+        journal = journal_message(
+            self._team.team_id,
+            "coordinator",
+            f"停止：团队 {self._team.team_id} 已停止 "
+            f"（STOP_REASON={taken.stop_reason}）。"
+            f"触发：{taken.trigger}。"
+            f"进展：{progress['plan_items_completed']}/"
+            f"{progress['plan_items_total']} 项完成。",
+            kind="blocker",
+        )
+        journal["detail"].update(
+            {
+                "stop_reason": taken.stop_reason,
+                "trigger": dict(taken.trigger),
+                "progress": dict(taken.progress),
+            }
+        )
+        self._journal(journal)
+        return TeamStepResult(
+            stopped=True,
+            stop_reason=taken.stop_reason,
+            stop_trigger=dict(taken.trigger),
+            stop_progress=dict(taken.progress),
+        )
 
     # -- plan materialization -------------------------------------------
 
@@ -185,7 +320,46 @@ class TeamRunner:
     # -- the loop ---------------------------------------------------------
 
     def step(self) -> TeamStepResult:
-        """One full loop: ensure items, coordinate, apply. Returns a report."""
+        """One full loop: terminate-check, ensure items, coordinate, apply.
+
+        Hard termination (CP-1) runs first, every pulse: a team that has
+        already stopped reports the stored stop with no side effects, and
+        a team hitting a cap (or a requested external stop) stops here --
+        before any dispatch, verification, or completion.
+        """
+        shared = team_shared_memory(self._memory, self._team.team_id)
+        state = load_termination_state(shared)
+        if state.stop_reason is not None:
+            return TeamStepResult(
+                stopped=True,
+                stop_reason=state.stop_reason,
+                stop_trigger=dict(state.trigger or {}),
+                stop_progress=dict(state.progress or {}),
+            )
+        now = self._now_fn()
+        if state.started_at is None:
+            state.started_at = now.isoformat()
+        state.pulses = max(0, int(state.pulses or 0)) + 1
+        save_termination_state(shared, state)
+        # An externally requested stop (user_cancel / error) wins over caps:
+        # the user asked to stop, so no more work is dispatched this pulse.
+        if state.requested_stop is not None:
+            return self._take_stop(
+                shared,
+                state,
+                TerminationResult(
+                    stop_reason=state.requested_stop,
+                    trigger={
+                        "requested_stop": state.requested_stop,
+                        "detail": state.requested_stop_detail,
+                    },
+                ),
+                now=now,
+            )
+        cap = evaluate_termination(state, self._limits, now=now)
+        if cap is not None:
+            return self._take_stop(shared, state, cap, now=now)
+
         thread_id = self._team.work_thread_id or ""
         id_map = self.ensure_plan_items()
         items = {
@@ -323,6 +497,8 @@ __all__ = [
     "Escalation",
     "TeamRunner",
     "TeamStepResult",
+    "TerminationLimits",
+    "TerminationState",
     "VerificationOutcome",
     "Verifier",
 ]
