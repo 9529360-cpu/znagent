@@ -445,6 +445,72 @@ class ResidentWorkLedger:
             ).fetchall()
         return [self._artifact_from_row(row) for row in rows]
 
+    def delete_thread_messages(
+        self, thread_id: str, *, keep_message_ids: tuple[str, ...] = ()
+    ) -> int:
+        """Delete messages in a thread, except the kept ones. Returns count.
+
+        Disband uses this to empty the project thread while keeping the
+        disband request message itself, so the cleanup checklist (appended
+        as the event's final response) still has a thread to land in.
+        """
+        normalized_id = self._normalize_thread_id(thread_id)
+        keep = {str(m or "").strip() for m in keep_message_ids if str(m or "").strip()}
+        with self._lock, closing(self._connect()) as conn:
+            if keep:
+                placeholders = ",".join("?" for _ in keep)
+                cursor = conn.execute(
+                    f"DELETE FROM work_messages WHERE thread_id=? "
+                    f"AND message_id NOT IN ({placeholders})",
+                    (normalized_id, *sorted(keep)),
+                )
+            else:
+                cursor = conn.execute(
+                    "DELETE FROM work_messages WHERE thread_id=?", (normalized_id,)
+                )
+            conn.commit()
+            return int(cursor.rowcount or 0)
+
+    def delete_thread_artifacts(self, thread_id: str) -> int:
+        """Delete every artifact row in a thread. Returns the count.
+
+        Only the ZN-side artifact records go away. Workspace files on disk
+        are the user's own files -- disband never touches them (see
+        ``SHARED_FILES_REMINDER`` in ``project_team``).
+        """
+        normalized_id = self._normalize_thread_id(thread_id)
+        with self._lock, closing(self._connect()) as conn:
+            cursor = conn.execute(
+                "DELETE FROM work_artifacts WHERE thread_id=?", (normalized_id,)
+            )
+            conn.commit()
+            return int(cursor.rowcount or 0)
+
+    def delete_thread_work_runs(
+        self, thread_id: str, *, keep_event_ids: tuple[str, ...] = ()
+    ) -> int:
+        """Delete work_run rows in a thread, except the kept events.
+
+        Disband keeps the disband event's own run row: progress/finalize
+        need it to deliver the cleanup checklist. Returns the count.
+        """
+        normalized_id = self._normalize_thread_id(thread_id)
+        keep = {str(e or "").strip() for e in keep_event_ids if str(e or "").strip()}
+        with self._lock, closing(self._connect()) as conn:
+            if keep:
+                placeholders = ",".join("?" for _ in keep)
+                cursor = conn.execute(
+                    f"DELETE FROM work_runs WHERE thread_id=? "
+                    f"AND event_id NOT IN ({placeholders})",
+                    (normalized_id, *sorted(keep)),
+                )
+            else:
+                cursor = conn.execute(
+                    "DELETE FROM work_runs WHERE thread_id=?", (normalized_id,)
+                )
+            conn.commit()
+            return int(cursor.rowcount or 0)
+
     def get_snapshot(
         self,
         thread_id: str,
@@ -816,6 +882,16 @@ class ResidentWorkLedger:
                 result["response_sequence"] = sequence
         return result
 
+    def count_thread_work_runs(self, thread_id: str) -> int:
+        """Count work_run rows in a thread (disband verification)."""
+        normalized_id = self._normalize_thread_id(thread_id)
+        with self._lock, closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM work_runs WHERE thread_id=?",
+                (normalized_id,),
+            ).fetchone()
+        return int(row[0] or 0) if row else 0
+
     def get_run(self, event_id: str) -> WorkRun | None:
         normalized = str(event_id or "").strip()
         if not normalized:
@@ -823,6 +899,17 @@ class ResidentWorkLedger:
         with self._lock, closing(self._connect()) as conn:
             row = conn.execute(
                 "SELECT * FROM work_runs WHERE event_id=?", (normalized,)
+            ).fetchone()
+        return self._run_from_row(row) if row else None
+
+    def latest_run_for_thread(self, thread_id: str) -> WorkRun | None:
+        """Most recent run for a thread, whatever its ledger state."""
+        normalized = self._normalize_thread_id(thread_id)
+        with self._lock, closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM work_runs WHERE thread_id=? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (normalized,),
             ).fetchone()
         return self._run_from_row(row) if row else None
 
@@ -945,6 +1032,49 @@ class ResidentWorkLedger:
             work_run.finalized_at = now
             self._save_run(work_run)
             self._response_streams.pop(event_id, None)
+            self._record_completion_summary(
+                thread=thread, work_run=work_run, run=run, artifacts=new_artifacts
+            )
+
+    def _record_completion_summary(self, *, thread, work_run, run, artifacts) -> None:
+        """P2-6: persist a rule-based completion summary when a Work run finalizes.
+
+        Best-effort by design: a summary failure must never break Work
+        finalization. The summary is built only from this run's own response,
+        reason, and artifacts, and decisions inside it must cite fresh
+        evidence from this run (see completion_summary).
+        """
+        try:
+            memory = getattr(self.resident, "memory", None)
+            if memory is None:
+                return
+            from .completion_summary import (
+                build_completion_summary,
+                save_completion_summary,
+            )
+
+            outcome = None
+            try:
+                from .work_outcome_summary import project_work_outcome
+
+                outcome = project_work_outcome(self, run.event.event_id)
+            except Exception:
+                outcome = None
+            summary = build_completion_summary(
+                thread_id=thread.thread_id,
+                thread_title=thread.title,
+                task=work_run.task,
+                event_id=run.event.event_id,
+                success=bool(run.success),
+                response=run.response,
+                reason=run.reason,
+                artifacts=artifacts,
+                message_ids=(_event_message_id(run.event.event_id, "zn"),),
+                outcome=outcome,
+            )
+            save_completion_summary(memory, summary)
+        except Exception:
+            return
 
     def _collect_artifacts(
         self,
