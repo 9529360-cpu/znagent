@@ -71,7 +71,10 @@ class SuggestionEngine:
         self.ledger = ledger
         self.store = resident.store
         self._lock = threading.RLock()
-        self._init_schema()
+        # Schema is created lazily on first use, never at construction:
+        # building the daemon must not fail because an auxiliary feature's
+        # table cannot be created while the store is busy.
+        self._schema_ready = False
 
     def list_suggestions(
         self,
@@ -79,6 +82,7 @@ class SuggestionEngine:
         now: datetime | None = None,
         limit: int = _MAX_SUGGESTIONS,
     ) -> list[dict[str, Any]]:
+        self._ensure_schema()
         current = now or datetime.now(timezone.utc)
         if current.tzinfo is None:
             current = current.replace(tzinfo=timezone.utc)
@@ -112,6 +116,7 @@ class SuggestionEngine:
         normalized = str(key or "").strip()
         if not normalized:
             raise ValueError("suggestions_dismiss requires a suggestion key")
+        self._ensure_schema()
         current = now or datetime.now(timezone.utc)
         if current.tzinfo is None:
             current = current.replace(tzinfo=timezone.utc)
@@ -351,6 +356,13 @@ class SuggestionEngine:
                 (current.isoformat(),),
             )
             conn.commit()
+
+    def _ensure_schema(self) -> None:
+        with self._lock:
+            if self._schema_ready:
+                return
+            self._init_schema()
+            self._schema_ready = True
 
     def _init_schema(self) -> None:
         with closing(self._connect()) as conn:
