@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping, Protocol, Sequence
 
+from .hook_semantics import HOOK_SEMANTICS_PROMPT
 from .terminal import TerminalRequest, ZNLocalTerminal, get_zn_local_terminal
 
 
@@ -345,7 +346,8 @@ DEFAULT_SYSTEM_PROMPT = (
     "to do something destructive or irreversible (deleting data, sending "
     "something, spending money, publishing something) that was not clearly "
     "part of the objective. When the objective is done, reply with plain "
-    "text summarizing what you did and stop calling tools."
+    "text summarizing what you did and stop calling tools. "
+    + HOOK_SEMANTICS_PROMPT
 )
 
 
