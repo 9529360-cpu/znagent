@@ -553,23 +553,42 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         event,
         root: WorkItem,
         content: str,
+        *,
+        reasons: list[str] | None = None,
     ) -> dict[str, Any] | None:
+        """Validate one bounded run_python proposal.
+
+        ``reasons`` is diagnostic-only (see ``_parse_write_file_step``):
+        it collects why a proposal was rejected so the caller can feed the
+        rejection back to the next cognition call.
+        """
+
+        def _reject(reason: str) -> None:
+            if reasons is not None:
+                reasons.append(reason)
+
         raw = parse_exact_json_payload(content)
         if not isinstance(raw, dict) or set(raw) != {"zn_work_step"}:
+            _reject("提案必须是恰好一个 zn_work_step JSON 对象")
             return None
         step = raw.get("zn_work_step")
         if not isinstance(step, dict):
+            _reject("zn_work_step 必须是对象")
             return None
         objective = " ".join(str(step.get("objective") or "").strip().split())
         action = step.get("action")
         acceptance = step.get("acceptance")
         if not objective or len(objective) > 600:
+            _reject("objective 为空或超过 600 字符")
             return None
         if not isinstance(action, dict) or not isinstance(acceptance, dict):
+            _reject("action 和 acceptance 都必须是对象")
             return None
         if str(action.get("kind") or "").strip() != "run_python":
+            _reject("run_python 提案的 action.kind 必须是 run_python")
             return None
         if str(acceptance.get("kind") or "").strip() != "command":
+            _reject("run_python 提案的 acceptance.kind 必须是 command")
             return None
 
         relative_path = str(action.get("path") or "").strip()
@@ -581,19 +600,23 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             or any(part in {"", ".", ".."} for part in rel.parts)
             or rel.suffix.lower() != ".py"
         ):
+            _reject("脚本路径必须是工作区内的相对 .py 路径，不能是绝对路径或包含 . / ..")
             return None
         raw_args = action.get("args") or []
         if not isinstance(raw_args, list) or len(raw_args) > self._MAX_PYTHON_ARGS:
+            _reject("args 必须是列表且不超过单步上限")
             return None
         args: list[str] = []
         for value in raw_args:
             if not isinstance(value, (str, int, float)) or isinstance(value, bool):
+                _reject("args 元素必须是字符串或数字")
                 return None
             rendered = str(value)
             if (
                 len(rendered) > self._MAX_ARG_CHARS
                 or any(ord(char) < 32 or ord(char) == 127 for char in rendered)
             ):
+                _reject("args 元素过长或包含控制字符")
                 return None
             args.append(rendered)
 
@@ -601,39 +624,52 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
         try:
             root_path = workspace.resolve(strict=True)
         except (OSError, RuntimeError):
+            _reject("工作区不存在")
             return None
         if not root_path.is_dir():
+            _reject("工作区不是目录")
             return None
 
         resolved = self._resolve_workspace_python_script(root_path, rel)
         if resolved is None:
+            _reject(
+                "脚本不存在：run_python 只能运行工作区里已存在的文件，"
+                "先用 write_file 创建脚本再运行它"
+            )
             return None
         script, resolved_relative_path, path_replanned = resolved
 
         raw_exit = acceptance.get("expected_exit_code", 0)
         if isinstance(raw_exit, bool):
+            _reject("expected_exit_code 必须是整数")
             return None
         try:
             expected_exit = int(raw_exit)
         except (TypeError, ValueError):
+            _reject("expected_exit_code 必须是整数")
             return None
         raw_output = acceptance.get("output_contains") or []
         if not isinstance(raw_output, list) or len(raw_output) > 8:
+            _reject("output_contains 必须是列表且不超过 8 项")
             return None
         output_contains: list[str] = []
         for value in raw_output:
             if not isinstance(value, str) or not value or len(value) > 1000:
+                _reject("output_contains 元素必须是非空字符串且不超过 1000 字符")
                 return None
             output_contains.append(value)
         raw_timeout = acceptance.get("timeout", 20.0)
         if isinstance(raw_timeout, bool):
+            _reject("timeout 必须是数字")
             return None
         try:
             timeout = max(0.1, min(120.0, float(raw_timeout)))
         except (TypeError, ValueError):
+            _reject("timeout 必须是数字")
             return None
 
         if root.plan_version != self.work_ledger.plan_version(root.work_thread_id):
+            _reject("计划版本已变化，提案已过期")
             return None
         return {
             "objective": objective,
