@@ -13,16 +13,23 @@ item as a ``team-specialist`` WorkerRun; the resident's existing
 cognition/native-action/verification machinery then executes ONE bounded
 step for the live run (see ``team_work_resident``), records Body-verified
 evidence on the run, and claims completion when the specialist's cognition
-returns a completion summary backed by verified evidence. The runner's
-verify step re-checks that evidence with fresh observation before the
-item completes. Escalations surface through the journal; disband still
-follows the existing ``DisbandPlan`` -- never automatic.
+returns a structured completion report backed by verified evidence. The
+claim is adjudicated against the plan item's ``expected_output`` (CP-3,
+see ``completion_verdict``) before it lands, and the runner's verify step
+re-adjudicates with fresh observation before the item completes.
+Escalations surface through the journal; disband still follows the
+existing ``DisbandPlan`` -- never automatic.
 """
 
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from .completion_verdict import (
+    CompletionVerdict,
+    adjudicate_completion,
+    record_verdict_attempt,
+)
 from .project_team import ProjectTeam, assemble_team
 from .team_memory import team_shared_memory
 from .team_runner import Escalation, TeamRunner, VerificationOutcome
@@ -37,6 +44,8 @@ TEAM_SPEC_KEY = "team_spec"
 TEAM_ID_STATE_KEY = "team_id"
 #: Working-state key: a pending completion claim from specialist cognition.
 TEAM_CLAIM_STATE_KEY = "team_completion_claim"
+#: Working-state key: per-run completion-verdict retry tracking (CP-3).
+TEAM_VERDICT_STATE_KEY = "team_completion_verdict"
 #: Working-state key: the team already finished (fall through to normal loop).
 TEAM_COMPLETE_STATE_KEY = "team_complete"
 
@@ -56,6 +65,12 @@ class TeamOwnerStep:
     # Cognition context for the live specialist run (objective, acceptance,
     # specialist brief, verified evidence so far). None when no run is live.
     live_context: dict[str, Any] | None = None
+    # CP-3: a non-verified verdict on this pulse's claim, fed back to the
+    # next cognition call as rejection feedback (reason + fix + missing).
+    verdict_feedback: dict[str, Any] | None = None
+    # CP-3: set when the verdict retry budget is exhausted -- the resident
+    # fails closed with this reason instead of re-asking cognition.
+    verdict_escalation: str | None = None
 
 
 def verified_evidence(run: Any) -> list[dict[str, Any]]:
@@ -74,15 +89,16 @@ def verified_evidence(run: Any) -> list[dict[str, Any]]:
 
 
 class ResidentTeamVerifier:
-    """Runner Verifier: a claimed completion counts only with verified evidence.
+    """Runner Verifier: re-adjudicate a landed claim with fresh observation.
 
     Fresh observation here means re-reading the run from the ledger at
-    verify time -- never trusting a cached claim. Each specialist step was
-    already postcondition-verified by the Body when it executed; this gate
-    confirms the claim is backed by at least one such verified step plus a
-    non-empty specialist summary. Acceptance-criteria judgment itself is
-    the specialist's (cognition) -- the claim -- and this gate is the
-    evidence check behind it.
+    verify time -- never trusting a cached claim. The claim was already
+    adjudicated once when it landed (see ``TeamWorkOwner``); this gate
+    re-runs the same CP-3 adjudication against the run's current evidence
+    and summary, so evidence lost or a summary rewritten after landing
+    cannot smuggle an item through. Semantic judgment (does the evidence
+    *mean* the criterion is met) stays the specialist's honest citation,
+    gated by the evidence-existence check.
     """
 
     def __init__(self, ledger: Any) -> None:
@@ -94,19 +110,24 @@ class ResidentTeamVerifier:
             return VerificationOutcome(passed=False, notes="WorkerRun disappeared")
         evidence = verified_evidence(fresh)
         summary = str(getattr(fresh, "result_summary", "") or "").strip()
-        if not evidence:
+        expected = list(getattr(item, "acceptance_criteria", None) or [])
+        verdict = adjudicate_completion(
+            expected_output=expected,
+            evidence=evidence,
+            summary=summary,
+        )
+        if verdict.verdict != "verified":
             return VerificationOutcome(
                 passed=False,
-                notes="claimed completion has no Body-verified specialist evidence",
-            )
-        if not summary:
-            return VerificationOutcome(
-                passed=False,
-                notes="claimed completion has no specialist summary",
+                notes=f"完成裁决 {verdict.verdict}：{verdict.reason} "
+                f"可执行修改：{verdict.actionable_fix}",
             )
         return VerificationOutcome(
             passed=True,
-            notes=f"{len(evidence)} verified specialist step(s); summary recorded",
+            notes=(
+                f"完成裁决 verified：{len(evidence)} verified specialist step(s); "
+                f"{len(verdict.evidence_refs)} evidence ref(s) cited"
+            ),
             artifact_refs=tuple(
                 dict(ref)
                 for entry in evidence
@@ -208,39 +229,72 @@ class TeamWorkOwner:
 
     # -- one durable step --------------------------------------------------
 
-    def _apply_pending_claim(self, *, state: Any) -> bool:
-        """Claim a run the specialist finished (prose completion summary).
+    def _expected_output_for_run(
+        self, *, team: ProjectTeam, work_item_id: str
+    ) -> list[str]:
+        """The plan item's acceptance criteria = the claim's expected_output."""
+        id_map = self._plan_map(team)
+        for plan_item in team.plan:
+            if id_map.get(plan_item.item_id) == work_item_id:
+                return list(plan_item.acceptance_criteria)
+        return []
 
-        The claim only lands when Body-verified evidence exists; otherwise
-        the specialist has not done verifiable work yet and the claim is
-        dropped -- the next pulse asks cognition again instead of letting
-        an evidence-free claim through to verification.
+    def _apply_pending_claim(
+        self, *, state: Any, team: ProjectTeam
+    ) -> dict[str, Any] | None:
+        """Adjudicate a pending completion claim (CP-3 verdict).
+
+        Returns None when there is no claim to apply, else a dict with the
+        verdict and whether the claim landed. A claim lands only on a
+        ``verified`` verdict; ``partial`` / ``rejected`` leave the run
+        unclaimed, record one retry attempt, and return feedback (reason +
+        actionable fix + missing items) for the next cognition call.
+        When the retry budget is exhausted the dict carries
+        ``escalate_reason`` and the resident fails closed.
         """
         data = state.data if isinstance(getattr(state, "data", None), dict) else {}
         claim = data.get(TEAM_CLAIM_STATE_KEY)
         if not isinstance(claim, dict):
-            return False
+            return None
         data.pop(TEAM_CLAIM_STATE_KEY, None)
         run_id = str(claim.get("run_id") or "").strip()
         summary = str(claim.get("summary") or "").strip()
         if not run_id or not summary:
-            return False
+            return None
         run = self.ledger.worker_run(run_id)
         if run is None or run.claimed_completion:
-            return False
-        if not verified_evidence(run):
-            return False
-        # complete_worker_run replaces metrics with the passed dict, so
-        # carry the verified evidence forward -- otherwise the claim itself
-        # would erase the evidence the verifier needs to see.
-        self.ledger.complete_worker_run(
-            run_id,
-            result_summary=summary,
-            claimed_completion=True,
-            verification_status="pending",
-            metrics=dict(run.metrics or {}),
+            return None
+        verdict: CompletionVerdict = adjudicate_completion(
+            expected_output=self._expected_output_for_run(
+                team=team, work_item_id=str(run.work_item_id or "")
+            ),
+            evidence=verified_evidence(run),
+            summary=summary,
         )
-        return True
+        if verdict.verdict == "verified":
+            data.pop(TEAM_VERDICT_STATE_KEY, None)
+            # complete_worker_run replaces metrics with the passed dict, so
+            # carry the verified evidence forward -- otherwise the claim
+            # itself would erase the evidence the verifier needs to see.
+            self.ledger.complete_worker_run(
+                run_id,
+                result_summary=summary,
+                claimed_completion=True,
+                verification_status="pending",
+                metrics=dict(run.metrics or {}),
+            )
+            return {"landed": True, "verdict": verdict, "escalate_reason": None}
+        tracking, escalate, escalate_reason = record_verdict_attempt(
+            data.get(TEAM_VERDICT_STATE_KEY),
+            run_id=run_id,
+            verdict=verdict,
+        )
+        data[TEAM_VERDICT_STATE_KEY] = tracking
+        return {
+            "landed": False,
+            "verdict": verdict,
+            "escalate_reason": escalate_reason if escalate else None,
+        }
 
     def advance(
         self,
@@ -252,7 +306,7 @@ class TeamWorkOwner:
         """One durable TeamRunner step for this pulse."""
         thread_id = str(event.payload.get("work_thread_id") or "").strip()
         team = self.resolve_team(event=event, state=state, thread_id=thread_id)
-        self._apply_pending_claim(state=state)
+        claim_outcome = self._apply_pending_claim(state=state, team=team)
         runner = TeamRunner(
             team=team,
             ledger=self.ledger,
@@ -268,6 +322,18 @@ class TeamWorkOwner:
             team_complete=result.team_complete,
             retrospective_summary=result.retrospective_summary,
         )
+        if claim_outcome is not None and not claim_outcome["landed"]:
+            verdict = claim_outcome["verdict"]
+            step.verdict_feedback = {
+                "run_id": str(
+                    (state.data.get(TEAM_VERDICT_STATE_KEY) or {}).get("run_id") or ""
+                ),
+                "verdict": verdict.verdict,
+                "reason": verdict.reason,
+                "actionable_fix": verdict.actionable_fix,
+                "missing_items": list(verdict.missing_items),
+            }
+            step.verdict_escalation = claim_outcome["escalate_reason"]
         if result.team_complete:
             step.state = "completed"
             step.message = result.retrospective_summary or "团队全部任务完成"
@@ -316,6 +382,7 @@ __all__ = [
     "TEAM_CLAIM_STATE_KEY",
     "TEAM_COMPLETE_STATE_KEY",
     "TEAM_ID_STATE_KEY",
+    "TEAM_VERDICT_STATE_KEY",
     "ResidentTeamVerifier",
     "TeamOwnerStep",
     "TeamWorkOwner",
