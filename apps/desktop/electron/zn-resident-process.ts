@@ -32,6 +32,8 @@ export type ZnResidentRequest = {
     | 'team_timeline'
     | 'team_assign'
     | 'pulses'
+    | 'suggestions_list'
+    | 'suggestions_dismiss'
     | 'situations'
     | 'thoughts'
     | 'impasses'

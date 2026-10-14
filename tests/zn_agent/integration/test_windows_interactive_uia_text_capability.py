@@ -25,6 +25,25 @@ class _WpfTextFixture:
         self.process: subprocess.Popen[str] | None = None
         self.hwnd = 0
 
+    @staticmethod
+    def _read_ready(ready: Path) -> str | None:
+        """Read the ready file, tolerating the writer still holding it.
+
+        PowerShell ``Set-Content`` creates the file before it finishes
+        writing, so a poller can observe the path while the writer still
+        holds it (Windows raises ``PermissionError`` on read) or while
+        the content is still empty/partial. Those are transient
+        not-ready-yet states: return ``None`` and keep polling until
+        the deadline. Only a complete ``"pid|hwnd"`` line counts.
+        """
+        try:
+            evidence = ready.read_text(encoding="ascii").strip()
+        except PermissionError:
+            return None
+        if not evidence or "|" not in evidence:
+            return None
+        return evidence
+
     def start(self) -> None:
         powershell = shutil.which("powershell.exe") or shutil.which("powershell")
         if not powershell:
@@ -110,7 +129,13 @@ $window.Add_ContentRendered({{
                     f"stdout={stdout!r} stderr={stderr!r}"
                 )
             if ready.is_file():
-                evidence = ready.read_text(encoding="ascii").strip()
+                evidence = self._read_ready(ready)
+                if evidence is None:
+                    # Writer still holds the file, or the content is
+                    # still empty/partial: not ready yet, keep polling
+                    # until the deadline instead of erroring out.
+                    time.sleep(0.05)
+                    continue
                 try:
                     pid_text, hwnd_text = evidence.split("|", 1)
                     evidence_pid = int(pid_text)
