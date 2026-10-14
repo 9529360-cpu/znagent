@@ -28,6 +28,7 @@ import {
 
 import {
   applyZnUpdate,
+  assignZnTeamSpecialist,
   attachZnWorkspace,
   cancelZnWork,
   checkZnUpdate,
@@ -36,6 +37,7 @@ import {
   loadZnApprovals,
   loadZnProviderSettings,
   loadZnResidentSnapshot,
+  loadZnTeamTimeline,
   loadZnWorkThread,
   loadZnWorkThreads,
   startZnWork,
@@ -44,6 +46,10 @@ import {
   type ZnResidentSnapshot,
   type ZnWorkProgress
 } from './resident-client'
+import {
+  parseZnTeamMention,
+  type ZnTeamTimeline
+} from './team-timeline'
 import { describeZnProviderReadiness } from './provider-readiness'
 import { useZnWorkReconnection } from './use-work-reconnection'
 import {
@@ -280,6 +286,8 @@ export function ZnWorkbench() {
   const [updateStatus, setUpdateStatus] = useState<ZnDesktopUpdateStatus | null>(null)
   const [updateBusy, setUpdateBusy] = useState(false)
   const [approvalPendingCount, setApprovalPendingCount] = useState(0)
+  const [teamTimeline, setTeamTimeline] = useState<ZnTeamTimeline | null>(null)
+  const [teamNotice, setTeamNotice] = useState<string | null>(null)
 
   const activeThread = useMemo(
     () => threads.find(thread => thread.id === activeThreadId) || threads[0] || null,
@@ -426,6 +434,33 @@ export function ZnWorkbench() {
       setRestoreBusy(false)
     }
   }, [replaceThread])
+
+  const refreshTeamTimeline = useCallback(async (threadId: string) => {
+    const normalized = threadId.trim()
+    if (!normalized) return
+    try {
+      setTeamTimeline(await loadZnTeamTimeline(normalized))
+    } catch {
+      // The timeline is a derived view; a failed refresh keeps the last
+      // known entries instead of blanking live team history.
+    }
+  }, [])
+
+  // Team timeline follows the active thread. Switching threads clears the
+  // previous thread's timeline so entries never leak across Work.
+  useEffect(() => {
+    setTeamTimeline(null)
+    setTeamNotice(null)
+    if (activeThreadId) void refreshTeamTimeline(activeThreadId)
+  }, [activeThreadId, refreshTeamTimeline])
+
+  // The resident poll already refreshes Work every 12s; the timeline rides
+  // the same rhythm so handoffs appear while the team is running.
+  useEffect(() => {
+    if (!activeThreadId) return
+    const timer = window.setInterval(() => void refreshTeamTimeline(activeThreadId), 12_000)
+    return () => window.clearInterval(timer)
+  }, [activeThreadId, refreshTeamTimeline])
 
   const applyProviderSettings = useCallback((settings: ZnProviderSettings) => {
     setProviderSettings(settings)
@@ -596,6 +631,30 @@ export function ZnWorkbench() {
       if (!task || submissionBusy || stoppingWork || !activeThread) return
 
       const threadId = activeThread.id
+
+      // `@specialist instruction` assigns the next team step. It goes
+      // through the team_assign RPC, not workStart: workStart refuses a
+      // second event while the team event is still running, and an
+      // assignment is steering, not a new Work event.
+      const mention = parseZnTeamMention(task)
+      if (mention && teamTimeline && teamTimeline.members.includes(mention.specialist)) {
+        setDraft('')
+        setBusy(true)
+        setTeamNotice(null)
+        try {
+          const assigned = await assignZnTeamSpecialist(threadId, mention.specialist, mention.instruction)
+          setTeamNotice(t('team.assignDone', { specialist: assigned.specialist }))
+          void refreshTeamTimeline(threadId)
+        } catch (error) {
+          setTeamNotice(t('team.assignFailed', {
+            message: error instanceof Error ? error.message : String(error)
+          }))
+        } finally {
+          setBusy(false)
+        }
+        return
+      }
+
       let residentAccepted = false
       setDraft('')
       setBusy(true)
@@ -649,7 +708,7 @@ export function ZnWorkbench() {
         setBusy(false)
       }
     },
-    [activeThread, draft, replaceThread, stoppingWork, submissionBusy, t]
+    [activeThread, draft, refreshTeamTimeline, replaceThread, stoppingWork, submissionBusy, t, teamTimeline]
   )
 
   const saveProvider = useCallback(async (event: FormEvent) => {
@@ -772,6 +831,17 @@ export function ZnWorkbench() {
     setArtifactOpen(true)
     requestWindowMode('expanded')
   }, [requestWindowMode])
+
+  const openTeamEvidence = useCallback((artifactId: string) => {
+    const artifact = activeArtifacts.find(item => item.id === artifactId)
+    if (!artifact) return
+    setSelectedArtifactId(artifactId)
+    if (artifact.kind === 'presentation' || artifact.kind === 'document') {
+      openArtifact(artifactId)
+    } else {
+      openDetails()
+    }
+  }, [activeArtifacts, openArtifact, openDetails])
 
   const toggleWindowMode = useCallback(() => {
     if (windowMode === 'expanded') {
@@ -1191,6 +1261,61 @@ export function ZnWorkbench() {
                 </div>
               ) : null}
 
+              {teamTimeline && teamTimeline.entries.length > 0 ? (
+                <section className="zn-team-timeline" aria-label={t('team.timelineAria')}>
+                  <div className="zn-team-timeline-head">
+                    <strong>{t('team.timelineTitle')}</strong>
+                    <span className="zn-muted zn-small">
+                      {t('team.timelineReadOnly')} · {t('team.timelineCount', { count: teamTimeline.entries.length })}
+                    </span>
+                  </div>
+                  {teamTimeline.entries.map(entry => (
+                    <article className={'zn-team-entry ' + entry.kind} key={entry.id}>
+                      <div className="zn-message-label">
+                        {entry.author === 'user'
+                          ? t('message.you')
+                          : entry.author === 'coordinator'
+                            ? t('team.coordinator')
+                            : entry.author}
+                      </div>
+                      {entry.kind === 'handoff' ? (
+                        <div className="zn-team-handoff">
+                          <span>{entry.fromAuthor} → {entry.toAuthor}</span>
+                          {entry.itemTitle ? <strong>{entry.itemTitle}</strong> : null}
+                          {entry.objective ? <span className="zn-muted">{entry.objective}</span> : null}
+                        </div>
+                      ) : null}
+                      {entry.kind === 'assignment' ? (
+                        <div className="zn-team-assignment">
+                          <span>{t('team.assignTo', { specialist: entry.toAuthor })}</span>
+                          {entry.instruction ? <span>{entry.instruction}</span> : null}
+                          {entry.itemTitle ? <span className="zn-muted">{t('team.nextItem', { item: entry.itemTitle })}</span> : null}
+                        </div>
+                      ) : null}
+                      <div className="zn-message-body">{entry.text}</div>
+                      {entry.evidence.length > 0 ? (
+                        <div className="zn-team-evidence" aria-label={t('team.evidence')}>
+                          {entry.evidence.map((item, index) => item.artifactId ? (
+                            <button
+                              key={entry.id + '-evidence-' + index}
+                              type="button"
+                              onClick={() => openTeamEvidence(item.artifactId as string)}
+                            >
+                              {t('team.evidenceLink', { label: item.label })}
+                            </button>
+                          ) : (
+                            <span key={entry.id + '-evidence-' + index}>{item.label} · {item.ref}</span>
+                          ))}
+                        </div>
+                      ) : null}
+                      {entry.at ? (
+                        <div className="zn-muted zn-small">{timeLabel(entry.at, localeState.resolvedLocale)}</div>
+                      ) : null}
+                    </article>
+                  ))}
+                </section>
+              ) : null}
+
               {showActiveWork && workProgress ? (
                 <section className="zn-current-work" aria-live="polite">
                   <div className="zn-current-work-head">
@@ -1281,6 +1406,13 @@ export function ZnWorkbench() {
               ) : null}
             </main>
 
+            {teamNotice ? (
+              <div className="zn-team-notice" role="status" aria-live="polite">
+                <span>{teamNotice}</span>
+                <button type="button" aria-label={t('deepLink.dismiss')} onClick={() => setTeamNotice(null)}>×</button>
+              </div>
+            ) : null}
+
             <form className="zn-composer-wrap" onSubmit={submit}>
               <div className="zn-composer">
                 <textarea
@@ -1331,6 +1463,7 @@ export function ZnWorkbench() {
                 </div>
               </div>
               <div className="zn-composer-caption">
+                {teamTimeline && teamTimeline.members.length > 0 ? t('team.assignHint') : ''}
                 {workActive ? t('composer.background') : ''}{t('composer.shortcut')}
               </div>
             </form>
