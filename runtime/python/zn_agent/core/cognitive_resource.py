@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Iterator, Mapping, Protocol
 from urllib.parse import urlparse
 
+from .credential_isolation import CredentialRedactingFilter
 from .models import Goal, ModelRoute, WorkerResult
 
 
@@ -45,6 +46,7 @@ ResourceHealthObserver = Callable[[ModelRoute, BaseException | None], None]
 
 
 _LOG = logging.getLogger(__name__)
+_LOG.addFilter(CredentialRedactingFilter())
 
 
 @contextmanager

@@ -61,12 +61,28 @@ _SECRET_TOKEN = re.compile(
     r"\b(?:sk-[A-Za-z0-9_-]{12,}|"
     r"eyJ[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,})\b"
 )
+# Unambiguous vendor token prefixes. These shapes are specific enough that a
+# match is treated as a credential value, not ordinary text.
+_KNOWN_TOKEN_PREFIX = re.compile(
+    r"(?:\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{20,}"
+    r"|\bgithub_pat_[A-Za-z0-9_]{20,}"
+    r"|\bxox[baprs]-[A-Za-z0-9-]{10,}"
+    r"|\bAIza[0-9A-Za-z_-]{35}"
+    r"|\bAKIA[0-9A-Z]{16})\b"
+)
+_CREDENTIAL_PATTERNS = (
+    _SECRET_ASSIGNMENT,
+    _AUTHORIZATION_VALUE,
+    _URL_USERINFO,
+    _QUERY_SECRET,
+    _SECRET_TOKEN,
+    _KNOWN_TOKEN_PREFIX,
+)
 
 
-def public_error_text(value: Any, *, limit: int = _MAX_PUBLIC_ERROR_TEXT) -> str:
-    """Return one bounded line with common credential forms redacted."""
+def _scrub_credential_values(text: str) -> str:
+    """Apply every credential redaction substitution, without collapsing or truncating."""
 
-    text = " ".join(str(value or "").strip().split())
     text = _URL_USERINFO.sub(r"\1<redacted-userinfo>@", text)
     text = _QUERY_SECRET.sub(lambda match: f"{match.group(1)}<redacted>", text)
     text = _SECRET_ASSIGNMENT.sub(
@@ -75,6 +91,41 @@ def public_error_text(value: Any, *, limit: int = _MAX_PUBLIC_ERROR_TEXT) -> str
     )
     text = _AUTHORIZATION_VALUE.sub("<redacted-authorization>", text)
     text = _SECRET_TOKEN.sub("<redacted>", text)
+    text = _KNOWN_TOKEN_PREFIX.sub("<redacted>", text)
+    return text
+
+
+def contains_credential_value(value: Any) -> bool:
+    """Return True when *value* carries a credential-shaped string.
+
+    Detection and redaction share the same patterns, so a value this function
+    flags is exactly a value :func:`public_error_text` / :func:`scrub_credential_values`
+    would redact. Detection is marker-based (assignment, Bearer, URL userinfo,
+    query secret, known token shape): a bare high-entropy string with no marker
+    is not detected.
+    """
+
+    text = str(value or "")
+    if not text.strip():
+        return False
+    return any(pattern.search(text) for pattern in _CREDENTIAL_PATTERNS)
+
+
+def scrub_credential_values(value: Any) -> str:
+    """Redact credential-shaped substrings, preserving the rest verbatim.
+
+    Unlike :func:`public_error_text` this does not collapse whitespace or
+    truncate, so it is safe for log lines that must keep their structure.
+    """
+
+    return _scrub_credential_values(str(value or ""))
+
+
+def public_error_text(value: Any, *, limit: int = _MAX_PUBLIC_ERROR_TEXT) -> str:
+    """Return one bounded line with common credential forms redacted."""
+
+    text = " ".join(str(value or "").strip().split())
+    text = _scrub_credential_values(text)
     return text[: max(0, int(limit))]
 
 

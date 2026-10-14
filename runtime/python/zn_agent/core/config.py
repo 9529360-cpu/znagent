@@ -61,6 +61,13 @@ def save_zn_config(
 
     if not isinstance(config, Mapping):
         raise ValueError("ZN config must be a mapping")
+    # M15 credential isolation: raw credential values never enter the config
+    # file. Provider secrets must already have been replaced by opaque
+    # credential references (see provider_settings); a credential-shaped value
+    # here is refused before any file is written.
+    from .credential_isolation import check_no_credential_value
+
+    check_no_credential_value(config, where="config:file")
     config_path = Path(path).expanduser() if path is not None else zn_config_path(environ=environ)
     config_path.parent.mkdir(parents=True, exist_ok=True)
     rendered = yaml.safe_dump(
