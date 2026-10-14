@@ -338,6 +338,34 @@ class SteerableWorkLedger(RecoveryBoundedWorkLedger):
             repaired += 1
         return repaired
 
+    def delete_thread_work_items(
+        self, thread_id: str, *, keep_work_item_ids: tuple[str, ...] = ()
+    ) -> int:
+        """Delete WorkItems in a thread, except the kept ones. Returns count.
+
+        Disband keeps only the disband event's own Root: the event needs
+        it to complete and deliver the cleanup checklist. Everything else
+        in the project thread -- plan items, the team Root, earlier items
+        -- goes, because the thread itself is in the disband scope.
+        """
+        normalized_id = self._normalize_thread_id(thread_id)
+        keep = {str(w or "").strip() for w in keep_work_item_ids if str(w or "").strip()}
+        with self._lock, closing(self._connect()) as conn:
+            if keep:
+                placeholders = ",".join("?" for _ in keep)
+                cursor = conn.execute(
+                    f"DELETE FROM work_items WHERE work_thread_id=? "
+                    f"AND work_item_id NOT IN ({placeholders})",
+                    (normalized_id, *sorted(keep)),
+                )
+            else:
+                cursor = conn.execute(
+                    "DELETE FROM work_items WHERE work_thread_id=?",
+                    (normalized_id,),
+                )
+            conn.commit()
+            return int(cursor.rowcount or 0)
+
     def _delete_unbound_item(self, work_item_id: str) -> None:
         with self._lock, closing(self._connect()) as conn:
             bound = conn.execute(
