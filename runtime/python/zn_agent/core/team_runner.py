@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 from .evidence_bound_work import WorkerRun
+from .failure_policy import FailurePolicy
 from .project_team import ProjectTeam, team_journal_role_prefix
 from .steerable_work import WorkItem
 from .team_coordinator import TeamCoordinator
@@ -68,6 +69,13 @@ class TeamStepResult:
     escalations: list[Escalation] = field(default_factory=list)
     team_complete: bool = False
     retrospective_summary: str | None = None
+    # CP-4: a round-level hard stop (e.g. rate limit) ended this round
+    # early; ``blocked_report`` carries tried paths + blocking reason +
+    # what the user must do. ``needs_user`` means some item escalated as
+    # blocked and needs a user decision.
+    hard_stopped: bool = False
+    needs_user: bool = False
+    blocked_report: dict[str, Any] | None = None
 
 
 class TeamRunner:
@@ -91,6 +99,7 @@ class TeamRunner:
         root_work_item_id: str,
         tool_scope: tuple[str, ...] = ("terminal",),
         authority_scope: tuple[str, ...] | None = None,
+        failure_policy: FailurePolicy | None = None,
     ):
         if not root_work_item_id or not str(root_work_item_id).strip():
             raise ValueError("root_work_item_id must not be empty")
@@ -109,10 +118,56 @@ class TeamRunner:
         self._coordinator = TeamCoordinator(
             team=team, root_work_item_id=self._root_id
         )
+        # CP-4 failure policy. The owner rebuilds this runner every pulse,
+        # so rejections + attempt counts are restored from team shared
+        # memory (same durable store as the plan map) instead of living
+        # only in this instance.
+        self._failure_policy = failure_policy or FailurePolicy()
+        self._restore_failure_policy_state()
 
     @property
     def team(self) -> ProjectTeam:
         return self._team
+
+    @property
+    def failure_policy(self) -> FailurePolicy:
+        return self._failure_policy
+
+    # -- CP-4 durable failure-policy state ------------------------------
+
+    _FAILURE_POLICY_STATE_KEY = "failure_policy_state"
+
+    def _restore_failure_policy_state(self) -> None:
+        try:
+            shared = team_shared_memory(self._memory, self._team.team_id)
+            match = shared.recall(self._FAILURE_POLICY_STATE_KEY)
+            if match is not None:
+                self._failure_policy.restore_state(match.value)
+        except Exception:
+            # Failure-policy state is best-effort durability: a runner
+            # with a memory that cannot recall still enforces the policy
+            # in-memory for this round.
+            pass
+
+    def _persist_failure_policy_state(self) -> None:
+        try:
+            shared = team_shared_memory(self._memory, self._team.team_id)
+            shared.remember(
+                self._FAILURE_POLICY_STATE_KEY,
+                self._failure_policy.snapshot_state(),
+            )
+        except Exception:
+            pass
+
+    def record_approval_rejection(self, action_key: str, reason: str = "") -> None:
+        """Record an approval-layer rejection (CP-4: never bypass it).
+
+        The approval layer (or the user) calls this when an action is
+        rejected; later attempts to execute the same action -- through
+        any path -- are blocked by :meth:`_apply` before any side effect.
+        """
+        self._failure_policy.record_approval_rejection(action_key, reason)
+        self._persist_failure_policy_state()
 
     # -- plan materialization -------------------------------------------
 
@@ -202,8 +257,186 @@ class TeamRunner:
         )
         result = TeamStepResult()
         for decision in decisions:
-            self._apply(decision, items, runs, result)
+            try:
+                self._apply(decision, items, runs, result)
+            except Exception as exc:
+                # CP-4: classified failures are handled by policy (hard
+                # stop / escalate / bounded retry next pulse). An
+                # unclassified exception is re-raised -- it may be a
+                # programmer bug, and swallowing it would hide it.
+                if self._handle_apply_failure(exc, decision, result):
+                    break
+            else:
+                # A successful apply resets consecutive-failure counts
+                # for the item: retries count consecutive failures only.
+                wid = decision.work_item_id or ""
+                if wid and decision.action in ("dispatch", "verify", "complete"):
+                    if self._failure_policy.note_success(wid):
+                        self._persist_failure_policy_state()
         return result
+
+    # -- CP-4 failure handling ---------------------------------------------
+
+    def _handle_apply_failure(
+        self,
+        exc: BaseException,
+        decision: Any,
+        result: TeamStepResult,
+    ) -> bool:
+        """Handle one failed decision application. True = stop this round."""
+        policy = self._failure_policy
+        classification = policy.classify(exc)
+        if classification is None:
+            raise exc
+        wid = decision.work_item_id or ""
+        action = decision.action or ""
+        if classification.category == "hard_stop":
+            report = policy.build_blocked_report(
+                tried_paths=[action] if action else [],
+                blocking_reason=classification.reason,
+                user_action=classification.user_action,
+                partial_progress=list(result.actions),
+                failure_kind=classification.kind,
+                reconnect_hint=classification.reconnect_hint,
+            )
+            self._journal(
+                {
+                    "role": f"team:{self._team.team_id}:coordinator",
+                    "text": f"硬停：{classification.reason}",
+                    "detail": {
+                        "kind": "blocker",
+                        "team_id": self._team.team_id,
+                        "author": "coordinator",
+                        "failure_kind": classification.kind,
+                        "blocked_report": report,
+                    },
+                }
+            )
+            result.escalations.append(
+                Escalation(
+                    work_item_id=wid,
+                    reason=classification.reason,
+                    detail={
+                        "hard_stop": True,
+                        "failure_kind": classification.kind,
+                        "blocked_report": report,
+                    },
+                )
+            )
+            if classification.scope == "round":
+                # Rate limit / approval bypass: stop the round now -- no
+                # further decisions are applied, nothing is retried.
+                result.hard_stopped = True
+                result.blocked_report = report
+                result.actions.append(f"hard_stopped:{classification.kind}")
+                return True
+            result.needs_user = True
+            result.actions.append(f"hard_stopped:{classification.kind}:{wid}")
+            return False
+        if classification.category == "needs_user":
+            report = policy.build_blocked_report(
+                tried_paths=[action] if action else [],
+                blocking_reason=classification.reason,
+                user_action=classification.user_action,
+                partial_progress=list(result.actions),
+                failure_kind=classification.kind,
+                reconnect_hint=classification.reconnect_hint,
+            )
+            self._journal(
+                {
+                    "role": f"team:{self._team.team_id}:coordinator",
+                    "text": f"需用户处理：{classification.reason}",
+                    "detail": {
+                        "kind": "blocker",
+                        "team_id": self._team.team_id,
+                        "author": "coordinator",
+                        "failure_kind": classification.kind,
+                        "blocked_report": report,
+                    },
+                }
+            )
+            result.escalations.append(
+                Escalation(
+                    work_item_id=wid,
+                    reason=classification.reason,
+                    detail={
+                        "needs_user": True,
+                        "failure_kind": classification.kind,
+                        "blocked_report": report,
+                    },
+                )
+            )
+            result.needs_user = True
+            if classification.scope == "round":
+                # Auth / billing block every later decision too: stop.
+                result.blocked_report = report
+                result.actions.append(f"needs_user:{classification.kind}")
+                return True
+            result.actions.append(f"needs_user:{classification.kind}:{wid}")
+            return False
+        # retryable / reroute: bounded consecutive attempts; the next
+        # pulse retries (same path) or the caller picks the next path.
+        # Nothing is retried inside this round -- re-applying a
+        # side-effecting decision in the same step could duplicate it.
+        count = policy.record_attempt(wid, classification.kind)
+        self._persist_failure_policy_state()
+        if policy.attempts_exhausted(wid, classification.kind):
+            report = policy.build_blocked_report(
+                tried_paths=[f"{action} x{count}"] if action else [],
+                blocking_reason=(
+                    f"{classification.reason}（连续失败 {count} 次，已耗尽有界尝试）"
+                ),
+                user_action="确认后手动重试，或调整任务后重新下达",
+                partial_progress=list(result.actions),
+                failure_kind=classification.kind,
+            )
+            self._journal(
+                {
+                    "role": f"team:{self._team.team_id}:coordinator",
+                    "text": f"升级：{classification.reason}，连续失败 {count} 次",
+                    "detail": {
+                        "kind": "blocker",
+                        "team_id": self._team.team_id,
+                        "author": "coordinator",
+                        "failure_kind": classification.kind,
+                        "blocked_report": report,
+                    },
+                }
+            )
+            result.escalations.append(
+                Escalation(
+                    work_item_id=wid,
+                    reason=report["blocking_reason"],
+                    detail={
+                        "needs_user": True,
+                        "failure_kind": classification.kind,
+                        "blocked_report": report,
+                    },
+                )
+            )
+            result.needs_user = True
+            result.actions.append(f"failure_exhausted:{classification.kind}:{wid}")
+            return False
+        self._journal(
+            {
+                "role": f"team:{self._team.team_id}:coordinator",
+                "text": (
+                    f"尝试 {action or '执行'} 失败（{classification.kind}，"
+                    f"第 {count}/{policy.max_attempts_per_item} 次），"
+                    "下一轮重试"
+                ),
+                "detail": {
+                    "kind": "note",
+                    "team_id": self._team.team_id,
+                    "author": "coordinator",
+                    "failure_kind": classification.kind,
+                },
+            }
+        )
+        result.actions.append(
+            f"failed:{classification.kind}:{wid}:attempt_{count}"
+        )
+        return False
 
     # -- decision application -------------------------------------------------
 
@@ -227,6 +460,13 @@ class TeamRunner:
     ) -> None:
         action = decision.action
         wid = decision.work_item_id or ""
+        if action in ("dispatch", "complete"):
+            # CP-4: an approval-rejected action must never execute through
+            # another path. Checked before any side effect.
+            context = decision.context or {}
+            action_key = context.get("action_key")
+            if action_key:
+                self._failure_policy.require_not_rejected(str(action_key))
         if action == "dispatch":
             run = self._ledger.start_worker_run(
                 work_item_id=wid,
