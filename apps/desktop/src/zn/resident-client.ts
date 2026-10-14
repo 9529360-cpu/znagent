@@ -1,3 +1,9 @@
+import {
+  normalizeZnTeamAssignResult,
+  normalizeZnTeamTimeline,
+  type ZnTeamAssignResult,
+  type ZnTeamTimeline
+} from './team-timeline'
 import { normalizeZnActiveWorkRun } from './work-reconnection'
 import type {
   ZnArtifact,
@@ -712,6 +718,36 @@ export async function loadZnWorkProgress(
     progress: normalizeWorkProgress(result.progress),
     ...(result.thread ? { thread: normalizeThread(result.thread) } : {})
   }
+}
+
+export async function loadZnTeamTimeline(threadId: string): Promise<ZnTeamTimeline> {
+  const normalized = threadId.trim()
+  if (!normalized) throw new Error('Work thread id is required')
+  const timeline = normalizeZnTeamTimeline(
+    await desktop().resident.teamTimeline({ threadId: normalized })
+  )
+  if (!timeline) throw new Error('Resident returned an invalid team timeline')
+  return timeline
+}
+
+export async function assignZnTeamSpecialist(
+  threadId: string,
+  specialist: string,
+  instruction: string
+): Promise<ZnTeamAssignResult> {
+  const normalizedThread = threadId.trim()
+  const normalizedSpecialist = specialist.trim()
+  if (!normalizedThread) throw new Error('Work thread id is required')
+  if (!normalizedSpecialist) throw new Error('Specialist name is required')
+  const result = normalizeZnTeamAssignResult(
+    await desktop().resident.teamAssign({
+      threadId: normalizedThread,
+      specialist: normalizedSpecialist,
+      instruction: instruction.trim()
+    })
+  )
+  if (!result) throw new Error('Resident returned an invalid team assignment')
+  return result
 }
 
 export async function cancelZnWork(
