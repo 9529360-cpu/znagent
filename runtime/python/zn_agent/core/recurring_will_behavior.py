@@ -27,10 +27,13 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 
 from .models import utc_now
+from .routine_schedule import (
+    RoutineSchedule,
+    count_cron_occurrences,
+    resolve_timezone,
+)
 
 
-_MIN_INTERVAL_SECONDS = 60
-_MAX_INTERVAL_SECONDS = 366 * 24 * 60 * 60
 _INSTALL_MARKER = "_zn_recurring_will_behavior_installed"
 
 
@@ -46,6 +49,11 @@ class RecurringWillTrigger:
     last_activated_at: str | None = None
     created_at: str = ""
     updated_at: str = ""
+    # Wall-clock schedules: when schedule_kind is "cron", next_due_at is the
+    # next cron occurrence in `timezone` and interval_seconds is unused (0).
+    schedule_kind: str = "interval"
+    cron_expression: str | None = None
+    timezone: str | None = None
 
 
 class RecurringWillTriggers:
@@ -60,6 +68,11 @@ class RecurringWillTriggers:
         self.resident = resident
         self.store = resident.store
         self._lock = threading.RLock()
+        # Optional seam for layers on top of the trigger organ (routines):
+        # called with (trigger, occurrence_payload) just before a due
+        # occurrence is handed to Will. The layer may record the occurrence
+        # and add its own fields to the payload. Never set in this module.
+        self._on_handoff = None
         self._init_schema()
 
     def register(
@@ -67,8 +80,11 @@ class RecurringWillTriggers:
         intention_id: str,
         *,
         task: str,
-        interval_seconds: int,
+        interval_seconds: int | None = None,
         first_due_at: datetime | str | None = None,
+        schedule_kind: str = "interval",
+        cron_expression: str | None = None,
+        tz_name: str | None = None,
     ) -> RecurringWillTrigger:
         intention = self.resident.will.get(intention_id)
         if intention is None:
@@ -79,13 +95,19 @@ class RecurringWillTriggers:
         normalized_task = str(task or "").strip()
         if not normalized_task:
             raise ValueError("recurring intention task must not be empty")
-        interval = self._interval(interval_seconds)
-        now = datetime.now(timezone.utc)
-        due = (
-            self._coerce_time(first_due_at)
-            if first_due_at is not None
-            else now + timedelta(seconds=interval)
+        schedule = self._schedule(
+            schedule_kind,
+            interval_seconds=interval_seconds,
+            cron_expression=cron_expression,
+            timezone=tz_name,
         )
+        now = datetime.now(timezone.utc)
+        if first_due_at is not None:
+            due = self._coerce_time(first_due_at)
+        elif schedule.kind == "cron":
+            due = schedule.next_due_after(now)
+        else:
+            due = now + timedelta(seconds=int(schedule.interval_seconds or 0))
 
         created = utc_now()
         with self._lock, closing(self._connect()) as conn:
@@ -94,8 +116,8 @@ class RecurringWillTriggers:
                 INSERT INTO resident_recurring_will_triggers(
                     intention_id,task,interval_seconds,next_due_at,enabled,
                     pending_scheduled_at,pending_coalesced_missed,last_activated_at,
-                    created_at,updated_at
-                ) VALUES(?,?,?,?,1,NULL,0,NULL,?,?)
+                    created_at,updated_at,schedule_kind,cron_expression,timezone
+                ) VALUES(?,?,?,?,1,NULL,0,NULL,?,?,?,?,?)
                 ON CONFLICT(intention_id) DO UPDATE SET
                     task=excluded.task,
                     interval_seconds=excluded.interval_seconds,
@@ -103,15 +125,21 @@ class RecurringWillTriggers:
                     enabled=1,
                     pending_scheduled_at=NULL,
                     pending_coalesced_missed=0,
-                    updated_at=excluded.updated_at
+                    updated_at=excluded.updated_at,
+                    schedule_kind=excluded.schedule_kind,
+                    cron_expression=excluded.cron_expression,
+                    timezone=excluded.timezone
                 """,
                 (
                     intention.intention_id,
                     normalized_task,
-                    interval,
+                    int(schedule.interval_seconds or 0),
                     self._iso(due),
                     created,
                     created,
+                    schedule.kind,
+                    schedule.cron_expression,
+                    schedule.timezone,
                 ),
             )
             conn.commit()
@@ -142,7 +170,7 @@ class RecurringWillTriggers:
                 """
                 SELECT intention_id,task,interval_seconds,next_due_at,enabled,
                        pending_scheduled_at,pending_coalesced_missed,last_activated_at,
-                       created_at,updated_at
+                       created_at,updated_at,schedule_kind,cron_expression,timezone
                 FROM resident_recurring_will_triggers
                 WHERE intention_id=?
                 """,
@@ -159,7 +187,8 @@ class RecurringWillTriggers:
         query = (
             "SELECT intention_id,task,interval_seconds,next_due_at,enabled,"
             "pending_scheduled_at,pending_coalesced_missed,last_activated_at,"
-            "created_at,updated_at FROM resident_recurring_will_triggers"
+            "created_at,updated_at,schedule_kind,cron_expression,timezone "
+            "FROM resident_recurring_will_triggers"
         )
         if enabled_only:
             query += " WHERE enabled=1"
@@ -234,12 +263,25 @@ class RecurringWillTriggers:
             if current < due:
                 return None
 
-            interval = timedelta(seconds=trigger.interval_seconds)
-            elapsed_seconds = max(0.0, (current - due).total_seconds())
-            due_count = int(elapsed_seconds // trigger.interval_seconds) + 1
-            latest_due = due + interval * (due_count - 1)
-            next_due = due + interval * due_count
-            coalesced_missed = max(0, due_count - 1)
+            schedule = self._schedule_of(trigger)
+            if schedule.kind == "cron":
+                # The stored next_due_at is always a cron occurrence, so it
+                # is the occurrence being handed off. The next due jumps past
+                # now (no backlog burst); missed occurrences between due and
+                # now coalesce into the count, capped by the counter.
+                tz = resolve_timezone(schedule.timezone)
+                latest_due = due
+                next_due = schedule.next_due_after(current)
+                coalesced_missed = count_cron_occurrences(
+                    schedule.parsed_cron(), due, current, tz
+                )
+            else:
+                interval = timedelta(seconds=trigger.interval_seconds)
+                elapsed_seconds = max(0.0, (current - due).total_seconds())
+                due_count = int(elapsed_seconds // trigger.interval_seconds) + 1
+                latest_due = due + interval * (due_count - 1)
+                next_due = due + interval * due_count
+                coalesced_missed = max(0, due_count - 1)
 
             # Advance cadence and stamp the exact pending occurrence in one
             # durable trigger-row transaction BEFORE handing anything to Will.
@@ -312,6 +354,15 @@ class RecurringWillTriggers:
             "execution_authority": False,
             "fresh_revalidation_required": True,
         }
+        # Layers on top of the trigger organ (routines) record the
+        # occurrence and add their own context before Will sees it. A hook
+        # failure must not lose the occurrence: the trigger row already
+        # stamped it, and the next pulse retries the handoff.
+        if self._on_handoff is not None:
+            try:
+                self._on_handoff(trigger, occurrence_payload)
+            except Exception:
+                pass
         self.resident.will.set_next_step(
             trigger.intention_id,
             trigger.task,
@@ -350,6 +401,7 @@ class RecurringWillTriggers:
 
     @staticmethod
     def _snapshot(row: sqlite3.Row) -> RecurringWillTrigger:
+        columns = set(row.keys())
         return RecurringWillTrigger(
             intention_id=str(row["intention_id"]),
             task=str(row["task"]),
@@ -371,25 +423,62 @@ class RecurringWillTriggers:
             ),
             created_at=str(row["created_at"] or ""),
             updated_at=str(row["updated_at"] or ""),
+            schedule_kind=(
+                str(row["schedule_kind"])
+                if "schedule_kind" in columns and row["schedule_kind"]
+                else "interval"
+            ),
+            cron_expression=(
+                str(row["cron_expression"])
+                if "cron_expression" in columns and row["cron_expression"]
+                else None
+            ),
+            timezone=(
+                str(row["timezone"])
+                if "timezone" in columns and row["timezone"]
+                else None
+            ),
         )
 
     @staticmethod
-    def _interval(value: int) -> int:
-        try:
-            interval = int(value)
-        except (TypeError, ValueError) as exc:
-            raise ValueError(
-                "recurring intention interval must be an integer number of seconds"
-            ) from exc
-        if interval < _MIN_INTERVAL_SECONDS:
-            raise ValueError(
-                f"recurring intention interval must be at least {_MIN_INTERVAL_SECONDS} seconds"
+    def _schedule(
+        schedule_kind: str,
+        *,
+        interval_seconds: int | None,
+        cron_expression: str | None,
+        timezone: str | None,
+    ) -> RoutineSchedule:
+        """Validate schedule params into a RoutineSchedule."""
+        kind = str(schedule_kind or "interval").strip().lower()
+        if kind == "cron":
+            return RoutineSchedule(
+                kind="cron",
+                cron_expression=cron_expression,
+                timezone=timezone or "UTC",
             )
-        if interval > _MAX_INTERVAL_SECONDS:
-            raise ValueError(
-                f"recurring intention interval must be at most {_MAX_INTERVAL_SECONDS} seconds"
+        if kind != "interval":
+            raise ValueError("schedule_kind must be interval or cron")
+        if interval_seconds is None:
+            raise ValueError("interval schedule requires interval_seconds")
+        return RoutineSchedule(
+            kind="interval",
+            interval_seconds=interval_seconds,
+            timezone=timezone or "UTC",
+        )
+
+    @staticmethod
+    def _schedule_of(trigger: RecurringWillTrigger) -> RoutineSchedule:
+        if trigger.schedule_kind == "cron":
+            return RoutineSchedule(
+                kind="cron",
+                cron_expression=trigger.cron_expression,
+                timezone=trigger.timezone or "UTC",
             )
-        return interval
+        return RoutineSchedule(
+            kind="interval",
+            interval_seconds=trigger.interval_seconds,
+            timezone=trigger.timezone or "UTC",
+        )
 
     @staticmethod
     def _coerce_time(value: datetime | str) -> datetime:
@@ -427,12 +516,38 @@ class RecurringWillTriggers:
                     pending_coalesced_missed INTEGER NOT NULL DEFAULT 0,
                     last_activated_at TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    schedule_kind TEXT NOT NULL DEFAULT 'interval',
+                    cron_expression TEXT,
+                    timezone TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_recurring_will_due
                     ON resident_recurring_will_triggers(enabled,next_due_at);
                 """
             )
+            # Databases created before cron support lack the schedule
+            # columns; add them in place so existing triggers keep working.
+            existing = {
+                row["name"]
+                for row in conn.execute(
+                    "PRAGMA table_info(resident_recurring_will_triggers)"
+                ).fetchall()
+            }
+            if "schedule_kind" not in existing:
+                conn.execute(
+                    "ALTER TABLE resident_recurring_will_triggers "
+                    "ADD COLUMN schedule_kind TEXT NOT NULL DEFAULT 'interval'"
+                )
+            if "cron_expression" not in existing:
+                conn.execute(
+                    "ALTER TABLE resident_recurring_will_triggers "
+                    "ADD COLUMN cron_expression TEXT"
+                )
+            if "timezone" not in existing:
+                conn.execute(
+                    "ALTER TABLE resident_recurring_will_triggers "
+                    "ADD COLUMN timezone TEXT"
+                )
             conn.commit()
 
     def _connect(self) -> sqlite3.Connection:
