@@ -4,6 +4,7 @@ import io
 import sqlite3
 import tempfile
 import unittest
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -118,7 +119,12 @@ class SuggestionsTests(unittest.TestCase):
             key = engine.list_suggestions()[0]["key"]
             engine.dismiss(key)
             resident.store.close()
-            with sqlite3.connect(db) as conn:
+            # closing() matters: sqlite3.Connection.__exit__ only
+            # commits/rolls back, it does NOT close. Without it the bound
+            # `conn` local keeps kernel.db (-wal/-shm) open when the
+            # TemporaryDirectory cleanup runs, and rmtree fails with
+            # WinError 32 on Windows (POSIX deletes silently succeed).
+            with closing(sqlite3.connect(db)) as conn:
                 row = conn.execute(
                     "SELECT dismissed_at, expires_at FROM "
                     "resident_suggestion_dismissals WHERE suggestion_key=?",
