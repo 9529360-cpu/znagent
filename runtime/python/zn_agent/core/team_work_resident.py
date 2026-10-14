@@ -28,6 +28,12 @@ structured proposal records its reason and the next cognition call
 carries it (so the model can fix the real mistake), and a run that goes
 ``_MAX_NO_EVIDENCE_PULSES`` consecutive pulses without new Body-verified
 evidence escalates instead of burning pulses with zero progress.
+
+CP-3 adds a third gate: a completion claim must be a structured final
+report adjudicated against the plan item's ``expected_output``
+(``completion_verdict``). A non-verified verdict feeds its reason +
+actionable fix + missing items back to the next cognition call; a
+blown retry budget escalates instead of re-asking.
 """
 
 import hashlib
@@ -146,6 +152,31 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             self._sync_execution_context(event, state)
             self.store.save_working_state(state)
             return self._checkpoint_terminal_failure(event, state, reason=reason)
+        # CP-3: the verdict retry budget is blown -- fail closed with the
+        # escalation instead of re-asking cognition for the same claim.
+        if step.verdict_escalation:
+            state.data["local_failure"] = step.verdict_escalation[:3000]
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._checkpoint_terminal_failure(
+                event, state, reason=step.verdict_escalation
+            )
+        # CP-3: a non-verified verdict becomes rejection feedback for the
+        # next cognition call (same channel as rejected proposals).
+        if step.verdict_feedback is not None:
+            feedback = step.verdict_feedback
+            state.data[self._TEAM_REJECTION_KEY] = {
+                "run_id": str(feedback.get("run_id") or ""),
+                "reason": (
+                    f"完成裁决 {feedback.get('verdict') or ''}："
+                    f"{feedback.get('reason') or ''} "
+                    f"可执行修改：{feedback.get('actionable_fix') or ''} "
+                    "缺失项："
+                    + "、".join(feedback.get("missing_items") or [])
+                ),
+                "proposal_excerpt": "、".join(feedback.get("missing_items") or []),
+            }
+
         if step.team_complete:
             state.data[TEAM_COMPLETE_STATE_KEY] = True
             state.data.pop("local_failure", None)
@@ -334,10 +365,22 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             "If you use a subdirectory, its parent directory must already exist. "
             "Do not emit "
             "shell commands, executable paths, background-process controls, or "
-            "tool calls. If your item's acceptance criteria are ALREADY fully "
-            "satisfied by the verified evidence below, reply with ONLY a short "
-            "completion summary in plain text (no JSON) quoting which criteria "
-            "are met. Do not claim completion without verified evidence. "
+            "tool calls. If your item's acceptance criteria are NOT all "
+            "satisfied yet, do NOT claim completion: do another work step. "
+            "Only when EVERY criterion is satisfied by the verified evidence "
+            "below, reply with ONLY this JSON object (no other text): "
+            '{"completion_report":{"conclusion":"...","evidence":'
+            '[{"criterion":"<exact acceptance criterion>",'
+            '"evidence_ref":"<relative_path or objective of one verified '
+            'evidence entry below>"}],'
+            '"files":["<workspace-relative path>"],"unfinished":[]}}. '
+            "Cite EVERY acceptance criterion once, with an evidence_ref that "
+            "matches one verified evidence entry below. Put anything "
+            "uncertain or not yet done in \"unfinished\" and do NOT claim "
+            "completion for it -- never present a guess as a verified fact. "
+            "A report with a missing section, a criterion without evidence, "
+            "or a non-empty \"unfinished\" list will be sent back for rework; "
+            "repeated identical rejections escalate to the user. "
             f"{rejection_text}"
             f"Your brief: {context.get('specialist_prompt') or ''} "
             f"Your item: {context.get('objective') or ''}. "
@@ -540,9 +583,12 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         )
         if claimed:
             self._accept_borrowed_increment(event, state, increment)
+            # Structured completion reports carry one evidence entry per
+            # criterion; keep headroom so a long report is not truncated
+            # mid-JSON (a truncated report adjudicates as malformed).
             state.data[TEAM_CLAIM_STATE_KEY] = {
                 "run_id": str(context.get("run_id") or ""),
-                "summary": summary[:2000],
+                "summary": summary[:8000],
             }
         state.stage = "native_deliberation"
         state.next_action = (
