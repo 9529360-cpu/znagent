@@ -349,9 +349,17 @@ class ResidentRestartCognitionReadinessTests(unittest.TestCase):
                 release.set()
                 deadline = time.monotonic() + 20.0
                 while time.monotonic() < deadline:
-                    result = self.request(endpoint, "work_progress", {
-                        "thread_id": "startup-work", "event_id": event_id,
-                    })["result"]
+                    try:
+                        result = self.request(endpoint, "work_progress", {
+                            "thread_id": "startup-work", "event_id": event_id,
+                        })["result"]
+                    except TimeoutError:
+                        # A single poll may stall past the test client's 3s
+                        # socket budget on a loaded runner while the resident
+                        # is still finalizing. Retry within the same 20s
+                        # deadline; the deadline and assertion are unchanged.
+                        time.sleep(0.05)
+                        continue
                     if result["progress"]["finalized"]:
                         break
                     time.sleep(0.05)

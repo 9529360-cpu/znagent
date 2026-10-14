@@ -18,7 +18,6 @@ are read as text and injected as bounded cognition context.
 """
 
 import re
-import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,6 +26,7 @@ import yaml
 
 from .home import get_zn_home
 from .models import AgentEvent, CognitionRequest
+from .skill_routing import SkillRouter
 
 MAX_SKILL_CONTEXT_BYTES = 8192
 MAX_SKILL_BODY_CHARS = 20000
@@ -38,30 +38,6 @@ _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
 
 def _clean(value: object) -> str:
     return " ".join(str(value or "").split()).strip()
-
-
-def _normalize(value: str) -> str:
-    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
-    text = re.sub(r"[\W_]+", " ", text)
-    return " ".join(text.split())
-
-
-def _cue_occurs(query: str, cue: str) -> bool:
-    if not query or not cue:
-        return False
-    if query == cue:
-        return True
-    if len(cue) < 2:
-        return False
-    if re.search(r"[\u4e00-\u9fff]", cue):
-        return cue in query
-    if re.search(r"[a-z0-9]", cue):
-        # Generic one-word cues are not semantic matches; require a phrase
-        # or a long-enough token to avoid ambient activation.
-        if " " not in cue and len(cue) < 12:
-            return False
-        return re.search(rf"(?<![a-z0-9_]){re.escape(cue)}(?![a-z0-9_])", query) is not None
-    return re.search(rf"(?<!\w){re.escape(cue)}(?!\w)", query) is not None
 
 
 def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
@@ -140,48 +116,37 @@ class SkillStore:
         max_skills: int = _DEFAULT_MAX_SKILLS,
         max_skill_chars: int = 4000,
     ) -> list[Skill]:
-        """Conservatively match skills by name/description cues, never body search."""
+        """Match skills via the progressive-disclosure router.
+
+        Only matched skills' bodies are read (Activation); unmatched
+        skills' bodies are never loaded. Matching itself uses
+        name/description cues only, never body full-text search.
+        """
         count = max(0, min(10, int(max_skills)))
         per_skill = max(1, min(12000, int(max_skill_chars)))
-        normalized = _normalize(query)
-        if not count or not normalized:
+        if not count or not _clean(query):
             return []
-        scored: list[tuple[int, str, Skill]] = []
-        for skill in self.discover():
-            cue = self._best_cue(normalized, skill)
-            if cue:
-                scored.append((len(cue), skill.name, skill))
-        # Most-specific cue wins; name breaks ties for determinism.
-        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        router = SkillRouter(self.root)
+        result = router.route(query, max_skills=count)
         selected: list[Skill] = []
-        for _, _, skill in scored[:count]:
-            body = skill.body[:per_skill].strip()
+        for activated in result.matched:
+            body = activated.body[:per_skill].strip()
             if not body:
                 continue
             selected.append(
                 Skill(
-                    name=skill.name,
-                    description=skill.description,
-                    version=skill.version,
-                    path=skill.path,
+                    name=activated.header.name,
+                    description=activated.header.description,
+                    version=activated.header.version,
+                    path=activated.header.path,
                     body=body,
                 )
             )
         return selected
 
-    def _best_cue(self, normalized_query: str, skill: Skill) -> str:
-        cues = {_normalize(skill.name), _normalize(skill.description)}
-        # Word n-grams so "task management" matches even when the full
-        # description does not occur verbatim in the query.
-        words = _normalize(skill.description).split()
-        for width in range(min(4, len(words)), 1, -1):
-            for index in range(len(words) - width + 1):
-                cues.add(" ".join(words[index : index + width]))
-        best = ""
-        for cue in cues:
-            if _cue_occurs(normalized_query, cue) and len(cue) > len(best):
-                best = cue
-        return best
+    # NOTE: SkillStore.discover() below still reads full bodies for
+    # backwards compatibility. New callers should use
+    # SkillRouter.discover(), which reads frontmatter only.
 
     def bind_cognition_context(
         self, event: AgentEvent, request: CognitionRequest,
