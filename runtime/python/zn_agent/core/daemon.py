@@ -19,11 +19,6 @@ from .service import ResidentService
 from .project_team import assemble_team
 from .team_memory import team_shared_memory
 from .team_request import parse_team_request
-from .skill_request import (
-    parse_skill_confirm,
-    parse_skill_reference,
-    parse_skill_save_request,
-)
 from .team_timeline import (
     build_team_timeline,
     parse_team_role,
@@ -241,6 +236,14 @@ class ResidentRpcServer:
             # caller-supplied skill payload is never trusted -- the parse
             # owns it. The "/name" prefix is stripped from the task: a
             # slash reference is a command, not part of the task text.
+            # Local import: the top-level import block is shared with
+            # main-side additions (team_timeline), and a top-level skill
+            # import there re-conflicts on every squash merge.
+            from .skill_request import (
+                parse_skill_confirm,
+                parse_skill_reference,
+                parse_skill_save_request,
+            )
             payload.pop("skill_save_request", None)
             payload.pop("skill_reference", None)
             payload.pop("skill_confirm", None)
