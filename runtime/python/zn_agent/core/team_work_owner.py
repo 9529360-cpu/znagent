@@ -32,6 +32,7 @@ from .completion_verdict import (
 )
 from .project_team import ProjectTeam, assemble_team
 from .skill_ledger import SkillLedger
+from .specialist_workspace import specialist_prompt_for
 from .team_memory import team_shared_memory
 from .team_runner import Escalation, TeamRunner, VerificationOutcome
 from .team_timeline import apply_assignee_overrides, assignee_overrides
@@ -185,12 +186,16 @@ class TeamWorkOwner:
             project = str(spec.value.get("project_title") or "").strip()
             roles = [str(key) for key in (spec.value.get("role_keys") or [])]
             if project and roles:
+                workspace_root = spec.value.get("workspace_root")
                 return self._with_overrides(
                     assemble_team(
                         project,
                         roles,
                         team_id=team_id,
                         work_thread_id=thread_id,
+                        workspace_root=workspace_root
+                        if isinstance(workspace_root, str) and workspace_root.strip()
+                        else None,
                     ),
                     team_id,
                 )
@@ -199,12 +204,27 @@ class TeamWorkOwner:
         roles = [str(key) for key in (request.get("role_keys") or [])]
         if not project or not roles:
             raise ValueError("team event lost its team_request")
+        workspace_root = request.get("workspace_root")
+        workspace_root = (
+            workspace_root
+            if isinstance(workspace_root, str) and workspace_root.strip()
+            else None
+        )
         shared.remember(
-            TEAM_SPEC_KEY, {"project_title": project, "role_keys": roles}
+            TEAM_SPEC_KEY,
+            {
+                "project_title": project,
+                "role_keys": roles,
+                "workspace_root": workspace_root,
+            },
         )
         return self._with_overrides(
             assemble_team(
-                project, roles, team_id=team_id, work_thread_id=thread_id
+                project,
+                roles,
+                team_id=team_id,
+                work_thread_id=thread_id,
+                workspace_root=workspace_root,
             ),
             team_id,
         )
@@ -393,7 +413,13 @@ class TeamWorkOwner:
                 if id_map.get(plan_item.item_id) == live.work_item_id:
                     step.live_specialist_name = plan_item.assignee
                     specialist = team.member(plan_item.assignee)
-                    brief = specialist.prompt_fragment if specialist else ""
+                    # File workspaces are the source of truth: re-read on
+                    # every dispatch so a SOUL.md edit takes effect next time.
+                    brief = (
+                        specialist_prompt_for(team, specialist)
+                        if specialist
+                        else ""
+                    )
                     # P1-3: relevant confirmed skills ride along in the
                     # specialist brief (which already flows into cognition).
                     # Advisory only -- a skill failure never breaks dispatch.

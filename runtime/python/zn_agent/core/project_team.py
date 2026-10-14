@@ -150,6 +150,11 @@ class ProjectTeam:
     members: tuple[Specialist, ...] = ()
     plan: tuple[TeamPlanItem, ...] = ()
     work_thread_id: str | None = None
+    # Root of the specialists' file workspaces (``agents/<name>/`` per
+    # member, see specialist_workspace). None means specialists keep using
+    # their built-in prompt fragments; when set, dispatch re-reads each
+    # specialist's files so edits take effect on the next dispatch.
+    workspace_root: str | None = None
 
     def member(self, name: str) -> Specialist | None:
         for specialist in self.members:
@@ -233,6 +238,7 @@ def assemble_team(
     team_id: str | None = None,
     work_thread_id: str | None = None,
     roles: dict[str, SpecialistRole] | None = None,
+    workspace_root: str | None = None,
 ) -> ProjectTeam:
     """Build a team: roster of named specialists plus a dependency-chained plan.
 
@@ -299,4 +305,5 @@ def assemble_team(
         members=tuple(members),
         plan=tuple(plan),
         work_thread_id=work_thread_id,
+        workspace_root=workspace_root,
     )
