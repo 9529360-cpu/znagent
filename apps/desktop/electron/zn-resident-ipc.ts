@@ -311,6 +311,24 @@ export function registerZnResidentIpc(): void {
       rule_id: ruleId
     })
   })
+  handleZnDesktopIpc('zn:resident:team-timeline', async (_event, payload) => {
+    const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+    if (!threadId) throw new Error('threadId is required')
+    return getZnResidentProcess().request('team_timeline', {
+      thread_id: threadId
+    })
+  })
+  handleZnDesktopIpc('zn:resident:team-assign', async (_event, payload) => {
+    const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+    const specialist = String(payload?.specialist || '').trim()
+    if (!threadId) throw new Error('threadId is required')
+    if (!specialist) throw new Error('specialist is required')
+    return getZnResidentProcess().request('team_assign', {
+      thread_id: threadId,
+      specialist,
+      instruction: String(payload?.instruction || '')
+    })
+  })
   handleZnDesktopIpc('zn:resident:pulses', async (_event, limit) => history('pulses', limit))
   handleZnDesktopIpc('zn:resident:situations', async (_event, limit) => history('situations', limit))
   handleZnDesktopIpc('zn:resident:thoughts', async (_event, limit) => history('thoughts', limit))

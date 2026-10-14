@@ -49,6 +49,10 @@ contextBridge.exposeInMainWorld('znDesktop', {
       ipcRenderer.invoke('zn:resident:approval-rule-create', payload || {}),
     approvalRuleDelete: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:approval-rule-delete', payload || {}),
+    teamTimeline: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:team-timeline', payload || {}),
+    teamAssign: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:team-assign', payload || {}),
     pulses: (limit?: number) => ipcRenderer.invoke('zn:resident:pulses', limit),
     situations: (limit?: number) => ipcRenderer.invoke('zn:resident:situations', limit),
     thoughts: (limit?: number) => ipcRenderer.invoke('zn:resident:thoughts', limit),
