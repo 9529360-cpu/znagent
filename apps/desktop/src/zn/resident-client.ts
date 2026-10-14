@@ -1,3 +1,9 @@
+import {
+  normalizeZnTeamAssignResult,
+  normalizeZnTeamTimeline,
+  type ZnTeamAssignResult,
+  type ZnTeamTimeline
+} from './team-timeline'
 import { normalizeZnActiveWorkRun } from './work-reconnection'
 import type {
   ZnApprovalActionKind,
@@ -150,6 +156,31 @@ export type ZnProviderSettings = {
   configurationError?: string
   activeRoutes: Array<{ id: string; provider: string; model: string }>
   routeCount?: number
+}
+
+export type ZnSuggestionKind =
+  | 'failed_work'
+  | 'interrupted_work'
+  | 'recurring_due'
+  | 'recurring_upcoming'
+  | 'routine'
+
+export type ZnSuggestionSource = {
+  type: 'work' | 'schedule' | 'memory'
+  label: string
+  threadId?: string
+  intentionId?: string
+  factKey?: string
+  nextDueAt?: string
+}
+
+export type ZnSuggestion = {
+  key: string
+  kind: ZnSuggestionKind
+  title: string
+  task: string
+  threadId: string | null
+  source: ZnSuggestionSource
 }
 
 export type ZnProviderSettingsUpdate = {
@@ -761,6 +792,82 @@ export async function loadZnResidentSnapshot(): Promise<ZnResidentSnapshot> {
   return { status, self }
 }
 
+function suggestionKind(value: unknown): ZnSuggestionKind | null {
+  if (
+    value === 'failed_work' ||
+    value === 'interrupted_work' ||
+    value === 'recurring_due' ||
+    value === 'recurring_upcoming' ||
+    value === 'routine'
+  ) return value
+  return null
+}
+
+function normalizeSuggestion(value: unknown): ZnSuggestion | null {
+  const item = record(value)
+  if (!item) return null
+  const key = String(item.key || '').trim()
+  const kind = suggestionKind(item.kind)
+  const title = String(item.title || '').trim()
+  const task = String(item.task || '').trim()
+  if (!key || !kind || !title || !task) return null
+  const source = record(item.source)
+  if (!source) return null
+  const sourceType = source.type
+  if (sourceType !== 'work' && sourceType !== 'schedule' && sourceType !== 'memory') return null
+  const label = String(source.label || '').trim()
+  if (!label) return null
+  const threadIdRaw = item.thread_id ?? item.threadId
+  const threadId = typeof threadIdRaw === 'string' && threadIdRaw.trim() ? threadIdRaw.trim() : null
+  // A work-backed suggestion must name its existing thread: clicking it
+  // resumes that Work, it never starts an orphan task.
+  if (sourceType === 'work' && !threadId) return null
+  const intentionId = typeof source.intention_id === 'string' && source.intention_id.trim()
+    ? source.intention_id.trim()
+    : typeof source.intentionId === 'string' && source.intentionId.trim()
+      ? source.intentionId.trim()
+      : undefined
+  const factKey = typeof source.fact_key === 'string' && source.fact_key.trim()
+    ? source.fact_key.trim()
+    : typeof source.factKey === 'string' && source.factKey.trim()
+      ? source.factKey.trim()
+      : undefined
+  const nextDueAt = typeof source.next_due_at === 'string' && source.next_due_at.trim()
+    ? source.next_due_at.trim()
+    : typeof source.nextDueAt === 'string' && source.nextDueAt.trim()
+      ? source.nextDueAt.trim()
+      : undefined
+  return {
+    key,
+    kind,
+    title,
+    task,
+    threadId,
+    source: {
+      type: sourceType,
+      label,
+      ...(threadId ? { threadId } : {}),
+      ...(intentionId ? { intentionId } : {}),
+      ...(factKey ? { factKey } : {}),
+      ...(nextDueAt ? { nextDueAt } : {})
+    }
+  }
+}
+
+export async function loadZnSuggestions(): Promise<ZnSuggestion[]> {
+  const result = await desktop().resident.suggestionsList({ limit: 8 })
+  if (!Array.isArray(result)) throw new Error('Resident returned invalid suggestions')
+  return result
+    .map(normalizeSuggestion)
+    .filter((item): item is ZnSuggestion => Boolean(item))
+}
+
+export async function dismissZnSuggestion(key: string): Promise<void> {
+  const normalized = key.trim()
+  if (!normalized) throw new Error('Suggestion key is required')
+  await desktop().resident.suggestionsDismiss({ key: normalized })
+}
+
 export async function loadZnProviderSettings(): Promise<ZnProviderSettings> {
   return normalizeProviderSettings(await desktop().resident.providerSettings())
 }
@@ -838,6 +945,36 @@ export async function loadZnWorkProgress(
     progress: normalizeWorkProgress(result.progress),
     ...(result.thread ? { thread: normalizeThread(result.thread) } : {})
   }
+}
+
+export async function loadZnTeamTimeline(threadId: string): Promise<ZnTeamTimeline> {
+  const normalized = threadId.trim()
+  if (!normalized) throw new Error('Work thread id is required')
+  const timeline = normalizeZnTeamTimeline(
+    await desktop().resident.teamTimeline({ threadId: normalized })
+  )
+  if (!timeline) throw new Error('Resident returned an invalid team timeline')
+  return timeline
+}
+
+export async function assignZnTeamSpecialist(
+  threadId: string,
+  specialist: string,
+  instruction: string
+): Promise<ZnTeamAssignResult> {
+  const normalizedThread = threadId.trim()
+  const normalizedSpecialist = specialist.trim()
+  if (!normalizedThread) throw new Error('Work thread id is required')
+  if (!normalizedSpecialist) throw new Error('Specialist name is required')
+  const result = normalizeZnTeamAssignResult(
+    await desktop().resident.teamAssign({
+      threadId: normalizedThread,
+      specialist: normalizedSpecialist,
+      instruction: instruction.trim()
+    })
+  )
+  if (!result) throw new Error('Resident returned an invalid team assignment')
+  return result
 }
 
 export async function cancelZnWork(
@@ -977,4 +1114,216 @@ export async function checkZnUpdate(): Promise<ZnDesktopUpdateStatus> {
 
 export async function applyZnUpdate(): Promise<ZnDesktopUpdateApplyResult> {
   return desktop().updates.apply()
+}
+
+export type ZnRoutineDraft = {
+  text: string
+  task: string
+  owner: string
+  scheduleKind: string
+  intervalSeconds?: number | null
+  cronExpression?: string | null
+  timezone: string
+  inputSource: string
+  expectedResult: string
+  approvalBoundary: string
+  missingDataPolicy: string
+  autoPauseAfterDays: number
+  missing: string[]
+}
+
+export type ZnRoutineRun = {
+  runId: string
+  routineId: string
+  triggerKind: string
+  scheduledAt: string
+  startedAt: string
+  finishedAt?: string | null
+  status: 'running' | 'succeeded' | 'failed'
+  failureReason?: string | null
+  summary?: string | null
+}
+
+export type ZnRoutine = {
+  routineId: string
+  intentionId: string
+  title: string
+  task: string
+  owner: string
+  scheduleKind: string
+  scheduleSpec: string
+  timezone: string
+  inputSource: string
+  expectedResult: string
+  approvalBoundary: string
+  missingDataPolicy: string
+  autoPauseAfterDays: number
+  status: 'active' | 'paused'
+  pausedReason?: string | null
+  lastConfirmedAt: string
+  lastRunAt?: string | null
+  createdAt: string
+  updatedAt: string
+  recentRuns: ZnRoutineRun[]
+  scheduleDescription: string
+}
+
+function normalizeRoutineRun(raw: unknown): ZnRoutineRun {
+  const value = record(raw)
+  if (!value) throw new Error('Resident returned an invalid routine run')
+  const status = String(value.status || '')
+  if (status !== 'running' && status !== 'succeeded' && status !== 'failed') {
+    throw new Error('Resident returned an invalid routine run status')
+  }
+  return {
+    runId: String(value.run_id || ''),
+    routineId: String(value.routine_id || ''),
+    triggerKind: String(value.trigger_kind || ''),
+    scheduledAt: String(value.scheduled_at || ''),
+    startedAt: String(value.started_at || ''),
+    finishedAt: value.finished_at ? String(value.finished_at) : null,
+    status,
+    failureReason: value.failure_reason ? String(value.failure_reason) : null,
+    summary: value.summary ? String(value.summary) : null
+  }
+}
+
+function normalizeRoutine(raw: unknown): ZnRoutine {
+  const value = record(raw)
+  if (!value) throw new Error('Resident returned an invalid routine')
+  const status = String(value.status || '')
+  if (status !== 'active' && status !== 'paused') {
+    throw new Error('Resident returned an invalid routine status')
+  }
+  const runs = Array.isArray(value.recent_runs) ? value.recent_runs.map(normalizeRoutineRun) : []
+  return {
+    routineId: String(value.routine_id || ''),
+    intentionId: String(value.intention_id || ''),
+    title: String(value.title || ''),
+    task: String(value.task || ''),
+    owner: String(value.owner || ''),
+    scheduleKind: String(value.schedule_kind || ''),
+    scheduleSpec: String(value.schedule_spec || ''),
+    timezone: String(value.timezone || ''),
+    inputSource: String(value.input_source || ''),
+    expectedResult: String(value.expected_result || ''),
+    approvalBoundary: String(value.approval_boundary || ''),
+    missingDataPolicy: String(value.missing_data_policy || ''),
+    autoPauseAfterDays: Number(value.auto_pause_after_days || 0),
+    status,
+    pausedReason: value.paused_reason ? String(value.paused_reason) : null,
+    lastConfirmedAt: String(value.last_confirmed_at || ''),
+    lastRunAt: value.last_run_at ? String(value.last_run_at) : null,
+    createdAt: String(value.created_at || ''),
+    updatedAt: String(value.updated_at || ''),
+    recentRuns: runs,
+    scheduleDescription: String(value.schedule_description || '')
+  }
+}
+
+function normalizeRoutineDraft(raw: unknown): ZnRoutineDraft {
+  const value = record(raw)
+  if (!value) throw new Error('Resident returned an invalid routine draft')
+  return {
+    text: String(value.text || ''),
+    task: String(value.task || ''),
+    owner: String(value.owner || ''),
+    scheduleKind: String(value.schedule_kind || ''),
+    intervalSeconds: value.interval_seconds == null ? null : Number(value.interval_seconds),
+    cronExpression: value.cron_expression == null ? null : String(value.cron_expression),
+    timezone: String(value.timezone || ''),
+    inputSource: String(value.input_source || ''),
+    expectedResult: String(value.expected_result || ''),
+    approvalBoundary: String(value.approval_boundary || ''),
+    missingDataPolicy: String(value.missing_data_policy || ''),
+    autoPauseAfterDays: Number(value.auto_pause_after_days || 0),
+    missing: Array.isArray(value.missing) ? value.missing.map(String) : []
+  }
+}
+
+function routineDraftPayload(draft: ZnRoutineDraft): Record<string, unknown> {
+  return {
+    text: draft.text,
+    task: draft.task,
+    owner: draft.owner,
+    schedule_kind: draft.scheduleKind,
+    interval_seconds: draft.intervalSeconds,
+    cron_expression: draft.cronExpression,
+    timezone: draft.timezone,
+    input_source: draft.inputSource,
+    expected_result: draft.expectedResult,
+    approval_boundary: draft.approvalBoundary,
+    missing_data_policy: draft.missingDataPolicy,
+    auto_pause_after_days: draft.autoPauseAfterDays
+  }
+}
+
+export async function proposeZnRoutine(text: string): Promise<ZnRoutineDraft> {
+  const normalized = text.trim()
+  if (!normalized) throw new Error('Routine text must not be empty')
+  return normalizeRoutineDraft(await desktop().resident.routinePropose({ text: normalized }))
+}
+
+export async function confirmZnRoutine(draft: ZnRoutineDraft): Promise<ZnRoutine> {
+  return normalizeRoutine(await desktop().resident.routineConfirm({ draft: routineDraftPayload(draft) }))
+}
+
+export async function loadZnRoutines(): Promise<ZnRoutine[]> {
+  const result = await desktop().resident.routineList({ limit: 100 })
+  if (!Array.isArray(result)) throw new Error('Resident returned an invalid routine list')
+  return result.map(normalizeRoutine)
+}
+
+export async function loadZnRoutine(routineId: string): Promise<ZnRoutine> {
+  const normalized = routineId.trim()
+  if (!normalized) throw new Error('Routine id is required')
+  return normalizeRoutine(await desktop().resident.routineGet({ routineId: normalized }))
+}
+
+export async function loadZnRoutineRuns(routineId: string, limit = 20): Promise<ZnRoutineRun[]> {
+  const normalized = routineId.trim()
+  if (!normalized) throw new Error('Routine id is required')
+  const result = await desktop().resident.routineRuns({ routineId: normalized, limit })
+  if (!Array.isArray(result)) throw new Error('Resident returned an invalid routine run list')
+  return result.map(normalizeRoutineRun)
+}
+
+export async function pauseZnRoutine(routineId: string): Promise<ZnRoutine> {
+  const normalized = routineId.trim()
+  if (!normalized) throw new Error('Routine id is required')
+  return normalizeRoutine(await desktop().resident.routinePause({ routineId: normalized }))
+}
+
+export async function resumeZnRoutine(routineId: string): Promise<ZnRoutine> {
+  const normalized = routineId.trim()
+  if (!normalized) throw new Error('Routine id is required')
+  return normalizeRoutine(await desktop().resident.routineResume({ routineId: normalized }))
+}
+
+export async function editZnRoutine(
+  routineId: string,
+  fields: Record<string, unknown>
+): Promise<ZnRoutine> {
+  const normalized = routineId.trim()
+  if (!normalized) throw new Error('Routine id is required')
+  return normalizeRoutine(await desktop().resident.routineEdit({ routineId: normalized, fields }))
+}
+
+export async function deleteZnRoutine(routineId: string): Promise<boolean> {
+  const normalized = routineId.trim()
+  if (!normalized) throw new Error('Routine id is required')
+  const result = record(await desktop().resident.routineDelete({ routineId: normalized }))
+  return result?.deleted === true
+}
+
+export async function testRunZnRoutine(routineId: string): Promise<ZnRoutineRun> {
+  const normalized = routineId.trim()
+  if (!normalized) throw new Error('Routine id is required')
+  return normalizeRoutineRun(await desktop().resident.routineTestRun({ routineId: normalized }))
+}
+
+export async function acknowledgeZnRoutine(routineId: string): Promise<ZnRoutine> {
+  const normalized = routineId.trim()
+  if (!normalized) throw new Error('Routine id is required')
+  return normalizeRoutine(await desktop().resident.routineAcknowledge({ routineId: normalized }))
 }
