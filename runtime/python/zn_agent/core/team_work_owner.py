@@ -66,6 +66,10 @@ class TeamOwnerStep:
     # Cognition context for the live specialist run (objective, acceptance,
     # specialist brief, verified evidence so far). None when no run is live.
     live_context: dict[str, Any] | None = None
+    # Hard termination (CP-1): set when the runner stopped the team.
+    # When set, there is no live run -- the team must not execute more work.
+    stop_reason: str | None = None
+    stop_trigger: dict[str, Any] = field(default_factory=dict)
     # CP-3: a non-verified verdict on this pulse's claim, fed back to the
     # next cognition call as rejection feedback (reason + fix + missing).
     verdict_feedback: dict[str, Any] | None = None
@@ -339,6 +343,20 @@ class TeamWorkOwner:
             root_work_item_id=root_work_item_id,
         )
         result = runner.step()
+        if result.stopped:
+            # Hard termination (CP-1): no live run, no more specialist
+            # work. The resident fails the event closed with STOP_REASON.
+            return TeamOwnerStep(
+                state="blocked",
+                message=(
+                    f"团队已停止（STOP_REASON={result.stop_reason}）。"
+                    f"触发：{result.stop_trigger}。"
+                    f"进展：{result.stop_progress.get('plan_items_completed')}/"
+                    f"{result.stop_progress.get('plan_items_total')} 项完成。"
+                ),
+                stop_reason=result.stop_reason,
+                stop_trigger=dict(result.stop_trigger or {}),
+            )
         live = self.live_run(team=team)
         step = TeamOwnerStep(
             state="advanced",

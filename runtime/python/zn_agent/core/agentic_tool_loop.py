@@ -33,9 +33,19 @@ import os
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol, Sequence
 
+from .hook_semantics import HOOK_SEMANTICS_PROMPT
 from .terminal import TerminalRequest, ZNLocalTerminal, get_zn_local_terminal
+
+if TYPE_CHECKING:
+    from .preflight import PreflightResult
+
+# Preflight hook for one tool call: returns a verdict, or None for "no
+# opinion". A not-ready verdict blocks the call WITHOUT executing it.
+# Callers typically pass ``lambda tool: checker.verify(...)`` or a bound
+# method; see zn_agent.core.preflight for the checker itself.
+ToolPreflight = Callable[[str], "PreflightResult | None"]
 
 
 class ToolLoopError(RuntimeError):
@@ -324,7 +334,17 @@ def execute_tool_call(
     arguments: Mapping[str, Any],
     *,
     terminal: ZNLocalTerminal,
+    preflight: ToolPreflight | None = None,
 ) -> str:
+    # Verify-before-acting (M9): when a preflight hook is supplied and it
+    # says not ready, return the verdict (reason + recovery) without
+    # executing the tool at all. No preflight hook means old behaviour.
+    if preflight is not None:
+        verdict = preflight(name)
+        if verdict is not None and not verdict.ready:
+            recovery = f"; recovery: {verdict.recovery}" if verdict.recovery else ""
+            reason = verdict.reason or "not ready"
+            return f"error: preflight not ready for '{name}': {reason}{recovery}"
     if name == "run_terminal":
         return _execute_run_terminal(arguments, terminal=terminal)
     if name == "read_file":
@@ -345,7 +365,8 @@ DEFAULT_SYSTEM_PROMPT = (
     "to do something destructive or irreversible (deleting data, sending "
     "something, spending money, publishing something) that was not clearly "
     "part of the objective. When the objective is done, reply with plain "
-    "text summarizing what you did and stop calling tools."
+    "text summarizing what you did and stop calling tools. "
+    + HOOK_SEMANTICS_PROMPT
 )
 
 
@@ -367,11 +388,13 @@ class AgenticToolLoop:
         terminal: ZNLocalTerminal | None = None,
         tools: Sequence[Mapping[str, Any]] = TOOL_SCHEMA,
         max_turns: int = DEFAULT_MAX_TURNS,
+        preflight: ToolPreflight | None = None,
     ) -> None:
         self._client = client
         self._terminal = terminal or get_zn_local_terminal()
         self._tools = tuple(tools)
         self._max_turns = max(1, int(max_turns))
+        self._preflight = preflight
 
     def run(
         self,
@@ -426,7 +449,9 @@ class AgenticToolLoop:
                 call_args = call.get("arguments") or {}
                 if not isinstance(call_args, Mapping):
                     call_args = {}
-                output = execute_tool_call(call_name, call_args, terminal=self._terminal)
+                output = execute_tool_call(
+                    call_name, call_args, terminal=self._terminal, preflight=self._preflight
+                )
                 tool_results.append(
                     ToolCallResult(tool_use_id=call_id, name=call_name, output=output)
                 )

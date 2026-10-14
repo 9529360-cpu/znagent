@@ -910,6 +910,15 @@ class KernelStore:
         key = str(key or "").strip()
         if not key:
             raise ValueError("fact key must not be empty")
+        # M15 credential isolation: raw credential values never enter memory.
+        # The check runs before any persistence; the exception never carries
+        # the value. Opaque references (credential:... / provider:...) pass.
+        from .credential_isolation import check_no_credential_value
+
+        check_no_credential_value(key, where="memory:fact:key")
+        check_no_credential_value(value, where="memory:fact:value")
+        for alias in aliases:
+            check_no_credential_value(alias, where="memory:fact:alias")
         now = utc_now()
         with self._lock, self._conn:
             existing = self._conn.execute("SELECT created_at FROM facts WHERE fact_key=?", (key,)).fetchone()

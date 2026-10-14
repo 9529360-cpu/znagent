@@ -118,6 +118,12 @@ contextBridge.exposeInMainWorld('znDesktop', {
       const listener = () => callback()
       ipcRenderer.on('zn:global-invocation', listener)
       return () => ipcRenderer.removeListener('zn:global-invocation', listener)
-    }
+    },
+    // Suggestions wiring lives at the end of the bridge so it stays in its
+    // own merge hunk, away from the team/routine entries above.
+    suggestionsList: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:suggestions-list', payload || {}),
+    suggestionsDismiss: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:suggestions-dismiss', payload || {}),
   }
 })

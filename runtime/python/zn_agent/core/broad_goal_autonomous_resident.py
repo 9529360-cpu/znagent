@@ -34,6 +34,7 @@ from .structured_proposal import (
     normalize_exact_json_payload,
     parse_exact_json_payload,
 )
+from .team_disband import handles_disband
 from .team_work_owner import TeamWorkOwner
 from .work_conversation_context import bind_work_conversation_context
 
@@ -122,6 +123,11 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         # overwrite the live specialist's cognition question with a
         # Root-acceptance request.
         if TeamWorkOwner.handles(event):
+            return None
+        # P3-8: a disband event is a deterministic deletion, not a broad
+        # goal awaiting Root intake -- never let the autonomous layer
+        # overwrite its deliberation with a Root-acceptance request.
+        if handles_disband(event):
             return None
         thread_id = str(payload.get("work_thread_id") or "").strip()
         item_id = str(payload.get("work_item_id") or "").strip()

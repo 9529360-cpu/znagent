@@ -23,6 +23,15 @@ from typing import Any
 
 JOURNAL_KINDS = ("note", "progress", "handoff", "blocker", "decision")
 
+#: Deletion-scope reminder, shown in every disband plan / cleanup checklist:
+#: ZN deletes its own team records only. Workspace files and browser logins
+#: are the user's own state on their own computer -- disband never touches
+#: them, and the owner must clean them by hand if they want them gone.
+SHARED_FILES_REMINDER = (
+    "注意：共享文件与登录不会随之删除——工作区里的文件、浏览器登录态"
+    "需主人手动清理。解散只删 ZN 侧的团队记录，不碰工作区文件与登录态。"
+)
+
 
 @dataclass(frozen=True, slots=True)
 class SpecialistRole:
@@ -197,6 +206,7 @@ class DisbandPlan:
         ]
         if self.work_thread_id:
             parts.append("- 项目工作线程（含消息与产物，级联清理）")
+        parts.append(SHARED_FILES_REMINDER)
         return "\n".join(parts)
 
 

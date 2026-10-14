@@ -255,6 +255,28 @@ GPT、Claude、Gemini、Codex、人类开发者等都只是可替换维护者。
 
 本次 2026-09-04 的专用历史清理是项目所有者明确要求的一次性例外。它不改变正常规则：以后仍禁止在没有明确授权的情况下 force push 或重写 `main` / 历史兼容分支历史。
 
+## 工作区文件纪律（M12：交付物 / 草稿 / 内部账本三分家；删除可恢复）
+
+来源：Muse 模式 M12（工作区文件纪律）。抄的是机制，实现是 ZN 自己写的（`runtime/python/zn_agent/core/workspace_file_discipline.py`），没有复制 Muse 代码。
+
+ZN 工作区（默认 `<ZN home>/workspace/`）三分家：
+
+```text
+workspace/
+  your_files/    交付物：给用户看的最终产物。用户可见的成品只从这里来。
+  drafts/        草稿：中间过程文件、半成品、暂存。永远不直接当成品给用户。
+  hidden_files/  内部账本：内部状态、日志、水位线、seen 清单、快照。用户不应看到。
+  .trash/        回收站：删除的中转站，不是第四类内容。
+```
+
+规则：
+
+- 交付物从第一次写入就写在 `your_files/` 里，不要先在别处写好再复制/移动进来（复制留两份会漂移，移动破坏引用）。草稿后来确定是成品，走 `promote_draft_to_deliverable`：只允许移动、不允许复制，源文件必须消失。
+- 内部账本永远不写进 `your_files/`；`check_write` / `write_text` / `write_bytes` 在写时就拦，不是事后检查。
+- 删除 = 移入回收站：`trash_path` 记录原路径 + 删除时间，`restore_path` 可恢复，`list_trash` 可列出。不要对工作区文件用 `unlink` / `rmtree` / `os.remove` 直接删（临时 staging 产物清理除外，那些不是用户/工作文件）。
+- 高危/批量/不可逆操作需显式 `confirm=True`：目录删除、永久清除（`purge_trashed`）、清空回收站（`empty_trash`）；恢复时目标已存在默认拒绝，`overwrite=True` 时先把现有目标也移入回收站再恢复，永不静默覆盖。
+- Body 提供 `trash_path` / `restore_trashed` / `list_trash` 三个动作，调用时必须显式传 `workspace_root`。WorkerRun 权限不接纳删除动作：删除不在 WorkerRun 许可的动作集合里，带 WorkerRun 权限上下文调用会被拒绝。
+
 ## 接手成功标准
 
 ```text
