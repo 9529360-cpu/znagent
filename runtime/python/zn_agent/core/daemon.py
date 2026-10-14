@@ -325,6 +325,8 @@ class ResidentRpcServer:
             if not application_id:
                 raise ValueError("work_restore_application requires application_id")
             result = self.work_control.restore_application(application_id)
+        elif method.startswith("routine_"):
+            result = self._routine_result(method, params)
         elif method == "work_submit":
             thread_id = str(params.get("thread_id") or "").strip()
             task = str(params.get("task") or "").strip()
@@ -562,6 +564,58 @@ class ResidentRpcServer:
     @staticmethod
     def _limit(params: dict[str, Any]) -> int:
         return max(1, min(200, int(params.get("limit") or 20)))
+
+    def _routine_manager(self):
+        manager = getattr(self.resident, "routines", None)
+        if manager is None:
+            raise ValueError("routines are unavailable on this resident")
+        return manager
+
+    @staticmethod
+    def _routine_id(params: dict[str, Any]) -> str:
+        routine_id = str(params.get("routine_id") or "").strip()
+        if not routine_id:
+            raise ValueError("routine_id is required")
+        return routine_id
+
+    def _routine_result(self, method: str, params: dict[str, Any]) -> Any:
+        """Dispatch routine_* RPC methods to the resident's RoutineManager."""
+        manager = self._routine_manager()
+        if method == "routine_propose":
+            text = str(params.get("text") or "").strip()
+            if not text:
+                raise ValueError("routine_propose requires text")
+            return manager.propose(text)
+        if method == "routine_confirm":
+            draft = params.get("draft")
+            if not isinstance(draft, dict):
+                raise ValueError("routine_confirm requires a draft object")
+            return manager.confirm(draft)
+        if method == "routine_list":
+            return manager.list_routines(limit=self._limit(params))
+        if method == "routine_get":
+            return manager.snapshot(self._routine_id(params))
+        if method == "routine_runs":
+            return manager.runs(self._routine_id(params), limit=self._limit(params))
+        if method == "routine_pause":
+            return manager.pause(
+                self._routine_id(params),
+                reason=str(params.get("reason") or "").strip() or None,
+            )
+        if method == "routine_resume":
+            return manager.resume(self._routine_id(params))
+        if method == "routine_edit":
+            fields = params.get("fields")
+            if not isinstance(fields, dict):
+                raise ValueError("routine_edit requires a fields object")
+            return manager.edit(self._routine_id(params), fields=fields)
+        if method == "routine_delete":
+            return manager.delete(self._routine_id(params))
+        if method == "routine_test_run":
+            return manager.test_run(self._routine_id(params))
+        if method == "routine_acknowledge":
+            return manager.acknowledge(self._routine_id(params))
+        raise ValueError(f"unknown method: {method}")
 
     def _work_snapshot(
         self,
