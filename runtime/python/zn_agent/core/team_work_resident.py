@@ -48,9 +48,11 @@ from .team_work_owner import (
     EVIDENCE_KEY,
     TEAM_CLAIM_STATE_KEY,
     TEAM_COMPLETE_STATE_KEY,
+    TEAM_ID_STATE_KEY,
     TeamWorkOwner,
     verified_evidence,
 )
+from .team_termination import record_team_tool_call
 
 
 class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
@@ -130,6 +132,20 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             self.store.save_working_state(state)
             return self._checkpoint_terminal_failure(event, state, reason=reason)
 
+        if step.stop_reason:
+            # Hard termination (CP-1): the runner stopped the team before
+            # dispatching anything this pulse. Fail closed with the
+            # structured STOP_REASON instead of looping or asking cognition
+            # with no live specialist.
+            reason = (
+                f"团队已停止（STOP_REASON={step.stop_reason}）。"
+                f"触发：{step.stop_trigger}。"
+                "不再派活，等待用户拍板。"
+            )
+            state.data["local_failure"] = reason[:3000]
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._checkpoint_terminal_failure(event, state, reason=reason)
         if step.team_complete:
             state.data[TEAM_COMPLETE_STATE_KEY] = True
             state.data.pop("local_failure", None)
@@ -629,6 +645,12 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 self.work_ledger.update_worker_run_metrics(
                     run_id, metrics={EVIDENCE_KEY: evidence[-12:]}
                 )
+                # CP-1 tool cap: one durable increment per executed
+                # specialist tool step. Counter loss must not kill the
+                # event -- see the except below.
+                team_id = str(state.data.get(TEAM_ID_STATE_KEY) or "").strip()
+                if team_id:
+                    record_team_tool_call(self.memory, team_id)
             except (OSError, RuntimeError, ValueError):
                 # Evidence checkpoint loss must not kill the event: the
                 # runner's verifier will fail closed (no evidence -> no pass)
