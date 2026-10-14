@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
 from .project_team import ProjectTeam, journal_message
+from .specialist_workspace import specialist_prompt_for
 from .worker_progress import worker_stalled
 
 
@@ -175,7 +176,11 @@ class TeamCoordinator:
             "work_item_objective": plan_item.objective,
             "acceptance_criteria": tuple(plan_item.acceptance_criteria),
             "specialist_name": plan_item.assignee,
-            "specialist_prompt": specialist.prompt_fragment if specialist else "",
+            # File workspaces are the source of truth: re-read on every
+            # dispatch so a SOUL.md edit takes effect next dispatch.
+            "specialist_prompt": specialist_prompt_for(self.team, specialist)
+            if specialist
+            else "",
             "memory_namespace": specialist.memory_namespace if specialist else "",
             # Stable action key for the CP-4 approval-rejection guard:
             # the runner refuses to execute an action the approval layer
