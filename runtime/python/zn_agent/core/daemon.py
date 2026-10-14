@@ -17,7 +17,6 @@ from .recovery_bounded_work import RecoveryBoundedWorkLedger
 from .recovery_control import ResidentRecoveryRequired
 from .service import ResidentService
 from .project_team import assemble_team
-from .suggestions import SuggestionEngine
 from .team_memory import team_shared_memory
 from .team_request import parse_team_request
 from .team_timeline import (
@@ -52,6 +51,10 @@ class ResidentRpcServer:
         self.resident = resident or build_resident_runtime_from_existing_stack()
         self.service = ResidentService(self.resident)
         self.work = RecoveryBoundedWorkLedger(self.resident)
+        # Local import: keeps the suggestions wiring in its own merge hunk
+        # (P1-3 precedent) instead of the shared top-level import block.
+        from .suggestions import SuggestionEngine
+
         self.suggestions = SuggestionEngine(self.resident, self.work)
         self.work_control = OutcomeAwareRestoreWorkControl(self.work)
         self.resident.cognitive_delta_handler = self.work.publish_response_delta
