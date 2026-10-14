@@ -902,6 +902,17 @@ class ResidentWorkLedger:
             ).fetchone()
         return self._run_from_row(row) if row else None
 
+    def latest_run_for_thread(self, thread_id: str) -> WorkRun | None:
+        """Most recent run for a thread, whatever its ledger state."""
+        normalized = self._normalize_thread_id(thread_id)
+        with self._lock, closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM work_runs WHERE thread_id=? "
+                "ORDER BY created_at DESC LIMIT 1",
+                (normalized,),
+            ).fetchone()
+        return self._run_from_row(row) if row else None
+
     def _active_run_for_thread(self, thread_id: str) -> WorkRun | None:
         with self._lock, closing(self._connect()) as conn:
             row = conn.execute(
