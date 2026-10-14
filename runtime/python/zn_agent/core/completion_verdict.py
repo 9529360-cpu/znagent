@@ -28,6 +28,12 @@ claiming with a checkable contract:
   says "未证实" yet claims completion).
 - Uncertainty is not a fact: anything uncertain belongs in ``unfinished``,
   which forces ``partial``, never ``verified``.
+- Test claims need a real run (P2): when an acceptance criterion is
+  test-related, or a test file was written, the claim is ``partial``
+  until some verified evidence entry records a ``run_python`` step.
+  Writing tests without running them never earns a "test coverage"
+  claim -- the smoke run caught a developer writing ``test_app.py``
+  and never executing it while the claim still passed.
 
 What the adjudicator deliberately does NOT do: it checks that each cited
 criterion points at real verified evidence; it does not judge semantic
@@ -45,6 +51,7 @@ rejected claim is spinning, not progress.
 """
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -120,6 +127,29 @@ def render_completion_report(
         },
         ensure_ascii=False,
     )
+
+
+def _is_test_related_criterion(criterion: str) -> bool:
+    """Does this acceptance criterion ask for tests / test coverage?
+
+    Word-boundary matching for English so "latest" does not match "test";
+    plain substring for Chinese, where "测试" has no such collision.
+    """
+    lowered = criterion.lower()
+    if re.search(r"\btests?\b|\btesting\b", lowered):
+        return True
+    return "测试" in criterion or any(
+        token in lowered for token in ("pytest", "unittest", "run_python")
+    )
+
+
+def _is_test_file_path(path: str) -> bool:
+    """Does this workspace-relative path look like a test file?"""
+    lowered = path.replace("\\", "/").lower()
+    base = lowered.rsplit("/", 1)[-1]
+    if base.startswith("test_") or base.endswith(("_test.py", "_tests.py")):
+        return True
+    return "/tests/" in lowered or "/test/" in lowered
 
 
 def _entry_text(entry: dict[str, Any]) -> str:
@@ -271,6 +301,30 @@ def adjudicate_completion(
         if item not in missing:
             missing.append(item)
 
+    # -- P2: test claims need a real run ---------------------------------
+    # A test-related criterion, or a written test file, requires at least
+    # one verified run_python evidence entry. Without it, the test-related
+    # criteria stay missing; when no criterion is test-related but a test
+    # file was written and never run, the whole claim waits -- the
+    # specialist produced tests it never executed.
+    requires_run = any(_is_test_related_criterion(item) for item in expected) or any(
+        _is_test_file_path(str(entry.get("relative_path") or ""))
+        for entry in evidence
+    )
+    has_run = any(
+        str(entry.get("action_kind") or "") == "run_python" for entry in evidence
+    )
+    run_gate_triggered = bool(requires_run and not has_run)
+    if run_gate_triggered:
+        run_missing = [
+            item for item in expected if _is_test_related_criterion(item)
+        ]
+        if not run_missing:
+            run_missing = [item for item in expected if item not in missing]
+        for item in run_missing:
+            if item not in missing:
+                missing.append(item)
+
     # -- self-contradiction: "未证实" in the conclusion, yet claiming done --
     if "未证实" in conclusion and not missing:
         return rejected(
@@ -278,14 +332,22 @@ def adjudicate_completion(
             "把未证实项列入 unfinished 后重提；结论只写已证实的内容。",
         )
     if missing:
+        actionable = (
+            "对缺失项补可验证证据（写文件/跑脚本并通过 Body 验收），"
+            "在终报 evidence 中逐项引用后重提。"
+        )
+        if run_gate_triggered:
+            actionable += (
+                "测试相关认领还需实际运行证据：先用 run_python 运行测试并通过，"
+                "再重提终报；只写测试不运行的认领不被接受。"
+            )
         return CompletionVerdict(
             verdict="partial",
             expected_output=expected,
             evidence_refs=tuple(dict.fromkeys(matched_refs)),
             reason="以下验收项缺可验证证据或未完成：" + "、".join(missing),
             missing_items=tuple(missing),
-            actionable_fix="对缺失项补可验证证据（写文件/跑脚本并通过 Body 验收），"
-            "在终报 evidence 中逐项引用后重提。",
+            actionable_fix=actionable,
         )
     return CompletionVerdict(
         verdict="verified",

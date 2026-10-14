@@ -28,10 +28,16 @@ from zn_agent.core.work_restore_control import RestoreAwareWorkControl
 
 
 class _TeamSpecialistCognition:
-    """Fixture specialist: one write_file step, then a structured CP-3 claim."""
+    """Fixture specialist: steps, then a structured CP-3 claim.
+
+    Researcher: one write_file step, then a claim. Developer: write the
+    script, run it with run_python, then claim -- P2 requires a real run
+    behind any test-coverage claim, so the fixture earns it instead of
+    claiming coverage from a write alone.
+    """
 
     # Per-specialist CP-3 completion report: every acceptance criterion
-    # cited with an evidence_ref matching the verified write_file step.
+    # cited with an evidence_ref matching a verified step.
     _COMPLETION = {
         "调研-01": render_completion_report(
             conclusion="调研完成：调研结论有明确选型建议，风险清单覆盖主要未知项。",
@@ -45,17 +51,17 @@ class _TeamSpecialistCognition:
         "开发-02": render_completion_report(
             conclusion="开发完成：功能按验收标准实现，新增代码有测试覆盖。",
             evidence=[
-                ("功能按验收标准实现", "implementation.md"),
-                ("新增代码有测试覆盖", "implementation.md"),
+                ("功能按验收标准实现", "implementation.py"),
+                ("新增代码有测试覆盖", "implementation.py"),
             ],
-            files=["implementation.md"],
+            files=["implementation.py"],
             unfinished=[],
         ),
     }
 
     def __init__(self) -> None:
         self.calls = 0
-        self.stepped: set[str] = set()
+        self.step_index: dict[str, int] = {}
 
     def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
         self.calls += 1
@@ -72,34 +78,86 @@ class _TeamSpecialistCognition:
                 provider="fixture-cognition",
                 model="team-specialist-fixture",
             )
-        if specialist not in self.stepped:
-            self.stepped.add(specialist)
-            filename = (
-                "research-notes.md" if specialist == "调研-01" else "implementation.md"
-            )
-            content = f"{specialist} verified step\n"
-            proposal = {
-                "zn_work_step": {
-                    "objective": f"{specialist} 写一份可验证的工作产物",
-                    "action": {
-                        "kind": "write_file",
-                        "path": filename,
-                        "content": content,
-                    },
-                    "acceptance": {
-                        "kind": "text_equals",
-                        "path": filename,
-                        "expected_text": content,
-                    },
-                }
-            }
+        index = self.step_index.get(specialist, 0)
+        self.step_index[specialist] = index + 1
+        if specialist == "调研-01":
+            if index == 0:
+                return CognitiveIncrement(
+                    text=json.dumps(
+                        {
+                            "zn_work_step": {
+                                "objective": "调研-01 写一份可验证的工作产物",
+                                "action": {
+                                    "kind": "write_file",
+                                    "path": "research-notes.md",
+                                    "content": "调研-01 verified step\n",
+                                },
+                                "acceptance": {
+                                    "kind": "text_equals",
+                                    "path": "research-notes.md",
+                                    "expected_text": "调研-01 verified step\n",
+                                },
+                            }
+                        },
+                        ensure_ascii=False,
+                    ),
+                    provider="fixture-cognition",
+                    model="team-specialist-fixture",
+                )
+            # Second call for the researcher: completion summary quoting
+            # the acceptance criteria (the claim signal the resident requires).
             return CognitiveIncrement(
-                text=json.dumps(proposal, ensure_ascii=False),
+                text=self._COMPLETION[specialist],
                 provider="fixture-cognition",
                 model="team-specialist-fixture",
             )
-        # Second call for the same specialist: completion summary quoting
-        # the acceptance criteria (the claim signal the resident requires).
+        # Developer: write the script, run it, then claim.
+        if index == 0:
+            return CognitiveIncrement(
+                text=json.dumps(
+                    {
+                        "zn_work_step": {
+                            "objective": "开发-02 写实现脚本",
+                            "action": {
+                                "kind": "write_file",
+                                "path": "implementation.py",
+                                "content": 'print("implementation ok")\n',
+                            },
+                            "acceptance": {
+                                "kind": "text_equals",
+                                "path": "implementation.py",
+                                "expected_text": 'print("implementation ok")\n',
+                            },
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                provider="fixture-cognition",
+                model="team-specialist-fixture",
+            )
+        if index == 1:
+            return CognitiveIncrement(
+                text=json.dumps(
+                    {
+                        "zn_work_step": {
+                            "objective": "开发-02 运行实现脚本验证",
+                            "action": {
+                                "kind": "run_python",
+                                "path": "implementation.py",
+                                "args": [],
+                            },
+                            "acceptance": {
+                                "kind": "command",
+                                "expected_exit_code": 0,
+                                "output_contains": ["implementation ok"],
+                            },
+                        }
+                    },
+                    ensure_ascii=False,
+                ),
+                provider="fixture-cognition",
+                model="team-specialist-fixture",
+            )
         return CognitiveIncrement(
             text=self._COMPLETION[specialist],
             provider="fixture-cognition",
@@ -184,9 +242,15 @@ class TeamResidentEntryTests(unittest.TestCase):
                 self.assertGreaterEqual(
                     cognition.calls, 4, "specialists never used cognition"
                 )
-                # Real Body-verified artifacts on disk.
+                # Real Body-verified artifacts on disk. The developer writes a
+                # runnable script (not a prose .md) so the run_python step
+                # executes a real artifact.
                 self.assertTrue((workspace / "research-notes.md").is_file())
-                self.assertTrue((workspace / "implementation.md").is_file())
+                self.assertTrue((workspace / "implementation.py").is_file())
+                self.assertIn(
+                    'print("implementation ok")',
+                    (workspace / "implementation.py").read_text(encoding="utf-8"),
+                )
                 # Every completed item went through verify (not claim-only).
                 for item in ledger.list_work_items("team-entry-e2e"):
                     if item.parent_work_item_id is None:

@@ -108,8 +108,15 @@ class BroadGoalRecoverableCodingResidentRuntime(TeamWorkResidentRuntime):
 
     def _verification_contract(self, event, intent, *, result=None):
         contract = super()._verification_contract(event, intent, result=result)
+        # Team run_python steps are guarded commands too: they must verify
+        # from the one durable observed process result, not by re-dispatching
+        # the command at verification time (the Body refuses blind replay of
+        # an already-returned dispatch, which used to fail every team
+        # run_python verification and drop the step into generic
+        # investigation with no evidence).
         if (
-            intent.source == "resident_broad_goal_choice"
+            intent.source
+            in {"resident_broad_goal_choice", self._TEAM_SOURCE}
             and intent.kind == "command"
             and isinstance(contract, dict)
             and str(contract.get("kind") or "").strip().lower() == "command"

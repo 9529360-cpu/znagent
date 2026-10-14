@@ -83,6 +83,10 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
     # with no new verified evidence and escalate at the threshold.
     _TEAM_NO_PROGRESS_KEY = "team_no_evidence_progress"
     _MAX_NO_EVIDENCE_PULSES = 8
+    # P2: a specialist that hits a missing design/scope gap reports it
+    # instead of inventing scope. The pending gap is stored here by the
+    # integration step; the next deliberation fails closed with it.
+    _TEAM_GAP_KEY = "team_specialist_gap"
     # Rewrite-loop convergence: byte-identical content rewritten twice,
     # or the same (objective, path) four times, means the specialist is
     # circling without converging -- escalate instead of spinning.
@@ -200,6 +204,22 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         # pulse sees it resolved and the driver continues.
         thread_id = str(event.payload.get("work_thread_id") or "").strip()
         team = owner.resolve_team(event=event, state=state, thread_id=thread_id)
+        # P2: a specialist-reported design/scope gap stops the team for a
+        # user decision -- it must not be answered with another cognition
+        # call, or the specialist will invent the missing scope.
+        gap = state.data.get(self._TEAM_GAP_KEY)
+        if isinstance(gap, dict) and str(gap.get("missing") or "").strip():
+            state.data.pop(self._TEAM_GAP_KEY, None)
+            reason = (
+                "专员上报缺口，团队已停止等待用户拍板：缺失："
+                f"{str(gap.get('missing') or '')[:600]}；"
+                f"需要：{str(gap.get('needed') or '')[:600]}；"
+                f"影响：{str(gap.get('impact') or '')[:600]}。"
+            )
+            state.data["local_failure"] = reason[:3000]
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._checkpoint_terminal_failure(event, state, reason=reason)
         pending = pending_handover(self.memory, team.team_id)
         if pending is not None:
             state.blocked_by = "user_presence_required"
@@ -488,6 +508,14 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                     "Do not repeat it: fix the reason and propose again. "
                     f"Rejected proposal (excerpt): {excerpt[:600]} "
                 )
+        prior_items = context.get("prior_items")
+        prior_text = ""
+        if isinstance(prior_items, list) and prior_items:
+            prior_text = (
+                "前面已完成项（结论与产物，可引用，不要重复做，不要自行发明"
+                "与之矛盾的范围）:"
+                f" {json.dumps(prior_items, ensure_ascii=False)} "
+            )
         request.question = (
             "You are the "
             f"{context.get('specialist_name') or 'specialist'} specialist on one "
@@ -507,7 +535,21 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             "If you use a subdirectory, its parent directory must already exist. "
             "Do not emit "
             "shell commands, executable paths, background-process controls, or "
-            "tool calls. If your item's acceptance criteria are NOT all "
+            "tool calls. "
+            "If you wrote test files, you MUST run them with run_python and "
+            "pass before claiming any test-coverage acceptance item: a claim "
+            "that cites only written-but-never-run tests will be sent back. "
+            "If the design / scope information your item needs is missing -- "
+            "for example your brief or objective refers to a design doc, "
+            "an interface contract, or a scope definition that is in neither "
+            "your brief nor the completed items below -- do NOT invent the "
+            "missing scope, interface, or feature set. Reply with ONLY this "
+            "JSON object (no other text): "
+            '{"gap_report":{"missing":"what information is missing",'
+            '"needed":"what is needed to continue",'
+            '"impact":"what breaks without it"}}. '
+            "The team stops and waits for the user to decide on a reported gap. "
+            "If your item's acceptance criteria are NOT all "
             "satisfied yet, do NOT claim completion: do another work step. "
             "Only when EVERY criterion is satisfied by the verified evidence "
             "below, reply with ONLY this JSON object (no other text): "
@@ -527,6 +569,7 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             f"Your brief: {context.get('specialist_prompt') or ''} "
             f"Your item: {context.get('objective') or ''}. "
             f"Acceptance criteria: {json.dumps(context.get('acceptance_criteria') or [], ensure_ascii=False)}. "
+            f"{prior_text}"
             f"Verified evidence so far: {json.dumps(evidence, ensure_ascii=False)}."
         )
         request.context = {
@@ -598,6 +641,46 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 }
             state.stage = "native_deliberation"
             state.next_action = "敏感步骤已拦截，等待主人亲自完成"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+
+        # P2: a specialist gap report is not a work step and must never be
+        # executed. Record it; the next deliberation fails closed with it
+        # so the team waits for the user instead of inventing the scope.
+        gap_shape = parse_exact_json_payload(increment.content)
+        if isinstance(gap_shape, dict) and "gap_report" in gap_shape:
+            gap_value = gap_shape.get("gap_report")
+            if isinstance(gap_value, dict) and str(
+                gap_value.get("missing") or ""
+            ).strip():
+                state.data[self._TEAM_GAP_KEY] = {
+                    "run_id": str(context.get("run_id") or ""),
+                    "missing": str(gap_value.get("missing") or "")[:600],
+                    "needed": str(gap_value.get("needed") or "")[:600],
+                    "impact": str(gap_value.get("impact") or "")[:600],
+                }
+                state.stage = "native_deliberation"
+                state.next_action = (
+                    "专员上报缺口，停止等待用户拍板："
+                    f"{str(gap_value.get('missing') or '')[:200]}"
+                )
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return None
+            # Malformed gap report: same rejection channel as a rejected
+            # structured proposal, so the next cognition call sees why.
+            state.data[self._TEAM_REJECTION_KEY] = {
+                "run_id": str(context.get("run_id") or ""),
+                "reason": (
+                    "gap_report 格式错误：需为 JSON 对象且含非空 missing 字段，"
+                    "例如 {\"gap_report\": {\"missing\": \"...\", "
+                    "\"needed\": \"...\", \"impact\": \"...\"}}"
+                ),
+                "proposal_excerpt": str(increment.content or "")[:600],
+            }
+            state.stage = "native_deliberation"
+            state.next_action = "专员缺口报告格式错误：按拒因重提"
             self._sync_execution_context(event, state)
             self.store.save_working_state(state)
             return None

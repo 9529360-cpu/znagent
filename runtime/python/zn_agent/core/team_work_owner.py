@@ -21,6 +21,7 @@ Escalations surface through the journal; disband still follows the
 existing ``DisbandPlan`` -- never automatic.
 """
 
+import json
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -292,6 +293,68 @@ class TeamWorkOwner:
             team, assignee_overrides(self.memory, team_id)
         )
 
+    def _prior_items_for(
+        self, *, team: ProjectTeam, live_work_item_id: str
+    ) -> list[dict[str, Any]]:
+        """Completed plan items before the live one, as cognition context.
+
+        P2: a specialist can only build on prior work (research, design)
+        if it can see it. Each entry carries the prior item's title,
+        objective, and its completion conclusion + files, so the live
+        specialist knows what scope was already decided -- and can tell
+        when the design/scope info it needs is missing instead of
+        inventing it. Advisory only: any failure degrades to no priors,
+        never breaks dispatch.
+        """
+        try:
+            id_map = self._plan_map(team)
+            live_index = None
+            for index, plan_item in enumerate(team.plan):
+                if id_map.get(plan_item.item_id) == live_work_item_id:
+                    live_index = index
+                    break
+            if live_index is None:
+                return []
+            priors: list[dict[str, Any]] = []
+            for plan_item in team.plan[:live_index]:
+                wid = id_map.get(plan_item.item_id)
+                if not wid:
+                    continue
+                conclusion = ""
+                files: list[str] = []
+                for run in self.ledger.list_worker_runs(
+                    work_item_id=wid, limit=50
+                ):
+                    if not getattr(run, "claimed_completion", False):
+                        continue
+                    summary = str(getattr(run, "result_summary", "") or "")
+                    try:
+                        parsed = json.loads(summary.strip())
+                    except (ValueError, TypeError):
+                        parsed = None
+                    if isinstance(parsed, dict) and isinstance(
+                        parsed.get("completion_report"), dict
+                    ):
+                        report = parsed["completion_report"]
+                        conclusion = str(report.get("conclusion") or "")[:600]
+                        raw_files = report.get("files")
+                        if isinstance(raw_files, list):
+                            files = [str(item)[:300] for item in raw_files][:10]
+                    else:
+                        conclusion = summary[:600]
+                if conclusion or files:
+                    priors.append(
+                        {
+                            "title": str(plan_item.title or "")[:200],
+                            "objective": str(plan_item.objective or "")[:600],
+                            "conclusion": conclusion,
+                            "files": files,
+                        }
+                    )
+            return priors[-3:]
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return []
+
     def _plan_map(self, team: ProjectTeam) -> dict[str, str]:
         shared = team_shared_memory(self.memory, team.team_id)
         match = shared.recall(TeamRunner.PLAN_MAP_KEY)
@@ -490,6 +553,9 @@ class TeamWorkOwner:
                         "specialist_prompt": brief,
                         "objective": plan_item.objective,
                         "acceptance_criteria": list(plan_item.acceptance_criteria),
+                        "prior_items": self._prior_items_for(
+                            team=team, live_work_item_id=live.work_item_id
+                        ),
                         "evidence": [
                             {
                                 "objective": str(entry.get("objective") or "")[:300],

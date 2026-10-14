@@ -58,6 +58,21 @@ def _evidence(*, ref: str = "research/notes.md") -> list[dict]:
     ]
 
 
+def _run_evidence(*, ref: str = "test_app.py") -> list[dict]:
+    """One verified run_python step: the test script actually executed."""
+    return [
+        {
+            "kind": "verified_body_step",
+            "objective": "开发运行测试脚本",
+            "result": "run_python test_app.py exit 0",
+            "relative_path": ref,
+            "action_kind": "run_python",
+            "verified": True,
+            "artifact_refs": [],
+        }
+    ]
+
+
 def _full_report(*, ref: str = "research/notes.md") -> str:
     return render_completion_report(
         conclusion="调研完成，结论已写好。",
@@ -178,6 +193,74 @@ class AdjudicateCompletionTests(unittest.TestCase):
         )
         self.assertEqual(verdict.verdict, "rejected")
         self.assertIn("未证实", verdict.reason)
+
+    def test_test_criterion_without_run_evidence_is_partial(self):
+        """P2: a test-coverage claim with only written files is partial --
+        the smoke run caught a developer writing test_app.py and never
+        running it while the claim still passed."""
+        criteria = ["功能按验收标准实现", "新增代码有测试覆盖"]
+        verdict = adjudicate_completion(
+            expected_output=criteria,
+            evidence=_evidence(ref="app.py"),
+            summary=render_completion_report(
+                conclusion="开发完成。",
+                evidence=[(c, "app.py") for c in criteria],
+                files=["app.py"],
+                unfinished=[],
+            ),
+        )
+        self.assertEqual(verdict.verdict, "partial")
+        self.assertIn("新增代码有测试覆盖", verdict.missing_items)
+        self.assertIn("run_python", verdict.actionable_fix)
+
+    def test_test_file_written_but_never_run_blocks_the_whole_claim(self):
+        """P2: a test file written but never run holds the claim even
+        when no criterion mentions tests -- the specialist produced
+        tests it never executed."""
+        verdict = adjudicate_completion(
+            expected_output=["实现加法功能"],
+            evidence=_evidence(ref="app.py") + _evidence(ref="test_app.py"),
+            summary=render_completion_report(
+                conclusion="开发完成。",
+                evidence=[("实现加法功能", "app.py")],
+                files=["app.py", "test_app.py"],
+                unfinished=[],
+            ),
+        )
+        self.assertEqual(verdict.verdict, "partial")
+        self.assertIn("实现加法功能", verdict.missing_items)
+        self.assertIn("run_python", verdict.actionable_fix)
+
+    def test_run_python_evidence_satisfies_test_claim(self):
+        criteria = ["功能按验收标准实现", "新增代码有测试覆盖"]
+        verdict = adjudicate_completion(
+            expected_output=criteria,
+            evidence=_evidence(ref="app.py") + _run_evidence(),
+            summary=render_completion_report(
+                conclusion="开发完成。",
+                evidence=[
+                    ("功能按验收标准实现", "app.py"),
+                    ("新增代码有测试覆盖", "test_app.py"),
+                ],
+                files=["app.py", "test_app.py"],
+                unfinished=[],
+            ),
+        )
+        self.assertEqual(verdict.verdict, "verified")
+
+    def test_latest_in_criterion_does_not_trigger_run_gate(self):
+        """Word-boundary matching: 'latest' must not match 'test'."""
+        verdict = adjudicate_completion(
+            expected_output=["使用 latest 版本的接口"],
+            evidence=_evidence(ref="notes.md"),
+            summary=render_completion_report(
+                conclusion="调研完成。",
+                evidence=[("使用 latest 版本的接口", "notes.md")],
+                files=["notes.md"],
+                unfinished=[],
+            ),
+        )
+        self.assertEqual(verdict.verdict, "verified")
 
 
 class VerdictRetryBudgetTests(unittest.TestCase):
@@ -534,6 +617,124 @@ class ResidentVerdictTests(unittest.TestCase):
                 self.assertIn("相同", str(terminal.reason or ""))
             finally:
                 resident.store.close()
+
+
+class ResidentGapReportTests(ResidentVerdictTests):
+    """P2: a specialist gap report stops the team -- it must not be
+    executed as a step, and the next deliberation fails closed with
+    the gap instead of re-asking cognition to invent the scope."""
+
+    def test_gap_report_fails_closed_without_inventing_scope(self):
+        gap = json.dumps(
+            {
+                "gap_report": {
+                    "missing": "没有设计文档",
+                    "needed": "架构专员的设计文档",
+                    "impact": "无法确定接口范围",
+                }
+            },
+            ensure_ascii=False,
+        )
+        cognition = _ScriptedSpecialist(script=[gap])
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, ledger, event, workspace = self._start(Path(tmp), cognition)
+            try:
+                terminal = None
+                for _ in range(120):
+                    terminal = resident.live_once()
+                    if terminal is not None:
+                        break
+                self.assertIsNotNone(terminal, "gap report did not fail closed")
+                assert terminal is not None
+                self.assertFalse(terminal.success)
+                self.assertIn("缺口", str(terminal.reason or ""))
+                self.assertIn("没有设计文档", str(terminal.reason or ""))
+                # Nothing was invented: the only workspace content is the
+                # persona scaffolding materialized on dispatch, no
+                # specialist-invented scope files.
+                self.assertEqual(
+                    sorted(p.name for p in workspace.iterdir()),
+                    ["agents"],
+                )
+            finally:
+                resident.store.close()
+
+
+class PriorItemsTests(unittest.TestCase):
+    """P2: the live specialist sees prior completed items' conclusions
+    in its brief, so it can build on decided scope -- and tell when
+    the design/scope info it needs is missing."""
+
+    def setUp(self):
+        self.root = Path(tempfile.mkdtemp(prefix="zn-team-prior-"))
+        self.store = KernelStore(self.root / "kernel.db")
+        resident = SimpleNamespace(
+            store=SimpleNamespace(path=str(self.root / "kernel.db"))
+        )
+        self.ledger = EvidenceBoundSteerableWorkLedger(resident)
+        self.memory = StructuredMemory(self.store)
+        self.thread_id = "thread-team-prior"
+        self.ledger.create_thread(thread_id=self.thread_id, title="项目 X")
+        self.ledger._save_item(
+            WorkItem(
+                work_item_id="root-prior",
+                work_thread_id=self.thread_id,
+                title="XX 项目",
+                objective="给 XX 项目组个团队",
+                status="running",
+                plan_version=1,
+            )
+        )
+        self.event = SimpleNamespace(
+            event_id="evt-team-prior",
+            payload={
+                "work_thread_id": self.thread_id,
+                "work_item_id": "root-prior",
+                "team_request": {
+                    "project_title": "XX 项目",
+                    "role_keys": ["researcher", "developer"],
+                },
+            },
+        )
+        self.state = SimpleNamespace(data={})
+        self.owner = TeamWorkOwner(ledger=self.ledger, memory=self.memory)
+
+    def tearDown(self):
+        self.store.close()
+
+    def test_dev_brief_carries_completed_researcher_summary(self):
+        step = self.owner.advance(
+            event=self.event, state=self.state, root_work_item_id="root-prior"
+        )
+        assert step.live_run_id is not None
+        run_id = step.live_run_id
+        run = self.ledger.worker_run(run_id)
+        assert run is not None
+        evidence = verified_evidence(run)
+        evidence.extend(_evidence())
+        self.ledger.update_worker_run_metrics(
+            run_id, metrics={EVIDENCE_KEY: evidence}
+        )
+        self.state.data[TEAM_CLAIM_STATE_KEY] = {
+            "run_id": run_id,
+            "summary": _full_report(),
+        }
+        self.owner.advance(
+            event=self.event, state=self.state, root_work_item_id="root-prior"
+        )  # claim lands
+        self.owner.advance(
+            event=self.event, state=self.state, root_work_item_id="root-prior"
+        )  # researcher item completes
+        step = self.owner.advance(
+            event=self.event, state=self.state, root_work_item_id="root-prior"
+        )  # developer dispatched
+        self.assertEqual(step.live_specialist_name, "开发-02")
+        assert step.live_context is not None
+        priors = step.live_context.get("prior_items")
+        assert isinstance(priors, list)
+        self.assertEqual(len(priors), 1)
+        self.assertIn("调研", priors[0]["title"])
+        self.assertIn("调研完成", priors[0]["conclusion"])
 
 
 if __name__ == "__main__":
