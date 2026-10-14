@@ -27,6 +27,7 @@ from .project_team import ProjectTeam, assemble_team
 from .skill_ledger import SkillLedger
 from .team_memory import team_shared_memory
 from .team_runner import Escalation, TeamRunner, VerificationOutcome
+from .team_timeline import apply_assignee_overrides, assignee_overrides
 
 
 #: Metrics key holding the Body-verified specialist evidence on a WorkerRun.
@@ -159,11 +160,14 @@ class TeamWorkOwner:
             project = str(spec.value.get("project_title") or "").strip()
             roles = [str(key) for key in (spec.value.get("role_keys") or [])]
             if project and roles:
-                return assemble_team(
-                    project,
-                    roles,
-                    team_id=team_id,
-                    work_thread_id=thread_id,
+                return self._with_overrides(
+                    assemble_team(
+                        project,
+                        roles,
+                        team_id=team_id,
+                        work_thread_id=thread_id,
+                    ),
+                    team_id,
                 )
         # First pulse (or spec lost): assemble from the ingress request.
         project = str(request.get("project_title") or "").strip()
@@ -173,8 +177,17 @@ class TeamWorkOwner:
         shared.remember(
             TEAM_SPEC_KEY, {"project_title": project, "role_keys": roles}
         )
-        return assemble_team(
-            project, roles, team_id=team_id, work_thread_id=thread_id
+        return self._with_overrides(
+            assemble_team(
+                project, roles, team_id=team_id, work_thread_id=thread_id
+            ),
+            team_id,
+        )
+
+    def _with_overrides(self, team: ProjectTeam, team_id: str) -> ProjectTeam:
+        """Apply durable ``@`` assignee overrides (see team_timeline)."""
+        return apply_assignee_overrides(
+            team, assignee_overrides(self.memory, team_id)
         )
 
     def _plan_map(self, team: ProjectTeam) -> dict[str, str]:
