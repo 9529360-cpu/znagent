@@ -234,6 +234,17 @@ class ProductProviderRuntimeIntegrationTests(unittest.TestCase):
                         )
                     ),
                 )
+                workspace = resident.provider_runtime.descriptor("zn.workspace")
+                self.assertIsNotNone(workspace)
+                self.assertEqual(
+                    workspace.action_ids,
+                    tuple(
+                        row.action_id
+                        for row in resident.action_fabric.descriptors(
+                            provider="zn.workspace"
+                        )
+                    ),
+                )
                 self.assertEqual(
                     tuple(
                         sorted(
@@ -242,6 +253,7 @@ class ProductProviderRuntimeIntegrationTests(unittest.TestCase):
                                 *uia.action_ids,
                                 *office.action_ids,
                                 *desktop_scene.action_ids,
+                                *workspace.action_ids,
                             )
                         )
                     ),

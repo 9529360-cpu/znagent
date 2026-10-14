@@ -125,6 +125,45 @@ def _relative_to_root(target: Path, root: Path) -> tuple[str, ...]:
         ) from exc
 
 
+def resolve_agent_workspace_path(root: str | Path, raw_path: str | Path) -> tuple[Path, FileKind]:
+    """Resolve one agent-supplied workspace path to (absolute path, kind).
+
+    This is the single containment gate for agent file actions: the path
+    must be workspace-relative (absolute paths are rejected outright),
+    must resolve inside the workspace root after following symlinks, and
+    must land in a deliverable (``your_files/``) or draft (``drafts/``)
+    directory. Internal ledger paths (``hidden_files/``), trash paths,
+    unclassified paths directly under the root, and the workspace root
+    itself are all refused. Body handlers, approval scope resolvers and
+    verifiers all go through this one function, so no caller can smuggle
+    a different target past the gate.
+    """
+
+    raw = str(raw_path or "").strip()
+    if not raw:
+        raise WorkspaceFileDisciplineError("workspace path must not be empty")
+    candidate = Path(raw)
+    if candidate.is_absolute():
+        raise WorkspaceFileDisciplineError(
+            "workspace path must be relative, not absolute: "
+            f"{raw!r}"
+        )
+    if ".." in candidate.parts:
+        raise WorkspaceFileDisciplineError(
+            f"workspace path must not contain '..': {raw!r}"
+        )
+    resolved_root = _resolve_root(root)
+    target = (resolved_root / candidate).resolve(strict=False)
+    _relative_to_root(target, resolved_root)
+    kind = classify_path(target, root=resolved_root)
+    if kind not in ("deliverable", "draft"):
+        raise WorkspaceFileDisciplineError(
+            "agent file actions only operate on deliverables "
+            f"(your_files/) and drafts (drafts/): {raw!r}"
+        )
+    return target, kind
+
+
 def default_workspace_root(home: str | Path | None = None) -> Path:
     """Return ZN's workspace root: ``<ZN home>/workspace/`` by default."""
     base = Path(home).expanduser() if home is not None else get_zn_home()

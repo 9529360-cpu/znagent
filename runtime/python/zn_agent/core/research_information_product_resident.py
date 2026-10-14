@@ -27,6 +27,12 @@ from .user_browser_multi_record_result import (
 )
 from .action_execution import build_machine_action_execution_runtime
 from .action_fabric import build_machine_action_fabric
+from .approval_cards import ApprovalCardStore, ApprovalGate
+from .workspace_file_actions import (
+    register_workspace_file_actions,
+    register_workspace_file_verification,
+)
+from .workspace_file_discipline import WorkspaceLayout, default_workspace_root
 from .provider_runtime import build_machine_provider_runtime
 from .reflex_intent import build_resident_reflex_intents
 from .windows_audio_reflex_behavior import install_windows_audio_reflex_behavior
@@ -55,6 +61,32 @@ class ProductResearchInformationResidentRuntime(GenericActionResidentRuntime):
         # Semantic Action Fabric is descriptive/discovery-only. Real effects
         # still pass through this one Body plus existing authority/verification.
         self.action_fabric = build_machine_action_fabric(self.device_capabilities)
+        # Workspace file actions (P0): the generic agent loop needs real file
+        # actions, or "write X to a file" can never execute. They are
+        # registered before the provider runtime so the zn.workspace provider
+        # is supervised like the Windows providers. The approval gate is
+        # wired here so destructive file actions (overwrite, delete) go
+        # through approval cards; without an approval store the file actions
+        # are not offered at all (fail closed).
+        workspace_root = default_workspace_root()
+        approval_gate: ApprovalGate | None = None
+        approval_available = False
+        store_path = getattr(getattr(self, "store", None), "path", None)
+        if store_path:
+            try:
+                approval_gate = ApprovalGate(ApprovalCardStore(store_path))
+                approval_available = True
+            except Exception:
+                approval_gate = None
+        try:
+            WorkspaceLayout(workspace_root).ensure()
+        except Exception:
+            pass
+        register_workspace_file_actions(
+            self.action_fabric,
+            workspace_root=workspace_root,
+            approval_available=approval_available,
+        )
         self.reflex_intents = build_resident_reflex_intents()
         self.local_inference = LocalInferenceRuntimeDiscovery(self.device_capabilities)
         self.provider_runtime = build_machine_provider_runtime(
@@ -65,6 +97,11 @@ class ProductResearchInformationResidentRuntime(GenericActionResidentRuntime):
             self.action_fabric,
             self.body,
             device_capabilities=self.device_capabilities,
+            approval_gate=approval_gate,
+        )
+        register_workspace_file_verification(
+            self.action_executor,
+            workspace_root=workspace_root,
         )
         # Read-only local file discovery is compiled resident competence. It
         # returns only fresh path/metadata evidence from explicit known-folder
