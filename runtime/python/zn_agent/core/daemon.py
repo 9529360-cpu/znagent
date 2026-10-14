@@ -268,6 +268,10 @@ class ResidentRpcServer:
                     payload["team_request"] = {
                         "project_title": team_request.project_title,
                         "role_keys": list(team_request.role_keys),
+                        # None from the pure text parse; the owner derives
+                        # the product-path default (<attached workspace>/agents)
+                        # when no explicit root is given.
+                        "workspace_root": team_request.workspace_root,
                     }
                 # P3-8: a "做完了" message resolves a pending sensitive
                 # handover at ingress. This covers the failed-closed case
