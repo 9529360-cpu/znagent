@@ -216,6 +216,29 @@ class TeamWorkOwner:
         match = shared.recall(TeamRunner.PLAN_MAP_KEY)
         return dict(match.value) if match and isinstance(match.value, dict) else {}
 
+    def _skills_block_for(self, objective: str) -> str:
+        """Confirmed-skill block for a specialist item, or "" when none apply.
+
+        Advisory only: any failure here (no store, fake memory in tests,
+        ledger error) degrades to no skills, never breaks team dispatch.
+        """
+        try:
+            store = getattr(self.memory, "store", None)
+            if store is None:
+                return ""
+            skills = SkillLedger(store).relevant_skills(objective, max_skills=2)
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return ""
+        if not skills:
+            return ""
+        parts = [
+            "Relevant confirmed ZN skills (human-confirmed, advisory -- "
+            "follow their steps; approval boundaries still apply):"
+        ]
+        for skill in skills:
+            parts.append(SkillLedger.render_for_cognition(skill, max_chars=800))
+        return "\n".join(parts)
+
     def live_run(self, *, team: ProjectTeam) -> Any | None:
         """The currently-dispatched, unclaimed WorkerRun, if any."""
         id_map = self._plan_map(team)
@@ -239,29 +262,6 @@ class TeamWorkOwner:
             if id_map.get(plan_item.item_id) == work_item_id:
                 return list(plan_item.acceptance_criteria)
         return []
-
-    def _skills_block_for(self, objective: str) -> str:
-        """Confirmed-skill block for a specialist item, or "" when none apply.
-
-        Advisory only: any failure here (no store, fake memory in tests,
-        ledger error) degrades to no skills, never breaks team dispatch.
-        """
-        try:
-            store = getattr(self.memory, "store", None)
-            if store is None:
-                return ""
-            skills = SkillLedger(store).relevant_skills(objective, max_skills=2)
-        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
-            return ""
-        if not skills:
-            return ""
-        parts = [
-            "Relevant confirmed ZN skills (human-confirmed, advisory -- "
-            "follow their steps; approval boundaries still apply):"
-        ]
-        for skill in skills:
-            parts.append(SkillLedger.render_for_cognition(skill, max_chars=800))
-        return "\n".join(parts)
 
     def _apply_pending_claim(
         self, *, state: Any, team: ProjectTeam
