@@ -21,6 +21,7 @@ dependencies = [
   "PyYAML==6.0.3",
   "ptyprocess>=0.7.0,<1; sys_platform != 'win32'",
   "pywinpty>=2.0.0,<3; sys_platform == 'win32'",
+  "tzdata==2025.2",
 ]
 
 [project.optional-dependencies]
