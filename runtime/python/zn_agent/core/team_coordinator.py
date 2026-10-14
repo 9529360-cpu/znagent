@@ -177,6 +177,10 @@ class TeamCoordinator:
             "specialist_name": plan_item.assignee,
             "specialist_prompt": specialist.prompt_fragment if specialist else "",
             "memory_namespace": specialist.memory_namespace if specialist else "",
+            # Stable action key for the CP-4 approval-rejection guard:
+            # the runner refuses to execute an action the approval layer
+            # already rejected, even if it arrives through another path.
+            "action_key": f"dispatch:{item.work_item_id}",
         }
         handoff = journal_message(
             self.team.team_id,
@@ -233,6 +237,7 @@ class TeamCoordinator:
             work_item_id=item.work_item_id,
             reason="verification passed",
             journal=journal,
+            context={"action_key": f"complete:{item.work_item_id}"},
         )
 
     def _escalate(self, item: Any, reason: str) -> CoordinatorDecision:

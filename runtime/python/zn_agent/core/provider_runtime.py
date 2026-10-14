@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Literal, Mapping
 
 from .action_fabric import ActionFabricRegistry
+from .hook_semantics import HookRun, WatchRegistry, run_bounded_hook
 from .models import utc_now
 
 
@@ -100,13 +101,26 @@ ProviderLifecycleHook = Callable[[CapabilityProviderDescriptor], None]
 
 
 class CapabilityProviderRuntime:
-    """Deterministic provider registry with fresh health and explicit lifecycle."""
+    """Deterministic provider registry with fresh health and explicit lifecycle.
 
-    def __init__(self) -> None:
+    Lifecycle hooks follow the ZN Hook discipline (Muse pattern M7, see
+    ``hook_semantics``): a hook that fails or overruns its timeout is
+    recorded and never raises into activation / deactivation -- the main
+    flow re-probes health and carries on. ``watchers`` is alert-only: a
+    Watcher is told a provider activated / deactivated and can never veto
+    the lifecycle change; its return value is discarded.
+    """
+
+    def __init__(self, *, hook_timeout_seconds: float = 10.0) -> None:
+        if float(hook_timeout_seconds) <= 0:
+            raise ValueError("hook_timeout_seconds must be positive")
+        self.hook_timeout_seconds = float(hook_timeout_seconds)
         self._descriptors: dict[str, CapabilityProviderDescriptor] = {}
         self._health_probes: dict[str, ProviderHealthProbe] = {}
         self._start_hooks: dict[str, ProviderLifecycleHook] = {}
         self._stop_hooks: dict[str, ProviderLifecycleHook] = {}
+        self._hook_runs: list[HookRun] = []
+        self.watchers = WatchRegistry()
 
     def register(
         self,
@@ -179,15 +193,55 @@ class CapabilityProviderRuntime:
         hook = self._start_hooks.get(descriptor.provider_id)
         if hook is None:
             return current
-        hook(descriptor)
-        return self.status(descriptor.provider_id)
+        # Bounded Hook: failure / timeout is recorded, never raised.
+        self._run_lifecycle_hook(f"start:{descriptor.provider_id}", hook, descriptor)
+        result = self.status(descriptor.provider_id)
+        # Watch-only alert: Watchers are told, they cannot veto the activation.
+        self.watchers.notify(
+            {
+                "kind": "provider_activated",
+                "provider_id": descriptor.provider_id,
+                "queryable": result.queryable,
+                "state": result.state,
+            }
+        )
+        return result
 
     def deactivate(self, provider_id: str) -> CapabilityProviderStatus:
         descriptor = self._require_descriptor(provider_id)
         hook = self._stop_hooks.get(descriptor.provider_id)
         if hook is not None:
-            hook(descriptor)
-        return self.status(descriptor.provider_id)
+            # Bounded Hook: failure / timeout is recorded, never raised.
+            self._run_lifecycle_hook(f"stop:{descriptor.provider_id}", hook, descriptor)
+        result = self.status(descriptor.provider_id)
+        # Watch-only alert: Watchers are told, they cannot veto the deactivation.
+        self.watchers.notify(
+            {
+                "kind": "provider_deactivated",
+                "provider_id": descriptor.provider_id,
+                "queryable": result.queryable,
+                "state": result.state,
+            }
+        )
+        return result
+
+    def hook_runs(self) -> list[HookRun]:
+        """Recorded lifecycle Hook runs, oldest first."""
+        return list(self._hook_runs)
+
+    def _run_lifecycle_hook(
+        self,
+        hook_id: str,
+        hook: ProviderLifecycleHook,
+        descriptor: CapabilityProviderDescriptor,
+    ) -> HookRun:
+        run = run_bounded_hook(
+            hook_id,
+            lambda: hook(descriptor),
+            timeout_seconds=self.hook_timeout_seconds,
+        )
+        self._hook_runs.append(run)
+        return run
 
     def status_snapshot(self) -> tuple[CapabilityProviderStatus, ...]:
         return tuple(

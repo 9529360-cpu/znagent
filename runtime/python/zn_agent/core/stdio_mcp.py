@@ -10,7 +10,9 @@ cleanup.
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
+
+from .preflight import PreflightChecker, ready_if
 
 
 
@@ -35,8 +37,15 @@ class StdioMcpClient:
         expected_server_names: Sequence[str] = (),
         required_tools: Sequence[str] = (),
         timeout_seconds: float = 30.0,
+        preflight: PreflightChecker | None = None,
+        preflight_connection: str = "mcp",
         **_ignored: Any,
     ) -> None:
+        """``preflight`` opts this client into verify-before-acting (M9):
+        when set, ``call_tool`` checks connection readiness first and
+        raises without starting the server or sending any request when
+        not ready. ``None`` (default) keeps the old auto-start behaviour.
+        """
         if not command.argv:
             raise ValueError("MCP command argv must not be empty")
         self.command = command
@@ -47,6 +56,8 @@ class StdioMcpClient:
             str(item).strip() for item in required_tools if str(item).strip()
         )
         self.timeout_seconds = max(1.0, min(float(timeout_seconds), 300.0))
+        self._preflight = preflight
+        self._preflight_connection = str(preflight_connection or "mcp").strip() or "mcp"
         self._portal_cm = None
         self._portal = None
         self._client_cm = None
@@ -172,6 +183,25 @@ class StdioMcpClient:
         name: str,
         arguments: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
+        # Verify-before-acting (M9): when preflight is enabled, a not-ready
+        # connection means NO start and NO request -- the failure is
+        # reported with its reason and recovery path instead.
+        if self._preflight is not None:
+            default_checker = ready_if(
+                lambda: self.running,
+                target=self._preflight_connection,
+                reason="MCP client is not started",
+                recovery="call start() first (or register a readiness checker "
+                "that proves the server is up) and then retry the call",
+            )
+            verdict = self._preflight.check_connection(
+                self._preflight_connection, default=default_checker
+            )
+            if not verdict.ready:
+                raise StdioMcpError(
+                    f"MCP tool {str(name or '').strip() or '<empty>'} not called: "
+                    f"{verdict.message}"
+                )
         self.start()
         if self._client is None or self._portal is None:
             raise StdioMcpError("MCP client is not running")
