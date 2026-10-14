@@ -75,6 +75,17 @@ type ZnDesktopResidentBridge = {
   submit: (payload: ZnDesktopPayload) => Promise<unknown>
   remember: (payload: ZnDesktopPayload) => Promise<unknown>
   forget: (key: string) => Promise<unknown>
+  routinePropose: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineConfirm: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineList: (payload?: ZnDesktopPayload) => Promise<unknown>
+  routineGet: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineRuns: (payload: ZnDesktopPayload) => Promise<unknown>
+  routinePause: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineResume: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineEdit: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineDelete: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineTestRun: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineAcknowledge: (payload: ZnDesktopPayload) => Promise<unknown>
 }
 
 declare interface Window {
