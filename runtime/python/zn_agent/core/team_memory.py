@@ -151,6 +151,29 @@ def team_shared_memory(memory: StructuredMemory, team_id: str) -> TeamMemory:
     return TeamMemory(memory, shared_namespace(team_id))
 
 
+def delete_team_memory(memory: StructuredMemory, team_id: str) -> int:
+    """Delete EVERY fact owned by one team, across all its namespaces.
+
+    Specialists (``team:{id}:{name}:``) and shared state
+    (``team:{id}:shared:``) all fall under ``DisbandPlan.memory_key_prefix``
+    (``team:{id}:``), so one prefix sweep covers roster, spec, plan map,
+    assignee overrides and the retrospective. Aliases live on the fact row
+    itself, so deleting the row deletes its aliases too. Returns the count
+    removed. Callers verify with a re-read after (see ``team_disband``).
+    """
+    if not team_id or not str(team_id).strip():
+        raise ValueError("team_id must not be empty")
+    prefix = team_memory_prefix(str(team_id).strip())
+    doomed = [
+        str(f["key"])
+        for f in memory.store.list_facts()
+        if str(f["key"]).startswith(prefix)
+    ]
+    for key in doomed:
+        memory.store.delete_fact(key)
+    return len(doomed)
+
+
 @dataclass(slots=True)
 class Retrospective:
     """What the project journal distills into -- reusable team experience."""
@@ -246,6 +269,7 @@ __all__ = [
     "JOURNAL_KINDS",
     "Retrospective",
     "TeamMemory",
+    "delete_team_memory",
     "distill_retrospective",
     "journal_message",
     "save_retrospective",
