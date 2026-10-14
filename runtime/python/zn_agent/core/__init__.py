@@ -132,6 +132,20 @@ from .store import KernelStore
 from .will import NativeWill, ResidentIntention
 from .worker import Worker, WorkerFactory
 from .world_sense import NativeWorldSense, WorldFocus, WorldObservation
+from .workspace_file_actions import (
+    WORKSPACE_FILE_DELETE,
+    WORKSPACE_FILE_OVERWRITE,
+    WORKSPACE_FILE_READ,
+    WORKSPACE_FILE_WRITE,
+    register_workspace_file_actions,
+    register_workspace_file_verification,
+)
+from .workspace_file_discipline import (
+    WorkspaceFileDisciplineError,
+    WorkspaceLayout,
+    default_workspace_root,
+    resolve_agent_workspace_path,
+)
 
 __all__ = [
     "ActionAvailability",
@@ -252,6 +266,16 @@ __all__ = [
     "WorldObservation",
     "build_machine_action_execution_runtime",
     "build_machine_action_fabric",
+    "WORKSPACE_FILE_DELETE",
+    "WORKSPACE_FILE_OVERWRITE",
+    "WORKSPACE_FILE_READ",
+    "WORKSPACE_FILE_WRITE",
+    "WorkspaceFileDisciplineError",
+    "WorkspaceLayout",
+    "default_workspace_root",
+    "register_workspace_file_actions",
+    "register_workspace_file_verification",
+    "resolve_agent_workspace_path",
     "ZNKernelRuntime",
     "ZNLifeCore",
     "ZNResidentRuntime",

@@ -132,7 +132,7 @@ class MachineActionFabricTests(unittest.TestCase):
 
 
 class ProductActionFabricIntegrationTests(unittest.TestCase):
-    def test_final_resident_exposes_one_windows_action_fabric(self) -> None:
+    def test_final_resident_exposes_windows_plus_workspace_action_fabric(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime(
                 config={"model": {}},
@@ -165,6 +165,10 @@ class ProductActionFabricIntegrationTests(unittest.TestCase):
                         "windows.ui.control.toggle",
                         "windows.ui.control.type_text",
                         "windows.ui.controls.list",
+                        "workspace.file.delete",
+                        "workspace.file.overwrite",
+                        "workspace.file.read",
+                        "workspace.file.write",
                     ),
                 )
                 self.assertIs(
@@ -175,6 +179,31 @@ class ProductActionFabricIntegrationTests(unittest.TestCase):
                 self.assertEqual(
                     context.body_action_kind,
                     "windows_companion_context",
+                )
+                # Workspace file actions: destructive ones opt into approval.
+                self.assertEqual(
+                    resident.action_fabric.descriptor(
+                        "workspace.file.write"
+                    ).body_action_kind,
+                    "workspace_file_write",
+                )
+                self.assertIn(
+                    "approval:delete",
+                    resident.action_fabric.descriptor(
+                        "workspace.file.delete"
+                    ).tags,
+                )
+                self.assertIn(
+                    "approval:production_change",
+                    resident.action_fabric.descriptor(
+                        "workspace.file.overwrite"
+                    ).tags,
+                )
+                self.assertNotIn(
+                    "approval:delete",
+                    resident.action_fabric.descriptor(
+                        "workspace.file.write"
+                    ).tags,
                 )
             finally:
                 resident.store.close()

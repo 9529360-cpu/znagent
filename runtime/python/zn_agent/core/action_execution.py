@@ -125,6 +125,12 @@ class ActionExecutionRuntime:
         self._approval_gate = approval_gate
         self._observers: dict[str, ObservationReader] = {}
         self._verifiers: dict[str, ObservationVerifier] = {}
+        self._approval_scopes: dict[
+            str, Callable[[Mapping[str, Any]], tuple[str, str, str]]
+        ] = {}
+        self._argument_binders: dict[
+            str, Callable[[Mapping[str, Any]], Mapping[str, Any]]
+        ] = {}
 
     def register_verification(
         self,
@@ -139,6 +145,43 @@ class ActionExecutionRuntime:
         self._observers[normalized] = observe
         self._verifiers[normalized] = verify
 
+    def register_approval_scope(
+        self,
+        action_id: str,
+        resolver: Callable[[Mapping[str, Any]], tuple[str, str, str]],
+    ) -> None:
+        """Bind one approval scope/target resolver for an approval-gated action.
+
+        The resolver derives (scope, target, value_text) from the action
+        arguments -- canonically, never from model-supplied ``approval_*``
+        args -- so an ``always_allow`` rule can only bless the exact target
+        the action will touch.
+        """
+        normalized = str(action_id or "").strip()
+        if self.fabric.descriptor(normalized) is None:
+            raise KeyError(normalized)
+        if not callable(resolver):
+            raise TypeError("approval scope resolver must be callable")
+        self._approval_scopes[normalized] = resolver
+
+    def register_argument_binder(
+        self,
+        action_id: str,
+        binder: Callable[[Mapping[str, Any]], Mapping[str, Any]],
+    ) -> None:
+        """Bind one argument binder run before Body dispatch for an action.
+
+        Used for resident-level bindings the model must not supply itself
+        (e.g. the workspace root). The binder receives the Body arguments
+        and returns the arguments to dispatch.
+        """
+        normalized = str(action_id or "").strip()
+        if self.fabric.descriptor(normalized) is None:
+            raise KeyError(normalized)
+        if not callable(binder):
+            raise TypeError("argument binder must be callable")
+        self._argument_binders[normalized] = binder
+
     def _approval_block(
         self, request: ActionRequest, descriptor: ActionDescriptor
     ) -> str | None:
@@ -148,10 +191,21 @@ class ActionExecutionRuntime:
         if kind is None:
             return None
         args = dict(request.args or {})
-        scope = str(args.get("approval_scope") or request.action_id)
-        target = str(args.get("approval_target") or request.action_id)
-        value_text = str(args.get("approval_value_text") or "")
-        source = str(args.get("approval_source") or "resident")
+        resolver = self._approval_scopes.get(request.action_id)
+        if resolver is not None:
+            try:
+                scope, target, value_text = resolver(args)
+            except ValueError as exc:
+                return f"approval gate rejected the action: {exc}"
+            scope = str(scope or "").strip()
+            target = str(target or "").strip()
+            value_text = str(value_text or "")
+            source = str(args.get("approval_source") or "resident")
+        else:
+            scope = str(args.get("approval_scope") or request.action_id)
+            target = str(args.get("approval_target") or request.action_id)
+            value_text = str(args.get("approval_value_text") or "")
+            source = str(args.get("approval_source") or "resident")
         try:
             outcome = self._approval_gate.check(
                 action_kind=kind,
@@ -223,6 +277,9 @@ class ActionExecutionRuntime:
                 request.authority_context,
             )
             authority_mode = "worker_run"
+        binder = self._argument_binders.get(request.action_id)
+        if binder is not None:
+            body_args = dict(binder(body_args))
 
         body_result = self.body.act(
             descriptor.body_action_kind,

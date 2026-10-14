@@ -20,7 +20,13 @@ import psutil
 from .models import utc_now
 from .path_context import canonical_host_path
 from .terminal import TerminalRequest, TerminalResult, get_zn_local_terminal
-from .workspace_file_discipline import list_trash, restore_path, trash_path
+from .workspace_file_discipline import (
+    list_trash,
+    resolve_agent_workspace_path,
+    restore_path,
+    trash_path,
+    write_text as discipline_write_text,
+)
 
 if TYPE_CHECKING:
     from .resident import ZNResidentRuntime
@@ -166,6 +172,14 @@ class NativeBody:
             return self._write_text(action, started)
         if kind in {"trash_path", "trash_file", "delete_to_trash"}:
             return self._trash_path(action, started)
+        if kind == "workspace_file_read":
+            return self._workspace_file_read(action, started)
+        if kind == "workspace_file_write":
+            return self._workspace_file_write(action, started, overwrite=False)
+        if kind == "workspace_file_overwrite":
+            return self._workspace_file_write(action, started, overwrite=True)
+        if kind == "workspace_file_delete":
+            return self._workspace_file_delete(action, started)
         if kind in {"restore_trashed", "restore_trash", "restore_file"}:
             return self._restore_trashed(action, started)
         if kind in {"list_trash", "list_trashed"}:
@@ -363,6 +377,101 @@ class NativeBody:
             action,
             started,
             data={"path": str(path), "entries": entries, "count": len(entries)},
+        )
+
+    def _workspace_file_root(self, args: dict[str, Any]) -> Path:
+        # Agent file actions never guess their workspace: the caller binds
+        # it explicitly, exactly like the trash actions do.
+        raw = args.get("workspace_root") or args.get("root")
+        if raw is None or not str(raw).strip():
+            raise ValueError("workspace file actions require workspace_root")
+        return Path(str(raw)).expanduser()
+
+    def _workspace_file_read(self, action: BodyAction, started: str) -> BodyActionResult:
+        root = self._workspace_file_root(action.args)
+        target, _kind = resolve_agent_workspace_path(
+            root, str(action.args.get("path") or "")
+        )
+        if not target.is_file():
+            raise FileNotFoundError(f"workspace file does not exist: {target}")
+        max_chars = max(1, int(action.args.get("max_chars", 20000)))
+        encoding = str(action.args.get("encoding") or "utf-8")
+        text = target.read_text(encoding=encoding, errors="replace")
+        truncated = len(text) > max_chars
+        output = text[:max_chars]
+        return self._ok(
+            action,
+            started,
+            output=output,
+            data={
+                "path": str(target),
+                "chars": len(text),
+                "returned_chars": len(output),
+                "truncated": truncated,
+                "encoding": encoding,
+                "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            },
+        )
+
+    def _workspace_file_write(
+        self, action: BodyAction, started: str, *, overwrite: bool
+    ) -> BodyActionResult:
+        root = self._workspace_file_root(action.args)
+        target, kind = resolve_agent_workspace_path(
+            root, str(action.args.get("path") or "")
+        )
+        if overwrite and not target.is_file():
+            raise FileNotFoundError(
+                "workspace_file_overwrite requires an existing file; "
+                f"use workspace_file_write to create one: {target}"
+            )
+        if target.is_dir():
+            raise IsADirectoryError(f"workspace file target is a directory: {target}")
+        content = str(action.args.get("content") or "")
+        encoding = str(action.args.get("encoding") or "utf-8")
+        # Relative name inside the kind directory, for the discipline writer.
+        rel = target.relative_to(Path(root).expanduser().resolve(strict=False))
+        relative = Path(*rel.parts[1:])
+        written = discipline_write_text(
+            root, kind, relative, content, encoding=encoding, overwrite=overwrite
+        )
+        return self._ok(
+            action,
+            started,
+            output=str(written),
+            data={
+                "path": str(written),
+                "written_chars": len(content),
+                "overwrite": overwrite,
+                "encoding": encoding,
+                "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+            },
+        )
+
+    def _workspace_file_delete(self, action: BodyAction, started: str) -> BodyActionResult:
+        """Delete one regular file by moving it into workspace trash (M12)."""
+        root = self._workspace_file_root(action.args)
+        target, _kind = resolve_agent_workspace_path(
+            root, str(action.args.get("path") or "")
+        )
+        if not target.is_file():
+            raise FileNotFoundError(
+                "workspace_file_delete only accepts an existing regular file: "
+                f"{target}"
+            )
+        entry = trash_path(target, root)
+        return self._ok(
+            action,
+            started,
+            output=entry.original_path,
+            data={
+                "entry_id": entry.entry_id,
+                "original_path": entry.original_path,
+                "deleted_at": entry.deleted_at,
+                "kind": entry.kind,
+                "size_bytes": entry.size_bytes,
+                "trash_path": entry.trash_path,
+            },
         )
 
     def _process_state(self, action: BodyAction, started: str) -> BodyActionResult:

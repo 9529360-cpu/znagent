@@ -284,6 +284,10 @@ def build_machine_provider_runtime(
         descriptor.action_id
         for descriptor in action_fabric.descriptors(provider="zn.windows.office")
     )
+    workspace_action_ids = tuple(
+        descriptor.action_id
+        for descriptor in action_fabric.descriptors(provider="zn.workspace")
+    )
 
     def windows_health(
         descriptor: CapabilityProviderDescriptor,
@@ -368,6 +372,58 @@ def build_machine_provider_runtime(
                 tags=("windows", "desktop", "scene", "vision", "body"),
             ),
             health_probe=windows_health,
+        )
+
+    if workspace_action_ids:
+
+        def workspace_health(
+            descriptor: CapabilityProviderDescriptor,
+        ) -> CapabilityProviderStatus:
+            availability = tuple(
+                action_fabric.availability(action_id)
+                for action_id in descriptor.action_ids
+            )
+            available_count = sum(1 for row in availability if row.available)
+            unknown_count = sum(
+                1 for row in availability if row.state == "unknown"
+            )
+            if available_count:
+                state: ProviderHealthState = (
+                    "degraded" if unknown_count else "healthy"
+                )
+                queryable = True
+                reason = "Workspace file action provider has currently available actions"
+            elif unknown_count:
+                state = "unknown"
+                queryable = False
+                reason = "Workspace file action provider availability is not fully known"
+            else:
+                state = "unavailable"
+                queryable = False
+                reason = "Workspace file action provider has no currently available action"
+            return CapabilityProviderStatus(
+                descriptor.provider_id,
+                state,
+                queryable=queryable,
+                running=True,
+                reason=reason,
+                evidence={
+                    "registered_action_count": len(availability),
+                    "available_action_count": available_count,
+                    "unknown_action_count": unknown_count,
+                    "source": "action_fabric",
+                },
+            )
+
+        runtime.register(
+            CapabilityProviderDescriptor(
+                provider_id="zn.workspace",
+                description="Resident workspace-scoped file action provider.",
+                action_ids=workspace_action_ids,
+                lifecycle_mode="resident",
+                tags=("workspace", "file", "body"),
+            ),
+            health_probe=workspace_health,
         )
 
     if local_inference is not None:
