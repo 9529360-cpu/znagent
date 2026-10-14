@@ -17,6 +17,8 @@ from .recovery_bounded_work import RecoveryBoundedWorkLedger
 from .recovery_control import ResidentRecoveryRequired
 from .service import ResidentService
 from .project_team import assemble_team
+from .sensitive_handover import parse_handover_done, resolve_handover
+from .team_disband import find_team_id_in_messages, parse_disband_request
 from .team_memory import team_shared_memory
 from .team_request import parse_team_request
 from .team_timeline import (
@@ -225,12 +227,33 @@ class ResidentRpcServer:
             # agent loop swallowing it as free text. A caller-supplied
             # team_request is never trusted -- the parse owns it.
             payload.pop("team_request", None)
-            team_request = parse_team_request(task)
-            if team_request is not None:
-                payload["team_request"] = {
-                    "project_title": team_request.project_title,
-                    "role_keys": list(team_request.role_keys),
-                }
+            payload.pop("disband_request", None)
+            disband = parse_disband_request(task)
+            if disband is not None:
+                # P3-8: disband needs the team behind THIS thread. The
+                # user instruction is the confirmation -- no second prompt.
+                team_id = find_team_id_in_messages(
+                    self.work.list_messages(thread_id, limit=500)
+                )
+                if team_id is None:
+                    raise ValueError("该 Work 没有运行中的团队，解散需要先组团队")
+                payload["disband_request"] = {"team_id": team_id}
+            else:
+                team_request = parse_team_request(task)
+                if team_request is not None:
+                    payload["team_request"] = {
+                        "project_title": team_request.project_title,
+                        "role_keys": list(team_request.role_keys),
+                    }
+                # P3-8: a "做完了" message resolves a pending sensitive
+                # handover at ingress. This covers the failed-closed case
+                # (the team event already ended); while the team event is
+                # still active, start() below still refuses the second
+                # event -- but the resolve above already persisted, so
+                # the blocked event continues on its next pulse. The
+                # team_handover_done RPC is the clean path (no error).
+                if parse_handover_done(task):
+                    self._resolve_thread_handover(thread_id)
             snapshot, event = self.work_control.start(
                 thread_id,
                 task,
@@ -386,6 +409,11 @@ class ResidentRpcServer:
             if not specialist:
                 raise ValueError("team_assign requires specialist")
             result = self._team_assign(thread_id, specialist, instruction)
+        elif method == "team_handover_done":
+            thread_id = str(params.get("thread_id") or "").strip()
+            if not thread_id:
+                raise ValueError("team_handover_done requires thread_id")
+            result = self._team_handover_done(thread_id)
         elif method == "agent_run":
             task = str(params.get("task") or "").strip()
             if not task:
@@ -707,6 +735,50 @@ class ResidentRpcServer:
             "item_title": pending.title,
             "instruction": instruction,
         }
+
+    def _resolve_thread_handover(self, thread_id: str) -> dict[str, Any] | None:
+        """Resolve a pending sensitive handover for a thread, if any.
+
+        Returns the resolved handover as a dict, or None when the thread
+        has no team or no pending handover. Never raises for the
+        no-handover case: a plain "做完了" chat message must not error.
+        """
+        if self.work.get_thread(thread_id) is None:
+            return None
+        team_id = find_team_id_in_messages(
+            self.work.list_messages(thread_id, limit=500)
+        )
+        if team_id is None:
+            return None
+        resolved = resolve_handover(
+            memory=self.resident.memory,
+            ledger=self.work,
+            team_id=team_id,
+            thread_id=thread_id,
+        )
+        if resolved is None:
+            return None
+        return {
+            "team_id": team_id,
+            "handover_id": resolved.handover_id,
+            "kind": resolved.kind,
+            "status": "resolved",
+        }
+
+    def _team_handover_done(self, thread_id: str) -> dict[str, Any]:
+        """``team_handover_done`` RPC: the owner finished a sensitive step.
+
+        The steering path that works while the team event is still
+        active (``work_start`` would refuse a second event on the
+        thread). The workbench "做完了" button calls this; the resident
+        sees the handover resolved on its next pulse and continues.
+        """
+        if self.work.get_thread(thread_id) is None:
+            raise ValueError(f"unknown work thread: {thread_id!r}")
+        resolved = self._resolve_thread_handover(thread_id)
+        if resolved is None:
+            raise ValueError("该团队当前没有待主人完成的敏感步骤")
+        return resolved
 
     def _work_snapshot(
         self,
