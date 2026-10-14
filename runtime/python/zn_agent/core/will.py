@@ -620,6 +620,17 @@ class NativeWill:
         self._save(intention)
         return intention
 
+    def resume(self, intention_id: str) -> ResidentIntention:
+        """Return a paused intention to active; a no-op for other states."""
+        intention = self._require(intention_id)
+        if intention.status == "paused":
+            intention.status = "active"
+            intention.related_event_id = None
+            intention.progress = (*intention.progress, "resumed")[-64:]
+            intention.updated_at = utc_now()
+            self._save(intention)
+        return intention
+
     def list_all(self, limit: int = 100) -> list[ResidentIntention]:
         with closing(self._connect()) as conn:
             rows = conn.execute(
