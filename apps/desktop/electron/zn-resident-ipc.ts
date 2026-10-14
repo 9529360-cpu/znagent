@@ -262,16 +262,6 @@ export function registerZnResidentIpc(): void {
       application_id: applicationId
     })
   })
-  handleZnDesktopIpc('zn:resident:suggestions-list', async (_event, payload) => {
-    return getZnResidentProcess().request('suggestions_list', {
-      limit: Number(payload?.limit || 8)
-    })
-  })
-  handleZnDesktopIpc('zn:resident:suggestions-dismiss', async (_event, payload) => {
-    const key = String(payload?.key || payload?.suggestionKey || payload?.suggestion_key || '').trim()
-    if (!key) throw new Error('suggestion key is required')
-    return getZnResidentProcess().request('suggestions_dismiss', { key })
-  })
   handleZnDesktopIpc('zn:resident:team-timeline', async (_event, payload) => {
     const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
     if (!threadId) throw new Error('threadId is required')
@@ -436,6 +426,19 @@ export function registerZnResidentIpc(): void {
     clearRuntimeHandoffTimer()
     resident?.disconnect()
     resident = null
+  })
+
+  // Suggestions handlers live at the end of registration so they stay in
+  // their own merge hunk, away from the team/routine handlers above.
+  handleZnDesktopIpc('zn:resident:suggestions-list', async (_event, payload) => {
+    return getZnResidentProcess().request('suggestions_list', {
+      limit: Number(payload?.limit || 8)
+    })
+  })
+  handleZnDesktopIpc('zn:resident:suggestions-dismiss', async (_event, payload) => {
+    const key = String(payload?.key || payload?.suggestionKey || payload?.suggestion_key || '').trim()
+    if (!key) throw new Error('suggestion key is required')
+    return getZnResidentProcess().request('suggestions_dismiss', { key })
   })
 }
 

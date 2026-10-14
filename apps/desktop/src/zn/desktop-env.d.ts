@@ -60,8 +60,6 @@ type ZnDesktopResidentBridge = {
   workRestorePrepare: (payload: ZnDesktopPayload) => Promise<unknown>
   workRestoreApprove: (payload: ZnDesktopPayload) => Promise<unknown>
   workRestoreApplication: (payload: ZnDesktopPayload) => Promise<unknown>
-  suggestionsList: (payload: ZnDesktopPayload) => Promise<unknown>
-  suggestionsDismiss: (payload: ZnDesktopPayload) => Promise<unknown>
   teamTimeline: (payload: ZnDesktopPayload) => Promise<unknown>
   teamAssign: (payload: ZnDesktopPayload) => Promise<unknown>
   pulses: (limit?: number) => Promise<unknown>
@@ -70,6 +68,10 @@ type ZnDesktopResidentBridge = {
   impasses: (limit?: number) => Promise<unknown>
   learning: (limit?: number) => Promise<unknown>
   neural: (limit?: number) => Promise<unknown>
+  // Suggestions wiring lives here, between the neural and perceive entries,
+  // so it stays in its own merge hunk, away from the team/routine entries.
+  suggestionsList: (payload: ZnDesktopPayload) => Promise<unknown>
+  suggestionsDismiss: (payload: ZnDesktopPayload) => Promise<unknown>
   perceive: (payload: ZnDesktopPayload) => Promise<unknown>
   worldFollow: (payload: ZnDesktopPayload) => Promise<unknown>
   worldFocuses: (payload?: ZnDesktopPayload) => Promise<unknown>
