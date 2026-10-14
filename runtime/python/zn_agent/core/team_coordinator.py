@@ -177,47 +177,67 @@ class TeamCoordinator:
             "specialist_name": plan_item.assignee,
             "specialist_prompt": specialist.prompt_fragment if specialist else "",
             "memory_namespace": specialist.memory_namespace if specialist else "",
+            # Stable action key for the CP-4 approval-rejection guard:
+            # the runner refuses to execute an action the approval layer
+            # already rejected, even if it arrives through another path.
+            "action_key": f"dispatch:{item.work_item_id}",
         }
+        handoff = journal_message(
+            self.team.team_id,
+            "coordinator",
+            f"派活：{item.title} → {plan_item.assignee}",
+            kind="handoff",
+        )
+        # The timeline renders handoffs from these structured fields
+        # (from -> to, what, objective), not by re-parsing the text.
+        handoff["detail"].update(
+            {
+                "from_author": "coordinator",
+                "to_author": plan_item.assignee,
+                "item_title": item.title,
+                "objective": plan_item.objective,
+            }
+        )
         return CoordinatorDecision(
             action="dispatch",
             work_item_id=item.work_item_id,
             specialist_name=plan_item.assignee,
             reason=f"ready; dispatch to {plan_item.assignee}",
             context=context,
-            journal=journal_message(
-                self.team.team_id,
-                "coordinator",
-                f"派活：{item.title} → {plan_item.assignee}",
-                kind="handoff",
-            ),
+            journal=handoff,
         )
 
     def _verify(self, item: Any, plan_item: Any) -> CoordinatorDecision:
+        journal = journal_message(
+            self.team.team_id,
+            "coordinator",
+            f"验收：{item.title} 已 claimed 完成，待按验收标准验证",
+            kind="progress",
+        )
+        journal["detail"].update({"item_title": item.title})
         return CoordinatorDecision(
             action="verify",
             work_item_id=item.work_item_id,
             specialist_name=plan_item.assignee,
             reason="run claimed completion; verification required",
             context={"acceptance_criteria": tuple(plan_item.acceptance_criteria)},
-            journal=journal_message(
-                self.team.team_id,
-                "coordinator",
-                f"验收：{item.title} 已 claimed 完成，待按验收标准验证",
-                kind="progress",
-            ),
+            journal=journal,
         )
 
     def _complete(self, item: Any) -> CoordinatorDecision:
+        journal = journal_message(
+            self.team.team_id,
+            "coordinator",
+            f"完成：{item.title} 验收通过",
+            kind="progress",
+        )
+        journal["detail"].update({"item_title": item.title})
         return CoordinatorDecision(
             action="complete",
             work_item_id=item.work_item_id,
             reason="verification passed",
-            journal=journal_message(
-                self.team.team_id,
-                "coordinator",
-                f"完成：{item.title} 验收通过",
-                kind="progress",
-            ),
+            journal=journal,
+            context={"action_key": f"complete:{item.work_item_id}"},
         )
 
     def _escalate(self, item: Any, reason: str) -> CoordinatorDecision:
