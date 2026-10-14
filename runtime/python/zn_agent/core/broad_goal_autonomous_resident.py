@@ -17,6 +17,7 @@ from .models import utc_now
 from .output_contract import OutputContract
 from .route_policy_intake import infer_thread_route_policy, merge_route_policy
 from .skills import SkillStore
+from .skill_ledger import skill_reference_block
 from .steerable_work import WorkItem
 
 # Declared once, validated at import: a bad contract fails fast here instead
@@ -206,6 +207,11 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
             "plan_version": root.plan_version,
             "root_acceptance_contract": "autonomous-observable-root-criteria-v1",
         }
+        # P1-3: this layer overwrote the question above; re-append a
+        # validated "/skill" reference so it survives the overwrite.
+        skill_block = skill_reference_block(self.store, event)
+        if skill_block:
+            request.question = str(request.question or "") + "\n\n" + skill_block
         return request
 
     def _cognition_integration_step(self, event, state, *, readiness, thought=None):
