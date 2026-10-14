@@ -74,6 +74,18 @@
   intake。`test_team_entry.py` + `test_team_resident_entry.py` 用真实 ledger
   跑通解析→建队→派活→Body 验证→claim→verify→完成→team_complete，磁盘上
   真实生成专员产物文件。
+- **Slice 6（已实现，P3-8）**：解散真正执行 + 敏感步骤交回——`team_disband.py`
+  （`execute_disband`：删计划任务、团队日志、团队记忆、项目线程内容，
+  逐项复核通过才算成功，返回清理清单；线程行本身保留为清单载体，
+  仅保留解散事件自己的 Root/消息/运行行；工作区文件与浏览器登录态
+  永不删除，清单始终带手动清理提醒；无团队状态时拒绝删除；
+  否定句“不要解散团队”不解析）；`team_work_resident.py`（解散事件
+  在 deliberation 确定性完成，零模型调用，清单即最终答复）；
+  `daemon.py` 的 `work_start` 解析解散指令（调用方自带的
+  `disband_request` 一律丢弃）；`sensitive_handover.py`（密码/验证码/
+  支付确认三类敏感步骤：专员提案命中则不执行、不认领，挂起交接并
+  阻塞事件，主人 `team_handover_done` / “做完了”后继续；记录不含
+  任何秘密值）。
 
 ## 与外部产品的差异
 

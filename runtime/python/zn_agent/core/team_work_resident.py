@@ -45,18 +45,26 @@ from typing import Any
 from .action import NativeActionIntent
 from .broad_goal_coding_resident import BroadGoalCodingResidentRuntime
 from .cognition import CognitiveIncrement
-from .models import utc_now
+from .models import ExecutionPath, utc_now
+from .sensitive_handover import (
+    detect_sensitive_step,
+    pending_handover,
+    request_handover,
+)
 from .structured_proposal import (
     looks_like_structured_payload,
     parse_exact_json_payload,
 )
+from .team_disband import execute_disband, handles_disband
 from .team_work_owner import (
     EVIDENCE_KEY,
     TEAM_CLAIM_STATE_KEY,
     TEAM_COMPLETE_STATE_KEY,
+    TEAM_ID_STATE_KEY,
     TeamWorkOwner,
     verified_evidence,
 )
+from .team_termination import record_team_tool_call
 
 
 class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
@@ -76,6 +84,56 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
     _TEAM_NO_PROGRESS_KEY = "team_no_evidence_progress"
     _MAX_NO_EVIDENCE_PULSES = 8
 
+    # -- disband: DisbandPlan executed for real (P3-8) ---------------------
+
+    def _handle_disband(self, event, state):
+        """Execute the disband and complete with the cleanup checklist.
+
+        Deterministic local completion (CAPABILITY checkpoint, zero model
+        calls): deletion is never a model decision. The checklist is the
+        event's final response, so the owner sees it in the thread.
+        """
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        team_id = str(
+            (payload.get("disband_request") or {}).get("team_id") or ""
+        ).strip()
+        thread_id = str(payload.get("work_thread_id") or "").strip()
+        root = self.work_ledger.work_item_for_event(event.event_id)
+        try:
+            report = execute_disband(
+                team_id=team_id,
+                ledger=self.work_ledger,
+                memory=self.memory,
+                thread_id=thread_id,
+                current_event_id=event.event_id,
+                current_work_item_id=(
+                    root.work_item_id if root is not None else None
+                ),
+                current_message_id=(
+                    str(payload.get("work_message_id") or "").strip() or None
+                ),
+            )
+        except (OSError, RuntimeError, ValueError) as exc:
+            reason = f"解散失败，未完成清理：{type(exc).__name__}: {exc}"
+            state.data["local_failure"] = reason[:3000]
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._checkpoint_terminal_failure(event, state, reason=reason)
+        completion = {
+            "execution_path": ExecutionPath.CAPABILITY.value,
+            "success": True,
+            "response": report.checklist_text(),
+            "model_invocations": 0,
+            "capability_name": "team_disband",
+            "reason": f"团队 {team_id} 已解散，清理清单已交付",
+        }
+        state.stage = "resident_completion"
+        state.next_action = "交付团队解散清理清单"
+        state.data["resident_completion"] = completion
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return self._resident_completion_result(event, completion)
+
     # -- deliberation: one durable driver step per pulse -------------------
 
     def _deliberation_step(
@@ -87,6 +145,14 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         learning_evidence,
         thought=None,
     ):
+        # P3-8 disband: the user's disband instruction is the confirmation.
+        # Runs before the team branch (a disband event carries
+        # disband_request, not team_request, so TeamWorkOwner.handles is
+        # False for it) and completes deterministically -- no cognition,
+        # no model involvement in deletion.
+        if handles_disband(event):
+            return self._handle_disband(event, state)
+
         if (
             not TeamWorkOwner.handles(event)
             or bool(state.data.get(TEAM_COMPLETE_STATE_KEY))
@@ -123,6 +189,24 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             )
 
         owner = TeamWorkOwner(ledger=self.work_ledger, memory=self.memory)
+        # P3-8 sensitive handover: while a handover is pending, the event
+        # stays blocked -- no cognition, no dispatch, no claim. The owner
+        # resolves it (team_handover_done RPC / "做完了" message); the next
+        # pulse sees it resolved and the driver continues.
+        thread_id = str(event.payload.get("work_thread_id") or "").strip()
+        team = owner.resolve_team(event=event, state=state, thread_id=thread_id)
+        pending = pending_handover(self.memory, team.team_id)
+        if pending is not None:
+            state.blocked_by = "user_presence_required"
+            state.stage = "native_deliberation"
+            state.next_action = (
+                f"等待主人亲自完成敏感步骤：{pending.detail}，完成后点“做完了”"
+            )
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+        if state.blocked_by == "user_presence_required":
+            state.blocked_by = None
         try:
             step = owner.advance(
                 event=event,
@@ -136,6 +220,20 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             self.store.save_working_state(state)
             return self._checkpoint_terminal_failure(event, state, reason=reason)
 
+        if step.stop_reason:
+            # Hard termination (CP-1): the runner stopped the team before
+            # dispatching anything this pulse. Fail closed with the
+            # structured STOP_REASON instead of looping or asking cognition
+            # with no live specialist.
+            reason = (
+                f"团队已停止（STOP_REASON={step.stop_reason}）。"
+                f"触发：{step.stop_trigger}。"
+                "不再派活，等待用户拍板。"
+            )
+            state.data["local_failure"] = reason[:3000]
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._checkpoint_terminal_failure(event, state, reason=reason)
         # CP-3: the verdict retry budget is blown -- fail closed with the
         # escalation instead of re-asking cognition for the same claim.
         if step.verdict_escalation:
@@ -413,6 +511,37 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             )
         increment = CognitiveIncrement.from_dict(raw)
 
+        # P3-8 sensitive handover: a specialist step touching a password,
+        # a verification code, or a payment confirmation is never executed
+        # and never recorded as a claim. Record the handover, block the
+        # event, and wait for the owner to do it by hand.
+        sensitive = detect_sensitive_step(increment.content)
+        if sensitive is not None:
+            team_id = str(state.data.get(TEAM_ID_STATE_KEY) or "").strip()
+            if team_id:
+                request_handover(
+                    memory=self.memory,
+                    ledger=self.work_ledger,
+                    team_id=team_id,
+                    thread_id=str(event.payload.get("work_thread_id") or ""),
+                    kind=sensitive.kind,
+                )
+                state.blocked_by = "user_presence_required"
+            else:
+                # Deliberation never ran, so no team id to hang the
+                # handover on: refuse without executing, and feed the
+                # refusal back so the next cognition call sees it.
+                state.data[self._TEAM_REJECTION_KEY] = {
+                    "run_id": str(context.get("run_id") or ""),
+                    "reason": "敏感步骤已拦截，需主人亲自完成（未找到团队记录，无法挂起交接）",
+                    "proposal_excerpt": "",
+                }
+            state.stage = "native_deliberation"
+            state.next_action = "敏感步骤已拦截，等待主人亲自完成"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+
         # Route the proposal to the parser matching its declared action
         # kind, so the rejection reason (fed back to the next cognition
         # call) describes the proposal the model actually sent -- not a
@@ -675,6 +804,12 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 self.work_ledger.update_worker_run_metrics(
                     run_id, metrics={EVIDENCE_KEY: evidence[-12:]}
                 )
+                # CP-1 tool cap: one durable increment per executed
+                # specialist tool step. Counter loss must not kill the
+                # event -- see the except below.
+                team_id = str(state.data.get(TEAM_ID_STATE_KEY) or "").strip()
+                if team_id:
+                    record_team_tool_call(self.memory, team_id)
             except (OSError, RuntimeError, ValueError):
                 # Evidence checkpoint loss must not kill the event: the
                 # runner's verifier will fail closed (no evidence -> no pass)
