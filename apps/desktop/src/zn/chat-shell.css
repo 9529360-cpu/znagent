@@ -748,6 +748,70 @@ body::before, body::after { display: none !important; }
   .zn-artifact-pane { display: none; }
 }
 
+/* Team group-chat timeline (P2-5): read-only history derived from the Work log. */
+.zn-team-timeline {
+  width: min(720px, 100%);
+  margin: 4px auto 26px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  border: 1px solid var(--zn-chat-border);
+  border-radius: 14px;
+  background: #fbfbff;
+}
+.zn-team-timeline-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.zn-team-timeline-head strong { color: #292a30; font-size: 13px; }
+.zn-team-entry {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #ececf0;
+}
+.zn-team-entry:last-child { padding-bottom: 0; border-bottom: 0; }
+.zn-team-entry.handoff { border-left: 3px solid #9a8ff0; padding-left: 10px; }
+.zn-team-entry.blocker { border-left: 3px solid #d59a35; padding-left: 10px; }
+.zn-team-entry.assignment { border-left: 3px solid #5f4fea; padding-left: 10px; }
+.zn-team-handoff,
+.zn-team-assignment {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #303138;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.zn-team-evidence { display: flex; flex-wrap: wrap; gap: 6px 12px; color: #6d7079; font-size: 11.5px; }
+.zn-team-evidence button {
+  padding: 2px 8px;
+  color: #5f4fea;
+  border: 1px solid #ddd9ff;
+  border-radius: 999px;
+  background: #f8f7ff;
+  cursor: pointer;
+}
+.zn-team-notice {
+  width: min(720px, 100%);
+  margin: 0 auto 10px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #555861;
+  border: 1px solid #e7e5f7;
+  border-radius: 10px;
+  background: #f8f7ff;
+  font-size: 12.5px;
+}
+.zn-team-notice button { padding: 2px 8px; color: #555861; }
+
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
 }
