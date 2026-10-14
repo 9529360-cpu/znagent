@@ -1,5 +1,14 @@
 import { normalizeZnActiveWorkRun } from './work-reconnection'
 import type {
+  ZnApprovalActionKind,
+  ZnApprovalAuditEntry,
+  ZnApprovalDecision,
+  ZnApprovalList,
+  ZnApprovalRequest,
+  ZnApprovalRequestStatus,
+  ZnApprovalRule,
+  ZnApprovalRuleEffect,
+  ZnApprovalSource,
   ZnArtifact,
   ZnArtifactKind,
   ZnRestoreApplication,
@@ -353,6 +362,123 @@ function normalizeRestoreApplication(value: unknown): ZnRestoreApplication {
     ...(error ? { error } : {}),
     updatedAt: timestamp(item.updated_at || item.updatedAt),
     ...(completedAt ? { completedAt: timestamp(completedAt) } : {})
+  }
+}
+
+function approvalActionKind(value: unknown): ZnApprovalActionKind {
+  const kind = String(value || '').trim()
+  if (
+    kind === 'send' ||
+    kind === 'publish' ||
+    kind === 'purchase' ||
+    kind === 'delete' ||
+    kind === 'production_change'
+  ) return kind
+  throw new Error(`Resident returned an invalid approval action kind: ${kind || '<empty>'}`)
+}
+
+function approvalSource(value: unknown): ZnApprovalSource {
+  const source = String(value || '').trim()
+  if (
+    source === 'user_chat' ||
+    source === 'resident' ||
+    source === 'routine' ||
+    source === 'specialist' ||
+    source === 'other_bot' ||
+    source === 'trigger' ||
+    source === 'mcp'
+  ) return source
+  return 'resident'
+}
+
+function approvalRequestStatus(value: unknown): ZnApprovalRequestStatus {
+  const status = String(value || '').trim()
+  if (
+    status === 'pending' ||
+    status === 'approved_once' ||
+    status === 'approved' ||
+    status === 'consumed' ||
+    status === 'denied' ||
+    status === 'expired'
+  ) return status
+  throw new Error(`Resident returned an invalid approval request status: ${status || '<empty>'}`)
+}
+
+function approvalRuleEffect(value: unknown): ZnApprovalRuleEffect {
+  const effect = String(value || '').trim()
+  if (effect === 'ask_first' || effect === 'auto_allow') return effect
+  throw new Error(`Resident returned an invalid approval rule effect: ${effect || '<empty>'}`)
+}
+
+function normalizeApprovalRequest(value: unknown): ZnApprovalRequest {
+  const item = record(value)
+  if (!item) throw new Error('Resident returned an invalid approval request')
+  const id = String(item.request_id || item.requestId || '').trim()
+  if (!id) throw new Error('Approval request has no id')
+  const decidedAt = item.decided_at || item.decidedAt
+  const decision = String(item.decision || '').trim()
+  return {
+    id,
+    actionKind: approvalActionKind(item.action_kind || item.actionKind),
+    target: String(item.target || ''),
+    scope: String(item.scope || ''),
+    valueText: String(item.value_text || item.valueText || ''),
+    source: approvalSource(item.source),
+    status: approvalRequestStatus(item.status),
+    createdAt: timestamp(item.created_at || item.createdAt),
+    expiresAt: timestamp(item.expires_at || item.expiresAt),
+    ...(decidedAt ? { decidedAt: timestamp(decidedAt) } : {}),
+    ...(decision === 'allow_once' || decision === 'always_allow' || decision === 'deny'
+      ? { decision: decision as ZnApprovalDecision }
+      : {}),
+    ...(item.event_id || item.eventId ? { eventId: String(item.event_id || item.eventId) } : {})
+  }
+}
+
+function normalizeApprovalRule(value: unknown): ZnApprovalRule {
+  const item = record(value)
+  if (!item) throw new Error('Resident returned an invalid approval rule')
+  const id = String(item.rule_id || item.ruleId || '').trim()
+  if (!id) throw new Error('Approval rule has no id')
+  return {
+    id,
+    actionKind: approvalActionKind(item.action_kind || item.actionKind),
+    scope: String(item.scope || ''),
+    effect: approvalRuleEffect(item.effect),
+    createdAt: timestamp(item.created_at || item.createdAt),
+    enabled: item.enabled !== false
+  }
+}
+
+function normalizeApprovalAuditEntry(value: unknown): ZnApprovalAuditEntry {
+  const item = record(value)
+  if (!item) throw new Error('Resident returned an invalid approval audit entry')
+  const id = String(item.audit_id || item.auditId || '').trim()
+  if (!id) throw new Error('Approval audit entry has no id')
+  return {
+    id,
+    ...(item.request_id || item.requestId ? { requestId: String(item.request_id || item.requestId) } : {}),
+    decision: String(item.decision || ''),
+    actionKind: approvalActionKind(item.action_kind || item.actionKind),
+    scope: String(item.scope || ''),
+    ...(item.rule_id || item.ruleId ? { ruleId: String(item.rule_id || item.ruleId) } : {}),
+    note: String(item.note || ''),
+    createdAt: timestamp(item.created_at || item.createdAt)
+  }
+}
+
+export function normalizeApprovalList(value: unknown): ZnApprovalList {
+  const item = record(value)
+  if (!item) throw new Error('Resident returned an invalid approval list')
+  const pending = Array.isArray(item.pending) ? item.pending : []
+  const expired = Array.isArray(item.expired) ? item.expired : []
+  const rules = Array.isArray(item.rules) ? item.rules : []
+  const audit = Array.isArray(item.audit) ? item.audit : []
+  return {
+    pending: pending.map(normalizeApprovalRequest),
+    expired: expired.map(normalizeApprovalRequest),
+    rules: rules.map(normalizeApprovalRule),
+    audit: audit.map(normalizeApprovalAuditEntry)
   }
 }
 
@@ -782,6 +908,52 @@ export async function loadZnWorkRestoreApplication(
   return normalizeRestoreApplication(await desktop().resident.workRestoreApplication({
     applicationId: normalizedApplication
   }))
+}
+
+export async function loadZnApprovals(): Promise<ZnApprovalList> {
+  return normalizeApprovalList(await desktop().resident.approvalList())
+}
+
+export async function decideZnApproval(
+  requestId: string,
+  decision: ZnApprovalDecision
+): Promise<ZnApprovalRequest> {
+  const normalized = requestId.trim()
+  if (!normalized) throw new Error('Approval request id is required')
+  if (decision !== 'allow_once' && decision !== 'always_allow' && decision !== 'deny') {
+    throw new Error('Unsupported approval decision')
+  }
+  const result = record(await desktop().resident.approvalDecide({
+    requestId: normalized,
+    decision
+  }))
+  if (!result) throw new Error('Resident returned an invalid approval decision')
+  return normalizeApprovalRequest(result.request)
+}
+
+export async function createZnApprovalRule(
+  actionKind: ZnApprovalActionKind,
+  scope: string,
+  effect: ZnApprovalRuleEffect
+): Promise<ZnApprovalRule> {
+  const normalizedScope = scope.trim()
+  if (!normalizedScope) throw new Error('Approval rule scope is required')
+  if (effect !== 'ask_first' && effect !== 'auto_allow') {
+    throw new Error('Unsupported approval rule effect')
+  }
+  const result = record(await desktop().resident.approvalRuleCreate({
+    actionKind,
+    scope: normalizedScope,
+    effect
+  }))
+  if (!result) throw new Error('Resident returned an invalid approval rule')
+  return normalizeApprovalRule(result.rule)
+}
+
+export async function deleteZnApprovalRule(ruleId: string): Promise<void> {
+  const normalized = ruleId.trim()
+  if (!normalized) throw new Error('Approval rule id is required')
+  await desktop().resident.approvalRuleDelete({ ruleId: normalized })
 }
 
 export async function attachZnWorkspace(threadId: string): Promise<ZnThread | null> {

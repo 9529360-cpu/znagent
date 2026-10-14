@@ -40,6 +40,15 @@ contextBridge.exposeInMainWorld('znDesktop', {
       ipcRenderer.invoke('zn:resident:work-restore-approve', payload || {}),
     workRestoreApplication: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:work-restore-application', payload || {}),
+    approvalList: () => ipcRenderer.invoke('zn:resident:approval-list'),
+    approvalRequest: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:approval-request', payload || {}),
+    approvalDecide: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:approval-decide', payload || {}),
+    approvalRuleCreate: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:approval-rule-create', payload || {}),
+    approvalRuleDelete: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:approval-rule-delete', payload || {}),
     pulses: (limit?: number) => ipcRenderer.invoke('zn:resident:pulses', limit),
     situations: (limit?: number) => ipcRenderer.invoke('zn:resident:situations', limit),
     thoughts: (limit?: number) => ipcRenderer.invoke('zn:resident:thoughts', limit),
