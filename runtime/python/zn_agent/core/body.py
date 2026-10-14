@@ -20,6 +20,7 @@ import psutil
 from .models import utc_now
 from .path_context import canonical_host_path
 from .terminal import TerminalRequest, TerminalResult, get_zn_local_terminal
+from .workspace_file_discipline import list_trash, restore_path, trash_path
 
 if TYPE_CHECKING:
     from .resident import ZNResidentRuntime
@@ -163,6 +164,12 @@ class NativeBody:
             return self._read_text(action, started)
         if kind in {"write_text", "write_file"}:
             return self._write_text(action, started)
+        if kind in {"trash_path", "trash_file", "delete_to_trash"}:
+            return self._trash_path(action, started)
+        if kind in {"restore_trashed", "restore_trash", "restore_file"}:
+            return self._restore_trashed(action, started)
+        if kind in {"list_trash", "list_trashed"}:
+            return self._list_trash(action, started)
         if kind in {"list_directory", "list_dir"}:
             return self._list_directory(action, started)
         if kind in {"process_state", "process"}:
@@ -267,6 +274,64 @@ class NativeBody:
                 "written_chars": int(written),
                 "append": append,
                 "encoding": encoding,
+            },
+        )
+
+    @staticmethod
+    def _workspace_root_arg(args: dict[str, Any]) -> Path:
+        # Trash actions never guess their workspace: the caller binds it
+        # explicitly, so a deletion can never land in an unintended trash.
+        raw = args.get("workspace_root") or args.get("root")
+        if raw is None or not str(raw).strip():
+            raise ValueError("trash actions require workspace_root")
+        return Path(str(raw)).expanduser()
+
+    def _trash_path(self, action: BodyAction, started: str) -> BodyActionResult:
+        """Delete by moving into trash (M12): never a direct unlink."""
+        path = self._path_arg(action.args)
+        root = self._workspace_root_arg(action.args)
+        entry = trash_path(
+            path, root, confirm=bool(action.args.get("confirm", False))
+        )
+        return self._ok(
+            action,
+            started,
+            output=entry.original_path,
+            data={
+                "entry_id": entry.entry_id,
+                "original_path": entry.original_path,
+                "deleted_at": entry.deleted_at,
+                "kind": entry.kind,
+                "size_bytes": entry.size_bytes,
+                "trash_path": entry.trash_path,
+            },
+        )
+
+    def _restore_trashed(self, action: BodyAction, started: str) -> BodyActionResult:
+        root = self._workspace_root_arg(action.args)
+        entry_id = str(action.args.get("entry_id") or "").strip()
+        if not entry_id:
+            raise ValueError("restore_trashed requires entry_id")
+        restored = restore_path(
+            entry_id, root, overwrite=bool(action.args.get("overwrite", False))
+        )
+        return self._ok(
+            action,
+            started,
+            output=str(restored),
+            data={"entry_id": entry_id, "restored_path": str(restored)},
+        )
+
+    def _list_trash(self, action: BodyAction, started: str) -> BodyActionResult:
+        root = self._workspace_root_arg(action.args)
+        entries = list_trash(root)
+        return self._ok(
+            action,
+            started,
+            data={
+                "workspace_root": str(root),
+                "entries": [entry.as_dict() for entry in entries],
+                "count": len(entries),
             },
         )
 
