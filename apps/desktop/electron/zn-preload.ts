@@ -66,7 +66,21 @@ contextBridge.exposeInMainWorld('znDesktop', {
     worldObserve: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:world-observe', payload),
     submit: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:submit', payload),
     remember: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:remember', payload),
-    forget: (key: string) => ipcRenderer.invoke('zn:resident:forget', key)
+    forget: (key: string) => ipcRenderer.invoke('zn:resident:forget', key),
+    routinePropose: (payload: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:routine-propose', payload),
+    routineConfirm: (payload: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:routine-confirm', payload),
+    routineList: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-list', payload || {}),
+    routineGet: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-get', payload),
+    routineRuns: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-runs', payload),
+    routinePause: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-pause', payload),
+    routineResume: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-resume', payload),
+    routineEdit: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-edit', payload),
+    routineDelete: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-delete', payload),
+    routineTestRun: (payload: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:routine-test-run', payload),
+    routineAcknowledge: (payload: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:routine-acknowledge', payload),
   },
   workspaces: {
     attach: (threadId: string) => ipcRenderer.invoke('zn:workspaces:attach', { threadId }),
@@ -113,6 +127,12 @@ contextBridge.exposeInMainWorld('znDesktop', {
       const listener = () => callback()
       ipcRenderer.on('zn:global-invocation', listener)
       return () => ipcRenderer.removeListener('zn:global-invocation', listener)
-    }
+    },
+    // Suggestions wiring lives at the end of the bridge so it stays in its
+    // own merge hunk, away from the team/routine entries above.
+    suggestionsList: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:suggestions-list', payload || {}),
+    suggestionsDismiss: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:suggestions-dismiss', payload || {}),
   }
 })
