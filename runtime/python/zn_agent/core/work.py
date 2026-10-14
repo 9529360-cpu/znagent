@@ -1021,6 +1021,49 @@ class ResidentWorkLedger:
             work_run.finalized_at = now
             self._save_run(work_run)
             self._response_streams.pop(event_id, None)
+            self._record_completion_summary(
+                thread=thread, work_run=work_run, run=run, artifacts=new_artifacts
+            )
+
+    def _record_completion_summary(self, *, thread, work_run, run, artifacts) -> None:
+        """P2-6: persist a rule-based completion summary when a Work run finalizes.
+
+        Best-effort by design: a summary failure must never break Work
+        finalization. The summary is built only from this run's own response,
+        reason, and artifacts, and decisions inside it must cite fresh
+        evidence from this run (see completion_summary).
+        """
+        try:
+            memory = getattr(self.resident, "memory", None)
+            if memory is None:
+                return
+            from .completion_summary import (
+                build_completion_summary,
+                save_completion_summary,
+            )
+
+            outcome = None
+            try:
+                from .work_outcome_summary import project_work_outcome
+
+                outcome = project_work_outcome(self, run.event.event_id)
+            except Exception:
+                outcome = None
+            summary = build_completion_summary(
+                thread_id=thread.thread_id,
+                thread_title=thread.title,
+                task=work_run.task,
+                event_id=run.event.event_id,
+                success=bool(run.success),
+                response=run.response,
+                reason=run.reason,
+                artifacts=artifacts,
+                message_ids=(_event_message_id(run.event.event_id, "zn"),),
+                outcome=outcome,
+            )
+            save_completion_summary(memory, summary)
+        except Exception:
+            return
 
     def _collect_artifacts(
         self,
