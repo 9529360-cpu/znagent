@@ -31,7 +31,11 @@ from zn_agent.core.workspace_file_discipline import WorkspaceLayout
 class WorkspaceFileActionTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        self.root = Path(self._tmp.name) / "workspace"
+        # Resolve the fixture root the same way production does: on
+        # Windows CI the temp dir can be an 8.3 short path (RUNNER~1)
+        # while production stores resolved long paths, so expectations
+        # built from this root must use the canonical form too.
+        self.root = (Path(self._tmp.name) / "workspace").resolve(strict=False)
         WorkspaceLayout(self.root).ensure()
         self.approval_store = ApprovalCardStore(
             str(Path(self._tmp.name) / "approvals.db")
