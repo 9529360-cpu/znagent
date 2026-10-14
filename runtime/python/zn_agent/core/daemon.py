@@ -53,6 +53,11 @@ class ResidentRpcServer:
         self.resident = resident or build_resident_runtime_from_existing_stack()
         self.service = ResidentService(self.resident)
         self.work = RecoveryBoundedWorkLedger(self.resident)
+        # Local import: keeps the suggestions wiring in its own merge hunk
+        # (P1-3 precedent) instead of the shared top-level import block.
+        from .suggestions import SuggestionEngine
+
+        self.suggestions = SuggestionEngine(self.resident, self.work)
         self.work_control = OutcomeAwareRestoreWorkControl(self.work)
         self.resident.cognitive_delta_handler = self.work.publish_response_delta
         self.resident.cognitive_response_reset_handler = self.work.reset_response_stream
@@ -145,6 +150,15 @@ class ResidentRpcServer:
             if not provider_id:
                 raise ValueError("mcp_disconnect requires provider_id")
             result = self.mcp_capabilities.disconnect(provider_id)
+        elif method == "suggestions_list":
+            result = self.suggestions.list_suggestions(
+                limit=max(1, min(50, int(params.get("limit") or 8))),
+            )
+        elif method == "suggestions_dismiss":
+            key = str(params.get("key") or params.get("suggestion_key") or "").strip()
+            if not key:
+                raise ValueError("suggestions_dismiss requires key")
+            result = self.suggestions.dismiss(key)
         elif method == "work_list":
             result = [
                 self._work_snapshot(snapshot, artifact_limit=1)
