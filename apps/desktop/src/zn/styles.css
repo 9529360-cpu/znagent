@@ -1268,6 +1268,41 @@ body {
   font-size: 10.5px;
 }
 
+.zn-approval-panel { display: grid; gap: 15px; }
+.zn-approval-cards { display: grid; gap: 12px; }
+.zn-approval-card {
+  padding: 12px;
+  border: 1px solid rgba(230, 199, 131, .28);
+  border-radius: 11px;
+  background: rgba(81, 61, 32, .14);
+}
+.zn-approval-card-expired { border-color: rgba(187, 205, 255, .14); background: rgba(16, 23, 39, .4); }
+.zn-approval-meta { display: grid; gap: 6px; margin-bottom: 12px; }
+.zn-approval-meta > div { display: flex; gap: 8px; font-size: 12px; line-height: 1.5; }
+.zn-approval-meta > div > span { min-width: 56px; color: #8f9bb1; }
+.zn-approval-meta > div > strong { font-weight: 600; word-break: break-word; }
+.zn-approval-expired { margin-top: 18px; }
+.zn-approval-expired h3 { margin: 0 0 6px; font-size: 12px; font-weight: 690; }
+.zn-approval-expired .zn-approval-card { margin-top: 10px; }
+.zn-approval-rules, .zn-approval-audit { list-style: none; margin: 0 0 14px; padding: 0; display: grid; gap: 8px; }
+.zn-approval-rules li, .zn-approval-audit li { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; font-size: 12px; }
+.zn-approval-rules li button { margin-left: auto; }
+.zn-approval-rule-form { display: grid; gap: 10px; margin: 0 0 8px; }
+.zn-approval-rule-form label { display: grid; gap: 4px; font-size: 11px; color: #8f9bb1; }
+.zn-approval-banner {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 12px;
+  margin: 0 0 14px;
+  border: 1px solid rgba(230, 199, 131, .3);
+  border-radius: 11px;
+  background: rgba(81, 61, 32, .18);
+  color: #d8c0a0;
+  font-size: 12px;
+}
+
 .zn-progress-technical {
   color: #71809a;
   font-size: 10.5px;

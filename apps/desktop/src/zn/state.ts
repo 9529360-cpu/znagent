@@ -80,6 +80,54 @@ export type ZnRestoreApplication = {
   completedAt?: number
 }
 
+export type ZnApprovalActionKind = 'send' | 'publish' | 'purchase' | 'delete' | 'production_change'
+export type ZnApprovalSource = 'user_chat' | 'resident' | 'routine' | 'specialist' | 'other_bot' | 'trigger' | 'mcp'
+export type ZnApprovalRequestStatus = 'pending' | 'approved_once' | 'approved' | 'consumed' | 'denied' | 'expired'
+export type ZnApprovalDecision = 'allow_once' | 'always_allow' | 'deny'
+export type ZnApprovalRuleEffect = 'ask_first' | 'auto_allow'
+
+export type ZnApprovalRequest = {
+  id: string
+  actionKind: ZnApprovalActionKind
+  target: string
+  scope: string
+  valueText: string
+  source: ZnApprovalSource
+  status: ZnApprovalRequestStatus
+  createdAt: number
+  expiresAt: number
+  decidedAt?: number
+  decision?: ZnApprovalDecision
+  eventId?: string
+}
+
+export type ZnApprovalRule = {
+  id: string
+  actionKind: ZnApprovalActionKind
+  scope: string
+  effect: ZnApprovalRuleEffect
+  createdAt: number
+  enabled: boolean
+}
+
+export type ZnApprovalAuditEntry = {
+  id: string
+  requestId?: string
+  decision: string
+  actionKind: ZnApprovalActionKind
+  scope: string
+  ruleId?: string
+  note: string
+  createdAt: number
+}
+
+export type ZnApprovalList = {
+  pending: ZnApprovalRequest[]
+  expired: ZnApprovalRequest[]
+  rules: ZnApprovalRule[]
+  audit: ZnApprovalAuditEntry[]
+}
+
 export type ZnActiveWorkRun = {
   threadId: string
   eventId: string

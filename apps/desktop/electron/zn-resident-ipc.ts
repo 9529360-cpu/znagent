@@ -262,6 +262,55 @@ export function registerZnResidentIpc(): void {
       application_id: applicationId
     })
   })
+  handleZnDesktopIpc('zn:resident:approval-list', async () => {
+    return getZnResidentProcess().request('approval_list', {})
+  })
+  handleZnDesktopIpc('zn:resident:approval-request', async (_event, payload) => {
+    const actionKind = String(payload?.actionKind || payload?.action_kind || '').trim()
+    const target = String(payload?.target || '').trim()
+    const scope = String(payload?.scope || '').trim()
+    if (!actionKind) throw new Error('actionKind is required')
+    if (!target) throw new Error('target is required')
+    if (!scope) throw new Error('scope is required')
+    return getZnResidentProcess().request('approval_request', {
+      action_kind: actionKind,
+      target,
+      scope,
+      value_text: String(payload?.valueText || payload?.value_text || ''),
+      source: String(payload?.source || 'resident'),
+      event_id: String(payload?.eventId || payload?.event_id || '') || undefined
+    })
+  })
+  handleZnDesktopIpc('zn:resident:approval-decide', async (_event, payload) => {
+    const requestId = String(payload?.requestId || payload?.request_id || '').trim()
+    const decision = String(payload?.decision || '').trim()
+    if (!requestId) throw new Error('requestId is required')
+    if (!decision) throw new Error('decision is required')
+    return getZnResidentProcess().request('approval_decide', {
+      request_id: requestId,
+      decision
+    })
+  })
+  handleZnDesktopIpc('zn:resident:approval-rule-create', async (_event, payload) => {
+    const actionKind = String(payload?.actionKind || payload?.action_kind || '').trim()
+    const scope = String(payload?.scope || '').trim()
+    const effect = String(payload?.effect || '').trim()
+    if (!actionKind) throw new Error('actionKind is required')
+    if (!scope) throw new Error('scope is required')
+    if (!effect) throw new Error('effect is required')
+    return getZnResidentProcess().request('approval_rule_create', {
+      action_kind: actionKind,
+      scope,
+      effect
+    })
+  })
+  handleZnDesktopIpc('zn:resident:approval-rule-delete', async (_event, payload) => {
+    const ruleId = String(payload?.ruleId || payload?.rule_id || '').trim()
+    if (!ruleId) throw new Error('ruleId is required')
+    return getZnResidentProcess().request('approval_rule_delete', {
+      rule_id: ruleId
+    })
+  })
   handleZnDesktopIpc('zn:resident:team-timeline', async (_event, payload) => {
     const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
     if (!threadId) throw new Error('threadId is required')

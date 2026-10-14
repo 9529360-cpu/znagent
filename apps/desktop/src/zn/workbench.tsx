@@ -35,6 +35,7 @@ import {
   createZnWorkThread,
   detachZnWorkspace,
   dismissZnSuggestion,
+  loadZnApprovals,
   loadZnProviderSettings,
   loadZnSuggestions,
   loadZnResidentSnapshot,
@@ -60,6 +61,7 @@ import {
 } from './i18n'
 import type { ZnLocalePreference } from '../../localization/zn-localization'
 import { ZnMissingRestoreControls } from './restore-controls'
+import { ZnApprovalPanel } from './approval-panel'
 import { RoutinesPanel } from './routines-panel'
 import { ZnSlidesWorkstation } from './slides-workstation'
 import { ZnDocumentWorkstation } from './document-workstation'
@@ -76,7 +78,7 @@ import {
 type ResidentHealth = 'connecting' | 'live' | 'offline'
 type MainView = 'work' | 'settings'
 type WindowMode = 'compact' | 'expanded'
-type SettingsSection = 'language' | 'models' | 'background' | 'updates'
+type SettingsSection = 'language' | 'models' | 'background' | 'updates' | 'approvals'
 
 const PINNED_THREADS_STORAGE_KEY = 'zn.desktop.pinned-threads.v1'
 
@@ -305,6 +307,7 @@ export function ZnWorkbench() {
   const [providerNotice, setProviderNotice] = useState<string | null>(null)
   const [updateStatus, setUpdateStatus] = useState<ZnDesktopUpdateStatus | null>(null)
   const [updateBusy, setUpdateBusy] = useState(false)
+  const [approvalPendingCount, setApprovalPendingCount] = useState(0)
   const [teamTimeline, setTeamTimeline] = useState<ZnTeamTimeline | null>(null)
   const [teamNotice, setTeamNotice] = useState<string | null>(null)
 
@@ -511,6 +514,22 @@ export function ZnWorkbench() {
     const timer = window.setInterval(() => void refreshResident(), 12_000)
     return () => window.clearInterval(timer)
   }, [refreshProviderSettings, refreshResident])
+
+  const refreshApprovalCount = useCallback(async () => {
+    try {
+      const approvals = await loadZnApprovals()
+      setApprovalPendingCount(approvals.pending.length)
+    } catch {
+      // Approvals stay out of the way when the resident cannot answer;
+      // the panel itself surfaces its own load error.
+    }
+  }, [])
+
+  useEffect(() => {
+    void refreshApprovalCount()
+    const timer = window.setInterval(() => void refreshApprovalCount(), 30_000)
+    return () => window.clearInterval(timer)
+  }, [refreshApprovalCount])
 
   useEffect(() => {
     if (view === 'settings') void refreshProviderSettings()
@@ -871,6 +890,12 @@ export function ZnWorkbench() {
     })
   }, [])
 
+  const openApprovals = useCallback(() => {
+    setView('settings')
+    focusSettingsSection('approvals')
+    requestWindowMode('expanded')
+  }, [focusSettingsSection, requestWindowMode])
+
   const openDetails = useCallback(() => {
     setArtifactOpen(false)
     setContextOpen(true)
@@ -1102,13 +1127,14 @@ export function ZnWorkbench() {
                   <div className="zn-settings-nav-label">{t('settings.nav.app')}</div>
                   <button className={settingsSection === 'background' ? 'active' : ''} type="button" aria-current={settingsSection === 'background' ? 'page' : undefined} onClick={() => focusSettingsSection('background')}><Pulse size={17} /><span>{t('settings.background.title')}</span></button>
                   <button className={settingsSection === 'updates' ? 'active' : ''} type="button" aria-current={settingsSection === 'updates' ? 'page' : undefined} onClick={() => focusSettingsSection('updates')}><CheckCircle size={17} /><span>{t('settings.updates.title')}</span></button>
+                  <button className={settingsSection === 'approvals' ? 'active' : ''} type="button" aria-current={settingsSection === 'approvals' ? 'page' : undefined} onClick={() => focusSettingsSection('approvals')}><CheckCircle size={17} /><span>{t('settings.approvals.title')}</span></button>
                 </div>
               </nav>
               <div className="zn-settings-content">
             <div className="zn-page-intro">
               <span className="zn-eyebrow">{t('settings.eyebrow')}</span>
-              <h1>{t(settingsSection === 'language' ? 'settings.language.title' : settingsSection === 'models' ? 'settings.models.title' : settingsSection === 'background' ? 'settings.background.title' : 'settings.updates.title')}</h1>
-              <p>{t(settingsSection === 'language' ? 'settings.language.description' : settingsSection === 'models' ? 'settings.models.description' : settingsSection === 'background' ? 'settings.background.description' : 'settings.updates.description')}</p>
+              <h1>{t(settingsSection === 'language' ? 'settings.language.title' : settingsSection === 'models' ? 'settings.models.title' : settingsSection === 'background' ? 'settings.background.title' : settingsSection === 'approvals' ? 'settings.approvals.title' : 'settings.updates.title')}</h1>
+              <p>{t(settingsSection === 'language' ? 'settings.language.description' : settingsSection === 'models' ? 'settings.models.description' : settingsSection === 'background' ? 'settings.background.description' : settingsSection === 'approvals' ? 'settings.approvals.description' : 'settings.updates.description')}</p>
             </div>
             <div className="zn-settings-grid" data-active-section={settingsSection}>
               <section className="zn-card" id="zn-settings-language">
@@ -1210,6 +1236,10 @@ export function ZnWorkbench() {
                 </div>
                 {updateStatus ? <pre className="zn-compact-pre">{renderUnknown(updateStatus)}</pre> : null}
               </section>
+
+              <div id="zn-settings-approvals">
+                <ZnApprovalPanel />
+              </div>
             </div>
             </div>
             </div>
@@ -1217,6 +1247,12 @@ export function ZnWorkbench() {
         ) : (
           <>
             <main className="zn-thread-surface">
+              {approvalPendingCount > 0 ? (
+                <div className="zn-approval-banner" role="alert">
+                  <span>{t('approval.banner', { count: approvalPendingCount, countLabel: t(approvalPendingCount === 1 ? 'approval.bannerOne' : 'approval.bannerMany') })}</span>
+                  <button type="button" onClick={openApprovals}>{t('approval.review')}</button>
+                </div>
+              ) : null}
               {residentHealth === 'offline' ? (
                 <div className="zn-connection-recovery" role="alert" aria-live="polite">
                   <div className="zn-connection-recovery-copy">
