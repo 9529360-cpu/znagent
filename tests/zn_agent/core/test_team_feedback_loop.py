@@ -19,6 +19,7 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.cognitive_resource import CognitiveIncrement, CognitiveResourceWorkerFactory
+from zn_agent.core.completion_verdict import render_completion_report
 from zn_agent.core.models import ModelRoute
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
@@ -140,8 +141,8 @@ class TeamFeedbackLoopTests(unittest.TestCase):
         Call 1: a rejected write_file proposal whose objective contains
         "完成" -- the old fall-through recorded it as a completion claim.
         Call 2: the question must carry the rejection reason, and the
-        specialist proposes a valid subdirectory step. Call 3: "搞定了"
-        claims the item, and the runner verifies it to completion.
+        specialist proposes a valid subdirectory step. Call 3: a structured
+        CP-3 report claims the item, and the runner verifies it to completion.
         """
         rejected = _proposal(
             objective="完成调研并写出结论",
@@ -153,9 +154,18 @@ class TeamFeedbackLoopTests(unittest.TestCase):
             path="research/notes.md",
             content="调研-01 verified step\n",
         )
-        cognition = _ScriptedSpecialist(
-            script=[rejected, valid, "搞定了，调研结论已写好。"]
+        # Call 3 claims with a structured CP-3 report citing the verified
+        # subdirectory step for both acceptance criteria.
+        claim = render_completion_report(
+            conclusion="调研完成，调研结论已写好。",
+            evidence=[
+                ("调研结论有明确选型建议", "research/notes.md"),
+                ("风险清单覆盖主要未知项", "research/notes.md"),
+            ],
+            files=["research/notes.md"],
+            unfinished=[],
         )
+        cognition = _ScriptedSpecialist(script=[rejected, valid, claim])
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             resident, ledger, event, workspace = self._start(root, cognition)
@@ -195,7 +205,7 @@ class TeamFeedbackLoopTests(unittest.TestCase):
                 # Boundary still holds: the escape proposal wrote nothing
                 # outside the workspace.
                 self.assertFalse((root / "escape.md").exists())
-                # Fix 5: the "搞定了" claim completed the item through
+                # Fix 5: the structured claim completed the item through
                 # verification (not claim-only).
                 runs = ledger.list_worker_runs(
                     work_item_id=self._child(ledger, event).work_item_id
@@ -251,7 +261,16 @@ class TeamFeedbackLoopTests(unittest.TestCase):
             path="a/b/c/notes.md",
             content="调研-01 verified step\n",
         )
-        cognition = _ScriptedSpecialist(script=[valid, "搞定了，调研结论已写好。"])
+        claim = render_completion_report(
+            conclusion="调研完成，调研结论已写好。",
+            evidence=[
+                ("调研结论有明确选型建议", "a/b/c/notes.md"),
+                ("风险清单覆盖主要未知项", "a/b/c/notes.md"),
+            ],
+            files=["a/b/c/notes.md"],
+            unfinished=[],
+        )
+        cognition = _ScriptedSpecialist(script=[valid, claim])
         with tempfile.TemporaryDirectory() as tmp:
             resident, ledger, event, workspace = self._start(Path(tmp), cognition)
             try:
