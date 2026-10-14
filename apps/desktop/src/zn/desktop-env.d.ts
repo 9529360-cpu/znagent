@@ -73,6 +73,10 @@ type ZnDesktopResidentBridge = {
   impasses: (limit?: number) => Promise<unknown>
   learning: (limit?: number) => Promise<unknown>
   neural: (limit?: number) => Promise<unknown>
+  // Suggestions wiring lives here, between the neural and perceive entries,
+  // so it stays in its own merge hunk, away from the team/routine entries.
+  suggestionsList: (payload: ZnDesktopPayload) => Promise<unknown>
+  suggestionsDismiss: (payload: ZnDesktopPayload) => Promise<unknown>
   perceive: (payload: ZnDesktopPayload) => Promise<unknown>
   worldFollow: (payload: ZnDesktopPayload) => Promise<unknown>
   worldFocuses: (payload?: ZnDesktopPayload) => Promise<unknown>
@@ -80,6 +84,17 @@ type ZnDesktopResidentBridge = {
   submit: (payload: ZnDesktopPayload) => Promise<unknown>
   remember: (payload: ZnDesktopPayload) => Promise<unknown>
   forget: (key: string) => Promise<unknown>
+  routinePropose: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineConfirm: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineList: (payload?: ZnDesktopPayload) => Promise<unknown>
+  routineGet: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineRuns: (payload: ZnDesktopPayload) => Promise<unknown>
+  routinePause: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineResume: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineEdit: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineDelete: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineTestRun: (payload: ZnDesktopPayload) => Promise<unknown>
+  routineAcknowledge: (payload: ZnDesktopPayload) => Promise<unknown>
 }
 
 declare interface Window {
