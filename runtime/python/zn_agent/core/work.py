@@ -445,6 +445,72 @@ class ResidentWorkLedger:
             ).fetchall()
         return [self._artifact_from_row(row) for row in rows]
 
+    def delete_thread_messages(
+        self, thread_id: str, *, keep_message_ids: tuple[str, ...] = ()
+    ) -> int:
+        """Delete messages in a thread, except the kept ones. Returns count.
+
+        Disband uses this to empty the project thread while keeping the
+        disband request message itself, so the cleanup checklist (appended
+        as the event's final response) still has a thread to land in.
+        """
+        normalized_id = self._normalize_thread_id(thread_id)
+        keep = {str(m or "").strip() for m in keep_message_ids if str(m or "").strip()}
+        with self._lock, closing(self._connect()) as conn:
+            if keep:
+                placeholders = ",".join("?" for _ in keep)
+                cursor = conn.execute(
+                    f"DELETE FROM work_messages WHERE thread_id=? "
+                    f"AND message_id NOT IN ({placeholders})",
+                    (normalized_id, *sorted(keep)),
+                )
+            else:
+                cursor = conn.execute(
+                    "DELETE FROM work_messages WHERE thread_id=?", (normalized_id,)
+                )
+            conn.commit()
+            return int(cursor.rowcount or 0)
+
+    def delete_thread_artifacts(self, thread_id: str) -> int:
+        """Delete every artifact row in a thread. Returns the count.
+
+        Only the ZN-side artifact records go away. Workspace files on disk
+        are the user's own files -- disband never touches them (see
+        ``SHARED_FILES_REMINDER`` in ``project_team``).
+        """
+        normalized_id = self._normalize_thread_id(thread_id)
+        with self._lock, closing(self._connect()) as conn:
+            cursor = conn.execute(
+                "DELETE FROM work_artifacts WHERE thread_id=?", (normalized_id,)
+            )
+            conn.commit()
+            return int(cursor.rowcount or 0)
+
+    def delete_thread_work_runs(
+        self, thread_id: str, *, keep_event_ids: tuple[str, ...] = ()
+    ) -> int:
+        """Delete work_run rows in a thread, except the kept events.
+
+        Disband keeps the disband event's own run row: progress/finalize
+        need it to deliver the cleanup checklist. Returns the count.
+        """
+        normalized_id = self._normalize_thread_id(thread_id)
+        keep = {str(e or "").strip() for e in keep_event_ids if str(e or "").strip()}
+        with self._lock, closing(self._connect()) as conn:
+            if keep:
+                placeholders = ",".join("?" for _ in keep)
+                cursor = conn.execute(
+                    f"DELETE FROM work_runs WHERE thread_id=? "
+                    f"AND event_id NOT IN ({placeholders})",
+                    (normalized_id, *sorted(keep)),
+                )
+            else:
+                cursor = conn.execute(
+                    "DELETE FROM work_runs WHERE thread_id=?", (normalized_id,)
+                )
+            conn.commit()
+            return int(cursor.rowcount or 0)
+
     def get_snapshot(
         self,
         thread_id: str,
@@ -815,6 +881,16 @@ class ResidentWorkLedger:
                 result["assistant_response"] = "".join(chunks)
                 result["response_sequence"] = sequence
         return result
+
+    def count_thread_work_runs(self, thread_id: str) -> int:
+        """Count work_run rows in a thread (disband verification)."""
+        normalized_id = self._normalize_thread_id(thread_id)
+        with self._lock, closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM work_runs WHERE thread_id=?",
+                (normalized_id,),
+            ).fetchone()
+        return int(row[0] or 0) if row else 0
 
     def get_run(self, event_id: str) -> WorkRun | None:
         normalized = str(event_id or "").strip()
