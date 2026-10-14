@@ -17,6 +17,7 @@ from .action_authority import (
     bind_worker_authority_arg,
 )
 from .action_fabric import ActionDescriptor, ActionFabricRegistry
+from .approval_cards import ApprovalGate, approval_kind_for_tag
 from .automation_control_action import normalize_control_type, text_sha256
 from .body import BodyActionResult
 from .office_native_action import scalar_digest
@@ -112,9 +113,16 @@ ObservationVerifier = Callable[
 class ActionExecutionRuntime:
     """Resolve semantic actions through the one existing Body."""
 
-    def __init__(self, fabric: ActionFabricRegistry, body: Any) -> None:
+    def __init__(
+        self,
+        fabric: ActionFabricRegistry,
+        body: Any,
+        *,
+        approval_gate: ApprovalGate | None = None,
+    ) -> None:
         self.fabric = fabric
         self.body = body
+        self._approval_gate = approval_gate
         self._observers: dict[str, ObservationReader] = {}
         self._verifiers: dict[str, ObservationVerifier] = {}
 
@@ -130,6 +138,38 @@ class ActionExecutionRuntime:
             raise KeyError(normalized)
         self._observers[normalized] = observe
         self._verifiers[normalized] = verify
+
+    def _approval_block(
+        self, request: ActionRequest, descriptor: ActionDescriptor
+    ) -> str | None:
+        if self._approval_gate is None:
+            return None
+        kind = approval_kind_for_tag(descriptor.tags)
+        if kind is None:
+            return None
+        args = dict(request.args or {})
+        scope = str(args.get("approval_scope") or request.action_id)
+        target = str(args.get("approval_target") or request.action_id)
+        value_text = str(args.get("approval_value_text") or "")
+        source = str(args.get("approval_source") or "resident")
+        try:
+            outcome = self._approval_gate.check(
+                action_kind=kind,
+                target=target,
+                scope=scope,
+                value_text=value_text,
+                source=source,
+                event_id=request.event_id,
+            )
+        except ValueError as exc:
+            return f"approval gate rejected the action: {exc}"
+        if outcome.allowed:
+            return None
+        return (
+            f"approval_required:{outcome.request_id or ''}:{outcome.reason}"
+            if outcome.request_id
+            else f"approval_required:{outcome.reason}"
+        )
 
     def execute(self, request: ActionRequest) -> ActionExecution:
         started = utc_now()
@@ -165,6 +205,15 @@ class ActionExecutionRuntime:
                 started,
                 "action has no existing Body action binding",
             )
+
+        # Approval gate: only descriptors that opt in with an
+        # ``approval:<kind>`` tag are gated. Untagged actions keep their
+        # existing behavior. A blocked action never reaches the Body: the
+        # gate records one approval request, and a later retry proceeds
+        # once the user allows it (or an auto_allow rule matches).
+        approval_block = self._approval_block(request, descriptor)
+        if approval_block is not None:
+            return self._failure(request, descriptor, started, approval_block)
 
         body_args = dict(request.args)
         authority_mode = "resident"
@@ -512,8 +561,9 @@ def build_machine_action_execution_runtime(
     body: Any,
     *,
     device_capabilities: Any | None,
+    approval_gate: ApprovalGate | None = None,
 ) -> ActionExecutionRuntime:
-    runtime = ActionExecutionRuntime(fabric, body)
+    runtime = ActionExecutionRuntime(fabric, body, approval_gate=approval_gate)
 
     if fabric.descriptor("windows.screen.capture") is not None:
         runtime.register_verification(

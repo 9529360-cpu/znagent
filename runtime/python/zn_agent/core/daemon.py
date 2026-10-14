@@ -7,6 +7,7 @@ import time
 from dataclasses import asdict
 from typing import Any, Callable, Sequence, TextIO
 
+from .approval_cards import ApprovalCardStore
 from .error_safety import public_exception_text
 from .mcp_read_capability_host import ApprovedMcpReadProvider, McpReadCapabilityHost
 from .stdio_mcp import StdioMcpClient
@@ -59,6 +60,15 @@ class ResidentRpcServer:
         self._life_thread: threading.Thread | None = None
         self._world_thread: threading.Thread | None = None
         self._fatal_life_error_handler: Callable[[BaseException], None] | None = None
+        self._approval_store: ApprovalCardStore | None = None
+
+    def _approvals(self) -> ApprovalCardStore:
+        if self._approval_store is None:
+            store_path = getattr(getattr(self.resident, "store", None), "path", None)
+            if not store_path:
+                raise RuntimeError("approval store is unavailable: resident has no store path")
+            self._approval_store = ApprovalCardStore(store_path)
+        return self._approval_store
 
     def serve_forever(self) -> int:
         self.service.acquire()
@@ -325,6 +335,46 @@ class ResidentRpcServer:
             if not application_id:
                 raise ValueError("work_restore_application requires application_id")
             result = self.work_control.restore_application(application_id)
+        elif method == "approval_list":
+            store = self._approvals()
+            result = {
+                "pending": [item.to_dict() for item in store.pending_requests()],
+                "expired": [item.to_dict() for item in store.expired_requests()],
+                "rules": [rule.to_dict() for rule in store.list_rules()],
+                "audit": [entry.to_dict() for entry in store.list_audit()],
+            }
+        elif method == "approval_request":
+            store = self._approvals()
+            request = store.request_approval(
+                action_kind=str(params.get("action_kind") or ""),
+                target=str(params.get("target") or ""),
+                scope=str(params.get("scope") or ""),
+                value_text=str(params.get("value_text") or ""),
+                source=str(params.get("source") or "resident"),
+                event_id=str(params.get("event_id") or "") or None,
+            )
+            result = {"request": request.to_dict()}
+        elif method == "approval_decide":
+            store = self._approvals()
+            request = store.decide(
+                str(params.get("request_id") or ""),
+                str(params.get("decision") or ""),
+            )
+            result = {"request": request.to_dict()}
+        elif method == "approval_rule_create":
+            store = self._approvals()
+            rule = store.create_rule(
+                action_kind=str(params.get("action_kind") or ""),
+                scope=str(params.get("scope") or ""),
+                effect=str(params.get("effect") or ""),
+            )
+            result = {"rule": rule.to_dict()}
+        elif method == "approval_rule_delete":
+            store = self._approvals()
+            deleted = store.delete_rule(str(params.get("rule_id") or ""))
+            if not deleted:
+                raise ValueError("unknown approval rule")
+            result = {"deleted": True}
         elif method == "work_submit":
             thread_id = str(params.get("thread_id") or "").strip()
             task = str(params.get("task") or "").strip()
