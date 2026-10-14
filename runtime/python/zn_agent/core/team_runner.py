@@ -32,6 +32,7 @@ from .team_memory import (
     save_retrospective,
     team_shared_memory,
 )
+from .team_timeline import evidence_from_refs
 
 
 @dataclass(slots=True)
@@ -247,6 +248,9 @@ class TeamRunner:
                 verification_status="verified" if outcome.passed else "failed",
                 artifact_refs=[dict(r) for r in outcome.artifact_refs],
             )
+            # The verification journal is the timeline's evidence source:
+            # artifact refs travel with the decision so the timeline can
+            # render evidence links without a second ledger lookup.
             self._journal(
                 {
                     "role": f"team:{self._team.team_id}:coordinator",
@@ -258,6 +262,8 @@ class TeamRunner:
                         "kind": "decision",
                         "team_id": self._team.team_id,
                         "author": "coordinator",
+                        "item_title": item.title,
+                        "evidence": evidence_from_refs(outcome.artifact_refs),
                     },
                 }
             )

@@ -16,7 +16,16 @@ from .provider_settings import ProviderSettingsService
 from .recovery_bounded_work import RecoveryBoundedWorkLedger
 from .recovery_control import ResidentRecoveryRequired
 from .service import ResidentService
+from .project_team import assemble_team
+from .team_memory import team_shared_memory
 from .team_request import parse_team_request
+from .team_timeline import (
+    build_team_timeline,
+    parse_team_role,
+    record_assignee_override,
+)
+from .team_work_owner import TEAM_SPEC_KEY
+from .team_runner import TeamRunner
 
 
 class ResidentRpcServer:
@@ -361,6 +370,20 @@ class ResidentRpcServer:
                     "run": self._run_result(run),
                     "recovery_required": False,
                 }
+        elif method == "team_timeline":
+            thread_id = str(params.get("thread_id") or "").strip()
+            if not thread_id:
+                raise ValueError("team_timeline requires thread_id")
+            result = self._team_timeline(thread_id)
+        elif method == "team_assign":
+            thread_id = str(params.get("thread_id") or "").strip()
+            specialist = str(params.get("specialist") or "").strip()
+            instruction = str(params.get("instruction") or "").strip()
+            if not thread_id:
+                raise ValueError("team_assign requires thread_id")
+            if not specialist:
+                raise ValueError("team_assign requires specialist")
+            result = self._team_assign(thread_id, specialist, instruction)
         elif method == "agent_run":
             task = str(params.get("task") or "").strip()
             if not task:
@@ -562,6 +585,126 @@ class ResidentRpcServer:
     @staticmethod
     def _limit(params: dict[str, Any]) -> int:
         return max(1, min(200, int(params.get("limit") or 20)))
+
+    def _team_timeline(self, thread_id: str) -> dict[str, Any]:
+        """Read-only team timeline for one thread, derived from the Work log."""
+        if self.work.get_thread(thread_id) is None:
+            raise ValueError(f"unknown work thread: {thread_id!r}")
+        messages = self.work.list_messages(thread_id, limit=500)
+        artifacts = self.work.list_artifacts(thread_id, limit=48)
+        entries = build_team_timeline(messages, artifacts=artifacts)
+        team_id: str | None = None
+        for entry in entries:
+            team_id = str(entry.get("team_id") or "").strip() or team_id
+        members: list[str] = []
+        if team_id:
+            shared = team_shared_memory(self.resident.memory, team_id)
+            spec = shared.recall(TEAM_SPEC_KEY)
+            if spec is not None and isinstance(spec.value, dict):
+                project = str(spec.value.get("project_title") or "").strip()
+                roles = [str(key) for key in (spec.value.get("role_keys") or [])]
+                if project and roles:
+                    members = [
+                        member.name
+                        for member in assemble_team(
+                            project,
+                            roles,
+                            team_id=team_id,
+                            work_thread_id=thread_id,
+                        ).members
+                    ]
+        if not members:
+            seen: list[str] = []
+            for entry in entries:
+                author = str(entry.get("author") or "")
+                if author and author not in ("coordinator", "user") and author not in seen:
+                    seen.append(author)
+            members = seen
+        return {"team_id": team_id, "members": members, "entries": entries}
+
+    def _team_assign(self, thread_id: str, specialist: str, instruction: str) -> dict[str, Any]:
+        """``@specialist`` assignment: reassign the next pending plan item.
+
+        The override is durable (team shared memory) and the assignment is
+        journaled, so it shows up in the timeline and survives restarts.
+        While a team event is running, ``work_start`` would refuse a second
+        event on the thread -- this RPC is the steering path that works
+        regardless of the active event.
+        """
+        if self.work.get_thread(thread_id) is None:
+            raise ValueError(f"unknown work thread: {thread_id!r}")
+        messages = self.work.list_messages(thread_id, limit=500)
+        team_id: str | None = None
+        for message in reversed(messages):
+            parsed = parse_team_role(message.role)
+            if parsed is not None:
+                team_id = parsed[0]
+                break
+        if not team_id:
+            raise ValueError("该 Work 没有运行中的团队，@指派需要先组团队")
+        shared = team_shared_memory(self.resident.memory, team_id)
+        spec = shared.recall(TEAM_SPEC_KEY)
+        if spec is None or not isinstance(spec.value, dict):
+            raise ValueError("团队记录缺失，无法指派")
+        project = str(spec.value.get("project_title") or "").strip()
+        roles = [str(key) for key in (spec.value.get("role_keys") or [])]
+        if not project or not roles:
+            raise ValueError("团队记录缺失，无法指派")
+        team = assemble_team(
+            project, roles, team_id=team_id, work_thread_id=thread_id
+        )
+        member_names = [member.name for member in team.members]
+        if specialist not in member_names:
+            raise ValueError(
+                f"团队里没有专员 {specialist!r}，可选：{', '.join(member_names)}"
+            )
+        work_ledger = getattr(self.resident, "work_ledger", None)
+        if work_ledger is None:
+            raise ValueError("resident has no work ledger")
+        plan_match = shared.recall(TeamRunner.PLAN_MAP_KEY)
+        id_map = (
+            dict(plan_match.value)
+            if plan_match is not None and isinstance(plan_match.value, dict)
+            else {}
+        )
+        pending = None
+        for plan_item in team.plan:
+            wid = id_map.get(plan_item.item_id)
+            runs = (
+                work_ledger.list_worker_runs(work_item_id=wid, limit=1)
+                if wid
+                else []
+            )
+            if not runs:
+                pending = plan_item
+                break
+        if pending is None:
+            raise ValueError("团队已无待派发任务，@指派无下一步可派")
+        record_assignee_override(
+            self.resident.memory, team_id, pending.item_id, specialist
+        )
+        text = f"@{specialist} {instruction}".strip() or f"@{specialist}"
+        self.work.append_message(
+            thread_id,
+            role=f"team:{team_id}:user",
+            text=text,
+            detail={
+                "kind": "assignment",
+                "team_id": team_id,
+                "author": "user",
+                "from_author": "user",
+                "to_author": specialist,
+                "item_title": pending.title,
+                "instruction": instruction,
+            },
+        )
+        return {
+            "team_id": team_id,
+            "specialist": specialist,
+            "item_id": pending.item_id,
+            "item_title": pending.title,
+            "instruction": instruction,
+        }
 
     def _work_snapshot(
         self,
