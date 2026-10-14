@@ -34,8 +34,10 @@ import {
   checkZnUpdate,
   createZnWorkThread,
   detachZnWorkspace,
+  dismissZnSuggestion,
   loadZnApprovals,
   loadZnProviderSettings,
+  loadZnSuggestions,
   loadZnResidentSnapshot,
   loadZnTeamTimeline,
   loadZnWorkThread,
@@ -44,6 +46,7 @@ import {
   updateZnProviderSettings,
   type ZnProviderSettings,
   type ZnResidentSnapshot,
+  type ZnSuggestion,
   type ZnWorkProgress
 } from './resident-client'
 import {
@@ -59,6 +62,7 @@ import {
 import type { ZnLocalePreference } from '../../localization/zn-localization'
 import { ZnMissingRestoreControls } from './restore-controls'
 import { ZnApprovalPanel } from './approval-panel'
+import { RoutinesPanel } from './routines-panel'
 import { ZnSlidesWorkstation } from './slides-workstation'
 import { ZnDocumentWorkstation } from './document-workstation'
 import {
@@ -227,6 +231,21 @@ function providerReadinessDetail(
   return t('provider.unavailable.detail')
 }
 
+function suggestionKindLabel(kind: ZnSuggestion['kind'], t: TFunction): string {
+  if (kind === 'failed_work') return t('suggestions.kind.failedWork')
+  if (kind === 'interrupted_work') return t('suggestions.kind.interruptedWork')
+  if (kind === 'recurring_due') return t('suggestions.kind.recurringDue')
+  if (kind === 'recurring_upcoming') return t('suggestions.kind.recurringUpcoming')
+  return t('suggestions.kind.routine')
+}
+
+function suggestionSourceLabel(suggestion: ZnSuggestion, t: TFunction): string {
+  const label = suggestion.source.label
+  if (suggestion.source.type === 'schedule') return t('suggestions.source.schedule', { label })
+  if (suggestion.source.type === 'memory') return t('suggestions.source.memory', { label })
+  return t('suggestions.source.work', { label })
+}
+
 function threadDisplayTitle(title: string, t: TFunction): string {
   return title === 'New work' ? t('sidebar.newWork') : title
 }
@@ -262,6 +281,7 @@ export function ZnWorkbench() {
   const [pinnedExpanded, setPinnedExpanded] = useState(false)
   const [recentExpanded, setRecentExpanded] = useState(true)
   const [projectsExpanded, setProjectsExpanded] = useState(true)
+  const [routinesExpanded, setRoutinesExpanded] = useState(false)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('language')
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
@@ -275,6 +295,8 @@ export function ZnWorkbench() {
   const [residentHealth, setResidentHealth] = useState<ResidentHealth>('connecting')
   const [residentSnapshot, setResidentSnapshot] = useState<ZnResidentSnapshot | null>(null)
   const [residentError, setResidentError] = useState<string | null>(null)
+  const [suggestions, setSuggestions] = useState<ZnSuggestion[]>([])
+  const [suggestionActionKey, setSuggestionActionKey] = useState('')
   const [deepLinkNotice, setDeepLinkNotice] = useState<ZnDesktopDeepLink | null>(null)
   const [providerSettings, setProviderSettings] = useState<ZnProviderSettings | null>(null)
   const [providerName, setProviderName] = useState('auto')
@@ -397,10 +419,14 @@ export function ZnWorkbench() {
   const refreshResident = useCallback(async () => {
     setResidentHealth(previous => (previous === 'live' ? previous : 'connecting'))
     try {
-      const [snapshot, residentThreads] = await Promise.all([
+      const [snapshot, residentThreads, residentSuggestions] = await Promise.all([
         loadZnResidentSnapshot(),
-        loadZnWorkThreads()
+        loadZnWorkThreads(),
+        loadZnSuggestions().catch(() => null)
       ])
+      // Suggestions are resident-derived state: a failed suggestions fetch
+      // never clears the last known list, and never invents one.
+      if (residentSuggestions !== null) setSuggestions(residentSuggestions)
       const authoritative = residentThreads.length > 0 ? residentThreads : [newZnThread()]
       setResidentSnapshot(snapshot)
       setThreads(current => authoritative.map(thread => {
@@ -623,6 +649,57 @@ export function ZnWorkbench() {
       setCancelBusy(false)
     }
   }, [activeThread, cancelBusy, replaceThread, workProgress])
+
+  const startSuggestion = useCallback(async (suggestion: ZnSuggestion) => {
+    // A click only starts Work; it never executes anything on its own.
+    // Work-backed suggestions resume their existing thread; schedule and
+    // routine suggestions enter the same Work flow on a new owned thread.
+    if (suggestionActionKey || submissionBusy || stoppingWork || workActive) return
+    setSuggestionActionKey(suggestion.key)
+    setBusy(true)
+    try {
+      let threadId = suggestion.threadId
+      if (!threadId) {
+        const thread = newZnThread()
+        setThreads(current => [thread, ...current])
+        setActiveThreadId(thread.id)
+        const saved = await createZnWorkThread(thread)
+        replaceThread(saved)
+        threadId = saved.id
+      } else {
+        setActiveThreadId(threadId)
+      }
+      setView('work')
+      setContextOpen(false)
+      setArtifactOpen(false)
+      const started = await startZnWork(threadId, suggestion.task)
+      replaceThread(started.thread)
+      setActiveThreadId(started.thread.id)
+      setWorkProgress(started.progress.finalized ? null : started.progress)
+      setSuggestions(current => current.filter(item => item.key !== suggestion.key))
+      setResidentError(null)
+      setResidentHealth('live')
+    } catch (error) {
+      setResidentError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSuggestionActionKey('')
+      setBusy(false)
+    }
+  }, [replaceThread, stoppingWork, submissionBusy, suggestionActionKey, workActive])
+
+  const dismissSuggestion = useCallback(async (suggestion: ZnSuggestion) => {
+    if (suggestionActionKey) return
+    setSuggestionActionKey(suggestion.key)
+    try {
+      await dismissZnSuggestion(suggestion.key)
+      setSuggestions(current => current.filter(item => item.key !== suggestion.key))
+      setResidentError(null)
+    } catch (error) {
+      setResidentError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setSuggestionActionKey('')
+    }
+  }, [suggestionActionKey])
 
   const submit = useCallback(
     async (event: FormEvent) => {
@@ -967,6 +1044,10 @@ export function ZnWorkbench() {
               </div>
             ))}
           </div> : null}
+          <button className="zn-section-toggle zn-section-spaced" type="button" aria-expanded={routinesExpanded} onClick={() => setRoutinesExpanded(value => !value)}>
+            <CaretDown className={routinesExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.scheduled')}</span>
+          </button>
+          {routinesExpanded ? <RoutinesPanel /> : null}
 
 
         </nav>
@@ -1216,6 +1297,45 @@ export function ZnWorkbench() {
                       </button>
                     )}
                   </div>
+
+                  <section className="zn-suggestions" aria-label={t('suggestions.title')}>
+                    <div className="zn-suggestions-heading">
+                      <Sparkle size={15} weight="fill" />
+                      <span>{t('suggestions.title')}</span>
+                    </div>
+                    {suggestions.length === 0 ? (
+                      <p className="zn-suggestions-empty">{t('suggestions.empty')}</p>
+                    ) : (
+                      <ul className="zn-suggestions-list">
+                        {suggestions.map(suggestion => (
+                          <li className="zn-suggestion" key={suggestion.key}>
+                            <div className="zn-suggestion-copy">
+                              <span className="zn-suggestion-kind">{suggestionKindLabel(suggestion.kind, t)}</span>
+                              <span className="zn-suggestion-title">{suggestion.title}</span>
+                              <span className="zn-suggestion-source">{suggestionSourceLabel(suggestion, t)}</span>
+                            </div>
+                            <div className="zn-suggestion-actions">
+                              <button
+                                className="zn-primary zn-suggestion-start"
+                                type="button"
+                                disabled={suggestionActionKey === suggestion.key || submissionBusy || stoppingWork || workActive}
+                                onClick={() => void startSuggestion(suggestion)}
+                              >
+                                {t('suggestions.start')}
+                              </button>
+                              <button
+                                type="button"
+                                disabled={suggestionActionKey === suggestion.key}
+                                onClick={() => void dismissSuggestion(suggestion)}
+                              >
+                                {t('suggestions.dismiss')}
+                              </button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </section>
 
                   <div className="zn-home-status" aria-label={t('home.readinessAria')}>
                     <span><i className={'zn-health-dot ' + residentHealth} />{residentHealth === 'live' ? t('home.residentReady') : residentHealth === 'connecting' ? t('home.residentConnecting') : t('home.residentOffline')}</span>
