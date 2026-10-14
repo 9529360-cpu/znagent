@@ -3,8 +3,8 @@
 Covers the vertical slice that connects a user's "assemble a team" sentence
 to the runner: the daemon tags ``team_request`` at ingress, the resident-side
 owner loads/assembles the team durably, applies one runner step per pulse,
-binds verified specialist evidence, claims via the specialist's prose, and
-verifies before completing -- all against the real
+binds verified specialist evidence, claims via a structured CP-3
+completion report, and verifies before completing -- all against the real
 EvidenceBoundSteerableWorkLedger. No mocks for the ledger, the runner, or
 the verifier.
 """
@@ -16,6 +16,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from zn_agent.core.completion_verdict import render_completion_report
 from zn_agent.core.evidence_bound_work import EvidenceBoundSteerableWorkLedger
 from zn_agent.core.memory import StructuredMemory
 from zn_agent.core.steerable_work import WorkItem
@@ -159,12 +160,21 @@ class TeamWorkOwnerIntegrationTests(unittest.TestCase):
         self.assertIsNotNone(step.live_run_id)
         self.assertEqual(step.live_specialist_name, "调研-01")
 
-        # Specialist does verified work, then claims via prose summary.
+        # Specialist does verified work, then claims with a structured
+        # CP-3 completion report citing each acceptance criterion.
         assert step.live_run_id is not None
         self._record_evidence(step.live_run_id, "调研结论：用方案 A")
         self.state.data[TEAM_CLAIM_STATE_KEY] = {
             "run_id": step.live_run_id,
-            "summary": "调研完成，结论：用方案 A，风险清单已附",
+            "summary": render_completion_report(
+                conclusion="调研完成，结论：用方案 A，风险清单已附",
+                evidence=[
+                    ("调研结论有明确选型建议", "调研结论：用方案 A"),
+                    ("风险清单覆盖主要未知项", "调研结论：用方案 A"),
+                ],
+                files=[],
+                unfinished=[],
+            ),
         }
 
         # Pulse 2: claim applied, runner verifies with fresh observation.
@@ -196,7 +206,15 @@ class TeamWorkOwnerIntegrationTests(unittest.TestCase):
         self._record_evidence(step.live_run_id, "实现完成")
         self.state.data[TEAM_CLAIM_STATE_KEY] = {
             "run_id": step.live_run_id,
-            "summary": "开发完成，功能按验收实现",
+            "summary": render_completion_report(
+                conclusion="开发完成，功能按验收实现",
+                evidence=[
+                    ("功能按验收标准实现", "实现完成"),
+                    ("新增代码有测试覆盖", "实现完成"),
+                ],
+                files=[],
+                unfinished=[],
+            ),
         }
         self._advance()  # claim applied -> verify
         self._advance()  # item 2 completes

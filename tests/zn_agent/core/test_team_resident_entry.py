@@ -3,8 +3,9 @@
 ``work_start`` (daemon) -> team_request payload -> resident pulses ->
 TeamWorkOwner.advance (runner.step) -> fixture cognition proposes ONE
 bounded step per specialist -> Body executes + verifies -> evidence on the
-WorkerRun -> specialist claims via prose -> runner verifies (fresh
-observation) -> item completes -> next specialist -> team_complete.
+WorkerRun -> specialist claims with a structured CP-3 completion report ->
+runner verifies (fresh observation) -> item completes -> next specialist
+-> team_complete.
 
 The fixture cognition plays the specialist; everything else is the real
 resident, the real ledger, the real Body verification.
@@ -18,6 +19,7 @@ import unittest
 from pathlib import Path
 
 from zn_agent.core.cognitive_resource import CognitiveIncrement, CognitiveResourceWorkerFactory
+from zn_agent.core.completion_verdict import render_completion_report
 from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.models import ModelRoute
 from zn_agent.core.provider_bridge import build_resident_runtime
@@ -26,11 +28,29 @@ from zn_agent.core.work_restore_control import RestoreAwareWorkControl
 
 
 class _TeamSpecialistCognition:
-    """Fixture specialist: one write_file step, then a prose completion claim."""
+    """Fixture specialist: one write_file step, then a structured CP-3 claim."""
 
+    # Per-specialist CP-3 completion report: every acceptance criterion
+    # cited with an evidence_ref matching the verified write_file step.
     _COMPLETION = {
-        "调研-01": "调研完成：调研结论有明确选型建议，风险清单覆盖主要未知项。",
-        "开发-02": "开发完成：功能按验收标准实现，新增代码有测试覆盖。",
+        "调研-01": render_completion_report(
+            conclusion="调研完成：调研结论有明确选型建议，风险清单覆盖主要未知项。",
+            evidence=[
+                ("调研结论有明确选型建议", "research-notes.md"),
+                ("风险清单覆盖主要未知项", "research-notes.md"),
+            ],
+            files=["research-notes.md"],
+            unfinished=[],
+        ),
+        "开发-02": render_completion_report(
+            conclusion="开发完成：功能按验收标准实现，新增代码有测试覆盖。",
+            evidence=[
+                ("功能按验收标准实现", "implementation.md"),
+                ("新增代码有测试覆盖", "implementation.md"),
+            ],
+            files=["implementation.md"],
+            unfinished=[],
+        ),
     }
 
     def __init__(self) -> None:
