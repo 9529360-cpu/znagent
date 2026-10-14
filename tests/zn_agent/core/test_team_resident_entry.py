@@ -226,6 +226,11 @@ class TeamResidentEntryTests(unittest.TestCase):
                     request["role_keys"],
                     ["researcher", "architect", "developer", "tester"],
                 )
+                # The workspace_root field flows through ingress (None
+                # from the pure text parse; the owner derives the
+                # product-path default from the attached workspace).
+                self.assertIn("workspace_root", request)
+                self.assertIsNone(request["workspace_root"])
 
                 # A caller-supplied team_request is never trusted: a plain
                 # task must not carry one into the event.
@@ -251,6 +256,113 @@ class TeamResidentEntryTests(unittest.TestCase):
                 )
                 assert plain_event is not None
                 self.assertNotIn("team_request", plain_event.payload)
+            finally:
+                resident.store.close()
+
+
+    def test_product_path_soul_probe_takes_effect_next_round(self):
+        """P1a acceptance: full product path, SOUL.md probe live next round.
+
+        daemon work_start parses the sentence -> owner materializes
+        <workspace>/agents -> dispatch brief renders the files -> a
+        SOUL.md edit lands in the NEXT cognition question. Fixture
+        cognition only plays the specialist; everything else is real.
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            workspace = root / "team-workspace"
+            workspace.mkdir()
+            resident = build_resident_runtime(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+            try:
+                questions: list[str] = []
+                calls = {"n": 0}
+
+                def _invoke(*, question: str, context: str):
+                    calls["n"] += 1
+                    if "调研-01" not in question:
+                        return CognitiveIncrement(
+                            text="继续按现有证据推进。",
+                            provider="fixture-cognition",
+                            model="team-probe-fixture",
+                        )
+                    questions.append(question)
+                    if len(questions) == 1:
+                        content = "调研-01 verified step\n"
+                        proposal = {
+                            "zn_work_step": {
+                                "objective": "调研-01 写一份可验证的工作产物",
+                                "action": {
+                                    "kind": "write_file",
+                                    "path": "research-notes.md",
+                                    "content": content,
+                                },
+                                "acceptance": {
+                                    "kind": "text_equals",
+                                    "path": "research-notes.md",
+                                    "expected_text": content,
+                                },
+                            }
+                        }
+                        return CognitiveIncrement(
+                            text=json.dumps(proposal, ensure_ascii=False),
+                            provider="fixture-cognition",
+                            model="team-probe-fixture",
+                        )
+                    return CognitiveIncrement(
+                        text="还在推进。",
+                        provider="fixture-cognition",
+                        model="team-probe-fixture",
+                    )
+
+                cognition = type(
+                    "ProbeCognition", (), {"invoke": staticmethod(_invoke)}
+                )()
+                self._configure_cognition(resident, cognition)
+                server = ResidentRpcServer(resident=resident)
+                server.work.create_thread(
+                    thread_id="team-probe", title="XX 项目"
+                )
+                server.work.attach_workspace(
+                    "team-probe", workspace, name="Team Workspace"
+                )
+                response = server.handle(
+                    {
+                        "id": "team-probe-start",
+                        "method": "work_start",
+                        "params": {
+                            "thread_id": "team-probe",
+                            "task": "给 XX 项目组个团队",
+                        },
+                    }
+                )
+                self.assertTrue(response["ok"], response)
+
+                soul_path = workspace / "agents" / "调研-01" / "SOUL.md"
+                edited = False
+                for _ in range(120):
+                    resident.live_once()
+                    if len(questions) >= 1 and not edited:
+                        # The first dispatch materialized the files; a
+                        # SOUL.md edit must land in the NEXT question.
+                        self.assertTrue(
+                            soul_path.is_file(),
+                            "product path did not materialize persona files",
+                        )
+                        soul_path.write_text(
+                            "探针人格：本轮必须提到香蕉。",
+                            encoding="utf-8",
+                        )
+                        edited = True
+                    if len(questions) >= 2:
+                        break
+                self.assertTrue(edited, "first specialist question never arrived")
+                self.assertGreaterEqual(
+                    len(questions), 2, "second specialist question never arrived"
+                )
+                self.assertIn("香蕉", questions[1])
             finally:
                 resident.store.close()
 

@@ -23,6 +23,7 @@ existing ``DisbandPlan`` -- never automatic.
 
 import uuid
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from .completion_verdict import (
@@ -32,7 +33,10 @@ from .completion_verdict import (
 )
 from .project_team import ProjectTeam, assemble_team
 from .skill_ledger import SkillLedger
-from .specialist_workspace import specialist_prompt_for
+from .specialist_workspace import (
+    materialize_team_workspaces,
+    specialist_prompt_for,
+)
 from .team_memory import team_shared_memory
 from .team_runner import Escalation, TeamRunner, VerificationOutcome
 from .team_timeline import apply_assignee_overrides, assignee_overrides
@@ -173,6 +177,14 @@ class TeamWorkOwner:
         ``assemble_team`` is deterministic for a fixed (team_id, roles) pair,
         so reconstruction from the persisted spec yields identical members
         and plan items -- a restart resumes instead of duplicating the team.
+
+        Product-path #491 activation: the persona workspace root is
+        resolved (explicit ingress/spec root, else ``<attached
+        workspace>/agents``) and the team's persona files are
+        materialized here, so dispatch re-reads the files from this pulse
+        on. Materialize is idempotent and never overwrites edits; a
+        filesystem failure degrades to the built-in prompt fragments
+        instead of breaking dispatch.
         """
         data = state.data if isinstance(getattr(state, "data", None), dict) else {}
         team_id = str(data.get(TEAM_ID_STATE_KEY) or "").strip()
@@ -182,34 +194,35 @@ class TeamWorkOwner:
             data[TEAM_ID_STATE_KEY] = team_id
         shared = team_shared_memory(self.memory, team_id)
         spec = shared.recall(TEAM_SPEC_KEY)
-        if spec is not None and isinstance(spec.value, dict):
-            project = str(spec.value.get("project_title") or "").strip()
-            roles = [str(key) for key in (spec.value.get("role_keys") or [])]
+        spec_value = (
+            spec.value
+            if spec is not None and isinstance(spec.value, dict)
+            else None
+        )
+        workspace_root = self._resolve_workspace_root(
+            event=event, request=request, spec_value=spec_value
+        )
+        if spec_value is not None:
+            project = str(spec_value.get("project_title") or "").strip()
+            roles = [str(key) for key in (spec_value.get("role_keys") or [])]
             if project and roles:
-                workspace_root = spec.value.get("workspace_root")
-                return self._with_overrides(
+                team = self._with_overrides(
                     assemble_team(
                         project,
                         roles,
                         team_id=team_id,
                         work_thread_id=thread_id,
-                        workspace_root=workspace_root
-                        if isinstance(workspace_root, str) and workspace_root.strip()
-                        else None,
+                        workspace_root=workspace_root,
                     ),
                     team_id,
                 )
+                self._materialize_workspaces(team)
+                return team
         # First pulse (or spec lost): assemble from the ingress request.
         project = str(request.get("project_title") or "").strip()
         roles = [str(key) for key in (request.get("role_keys") or [])]
         if not project or not roles:
             raise ValueError("team event lost its team_request")
-        workspace_root = request.get("workspace_root")
-        workspace_root = (
-            workspace_root
-            if isinstance(workspace_root, str) and workspace_root.strip()
-            else None
-        )
         shared.remember(
             TEAM_SPEC_KEY,
             {
@@ -218,7 +231,7 @@ class TeamWorkOwner:
                 "workspace_root": workspace_root,
             },
         )
-        return self._with_overrides(
+        team = self._with_overrides(
             assemble_team(
                 project,
                 roles,
@@ -228,6 +241,50 @@ class TeamWorkOwner:
             ),
             team_id,
         )
+        self._materialize_workspaces(team)
+        return team
+
+    @staticmethod
+    def _resolve_workspace_root(
+        *,
+        event: Any,
+        request: dict[str, Any],
+        spec_value: dict[str, Any] | None,
+    ) -> str | None:
+        """Persona workspace root for this team.
+
+        An explicit root (ingress request, then persisted spec) wins;
+        otherwise the product-path default is ``<attached
+        workspace>/agents``. None when no root is available -- dispatch
+        then falls back to the built-in prompt fragments.
+        """
+        for raw in (
+            request.get("workspace_root"),
+            (spec_value or {}).get("workspace_root"),
+        ):
+            if isinstance(raw, str) and raw.strip():
+                return raw.strip()
+        payload = getattr(event, "payload", None)
+        attached = ""
+        if isinstance(payload, dict):
+            attached = str(payload.get("workspace_path") or "").strip()
+        if attached:
+            return str(Path(attached) / "agents")
+        return None
+
+    @staticmethod
+    def _materialize_workspaces(team: ProjectTeam) -> None:
+        """Create the team's persona files (idempotent, never overwrites).
+
+        On any filesystem failure the team keeps running on its built-in
+        prompt fragments -- dispatch never breaks on a workspace problem.
+        """
+        if not team.workspace_root:
+            return
+        try:
+            materialize_team_workspaces(team.workspace_root, team)
+        except (OSError, ValueError):
+            team.workspace_root = None
 
     def _with_overrides(self, team: ProjectTeam, team_id: str) -> ProjectTeam:
         """Apply durable ``@`` assignee overrides (see team_timeline)."""

@@ -89,10 +89,19 @@ _ROLE_CONTEXT_VERBS = (
 
 @dataclass(frozen=True, slots=True)
 class TeamRequest:
-    """A parsed "assemble a team" request: project + ordered role keys."""
+    """A parsed "assemble a team" request: project + ordered role keys.
+
+    ``workspace_root`` is the specialists' file-workspace root
+    (``agents/<name>/`` per member, see ``specialist_workspace``). The
+    pure text parse cannot know it -- it stays None here. The daemon
+    threads the field through the ``team_request`` payload, and the
+    owner derives the product-path default (``<attached workspace>/agents``)
+    when no explicit root is given.
+    """
 
     project_title: str
     role_keys: tuple[str, ...]
+    workspace_root: str | None = None
 
 
 def _strip_assembly_phrase(task: str) -> str | None:

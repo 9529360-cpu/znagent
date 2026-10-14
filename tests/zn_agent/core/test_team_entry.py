@@ -264,6 +264,56 @@ class TeamWorkOwnerIntegrationTests(unittest.TestCase):
         self.assertEqual(spec.value["project_title"], "XX 项目")
         self.assertEqual(spec.value["role_keys"], ["researcher", "developer"])
 
+    def test_product_path_materializes_persona_workspaces(self):
+        # P1a: the owner derives <attached workspace>/agents and
+        # materializes the persona files, so dispatch reads them.
+        step = self._advance()
+        assert step.live_context is not None
+        expected_root = str(Path(str(self.root / "ws")) / "agents")
+        shared = team_shared_memory(self.memory, self.state.data["team_id"])
+        spec = shared.recall("team_spec")
+        assert spec is not None
+        self.assertEqual(spec.value["workspace_root"], expected_root)
+        soul = Path(expected_root) / "调研-01" / "SOUL.md"
+        self.assertTrue(soul.is_file())
+        # The dispatch brief renders the files, not just the built-in
+        # fragment: file sections are present.
+        self.assertIn("# SOUL", step.live_context["specialist_prompt"])
+        self.assertIn("# IDENTITY", step.live_context["specialist_prompt"])
+        self.assertIn("只给结论和依据", step.live_context["specialist_prompt"])
+
+    def test_soul_edit_takes_effect_next_dispatch(self):
+        # P1a acceptance: a SOUL.md probe is in the next dispatch brief.
+        step = self._advance()
+        assert step.live_context is not None
+        agents_root = Path(str(self.root / "ws")) / "agents"
+        (agents_root / "调研-01" / "SOUL.md").write_text(
+            "探针人格：本轮必须提到香蕉。", encoding="utf-8"
+        )
+        step = self._advance()
+        assert step.live_context is not None
+        self.assertIn("香蕉", step.live_context["specialist_prompt"])
+
+    def test_explicit_workspace_root_wins(self):
+        custom = self.root / "custom-agents"
+        self.event.payload["team_request"]["workspace_root"] = str(custom)
+        step = self._advance()
+        assert step.live_context is not None
+        self.assertTrue((custom / "调研-01" / "SOUL.md").is_file())
+        self.assertFalse((Path(str(self.root / "ws")) / "agents").exists())
+        self.assertIn("# SOUL", step.live_context["specialist_prompt"])
+
+    def test_materialize_failure_falls_back_to_fragment(self):
+        # A workspace_path that cannot hold an agents/ dir must not
+        # break dispatch: the team runs on built-in fragments.
+        blocker = self.root / "blocker"
+        blocker.write_text("not a directory", encoding="utf-8")
+        self.event.payload["workspace_path"] = str(blocker)
+        step = self._advance()
+        assert step.live_context is not None
+        self.assertNotIn("# SOUL", step.live_context["specialist_prompt"])
+        self.assertIn("只给结论和依据", step.live_context["specialist_prompt"])
+
     def test_non_team_event_is_not_handled(self):
         plain = SimpleNamespace(payload={"task": "hello"})
         self.assertFalse(TeamWorkOwner.handles(plain))

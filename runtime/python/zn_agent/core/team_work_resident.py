@@ -83,6 +83,11 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
     # with no new verified evidence and escalate at the threshold.
     _TEAM_NO_PROGRESS_KEY = "team_no_evidence_progress"
     _MAX_NO_EVIDENCE_PULSES = 8
+    # Rewrite-loop convergence: byte-identical content rewritten twice,
+    # or the same (objective, path) four times, means the specialist is
+    # circling without converging -- escalate instead of spinning.
+    _MAX_IDENTICAL_CONTENT_REWRITES = 2
+    _MAX_SAME_OBJECTIVE_STEPS = 4
 
     # -- disband: DisbandPlan executed for real (P3-8) ---------------------
 
@@ -316,6 +321,18 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 return self._checkpoint_terminal_failure(
                     event, state, reason=no_progress
                 )
+            # Rewrite-loop convergence: fresh verified evidence every
+            # pulse can still mean zero progress (same objective / same
+            # content rewritten). Escalate instead of letting the run
+            # circle until the pulse cap.
+            rewrite_loop = self._check_rewrite_loop(run_id=step.live_run_id)
+            if rewrite_loop is not None:
+                state.data["local_failure"] = rewrite_loop[:3000]
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return self._checkpoint_terminal_failure(
+                    event, state, reason=rewrite_loop
+                )
             state.next_action = (
                 f"专员 {step.live_specialist_name or 'specialist'} 执行下一步"
             )
@@ -399,6 +416,49 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             if detail:
                 reason += f"最近一次提案被拒原因：{detail[:600]}"
         return reason
+
+    def _check_rewrite_loop(self, *, run_id: str) -> str | None:
+        """Escalate when a run rewrites without converging.
+
+        The no-evidence counter cannot see this failure: every rewrite
+        produces fresh verified evidence, so the run looks busy while
+        making zero progress. Two rules over the run's verified evidence:
+        - identical rewrite: the same (objective, path, content hash)
+          twice means byte-identical content was written twice -- never
+          progress.
+        - same-objective loop: the same (objective, path) four times
+          with any content means the specialist is circling without
+          converging.
+        Returns an escalation reason, else None.
+        """
+        run = self.work_ledger.worker_run(run_id)
+        if run is None:
+            return None
+        identical: dict[tuple[str, str, str], int] = {}
+        same_objective: dict[tuple[str, str], int] = {}
+        for entry in verified_evidence(run):
+            objective = str(entry.get("objective") or "")
+            path = str(entry.get("relative_path") or "")
+            key = (objective, path)
+            same_objective[key] = same_objective.get(key, 0) + 1
+            content_hash = str(entry.get("content_hash") or "")
+            if content_hash:
+                identical_key = (objective, path, content_hash)
+                identical[identical_key] = identical.get(identical_key, 0) + 1
+                if identical[identical_key] >= self._MAX_IDENTICAL_CONTENT_REWRITES:
+                    return (
+                        f"团队专员重复提交相同内容（目标“{objective[:120]}”，"
+                        f"文件 {path or '（未记录）'}，"
+                        f"已 {identical[identical_key]} 次），"
+                        "未收敛，已停止等待用户拍板。"
+                    )
+            if same_objective[key] >= self._MAX_SAME_OBJECTIVE_STEPS:
+                return (
+                    f"团队专员同一目标重复执行 {same_objective[key]} 次（目标"
+                    f"“{objective[:120]}”，文件 {path or '（未记录）'}），"
+                    "未收敛，已停止等待用户拍板。"
+                )
+        return None
 
     # -- cognition: scope the question to the live specialist ----------------
 
@@ -724,6 +784,19 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         step_detail,
     ):
         self._accept_borrowed_increment(event, state, increment)
+        # Content hash for the rewrite-loop detector: the evidence entry
+        # records what was verified, so a byte-identical rewrite is
+        # visible to the next pulse's convergence check.
+        content_hash = None
+        raw_content = None
+        if intent.kind == "write_text":
+            raw_content = intent.args.get("content")
+        elif intent.kind == "command":
+            raw_content = intent.args.get("command")
+        if isinstance(raw_content, str) and raw_content:
+            content_hash = hashlib.sha256(
+                raw_content.encode("utf-8", errors="replace")
+            ).hexdigest()[:16]
         state.data[self._TEAM_STEP_KEY] = {
             "run_id": str(context.get("run_id") or ""),
             "work_item_id": str(context.get("work_item_id") or ""),
@@ -731,6 +804,7 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             "relative_path": str(step_detail.get("relative_path") or ""),
             "action_kind": str(step_detail.get("action_kind") or ""),
             "increment_id": increment.increment_id,
+            "content_hash": content_hash,
         }
         self._begin_native_action_cycle(event, state, intent)
         state.next_action = "execute one ZN-owned team specialist step through the Body"
@@ -788,18 +862,19 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         run = self.work_ledger.worker_run(run_id) if run_id else None
         if run is not None and run.state in {"queued", "running"}:
             evidence = verified_evidence(run)
-            evidence.append(
-                {
-                    "kind": "verified_body_step",
-                    "objective": str(team_step.get("objective") or "")[:600],
-                    "relative_path": str(team_step.get("relative_path") or "")[:600],
-                    "action_kind": str(team_step.get("action_kind") or ""),
-                    "result": str(getattr(result, "response", "") or "")[:4000],
-                    "verified": True,
-                    "recorded_at": utc_now(),
-                    "artifact_refs": [],
-                }
-            )
+            entry: dict[str, Any] = {
+                "kind": "verified_body_step",
+                "objective": str(team_step.get("objective") or "")[:600],
+                "relative_path": str(team_step.get("relative_path") or "")[:600],
+                "action_kind": str(team_step.get("action_kind") or ""),
+                "result": str(getattr(result, "response", "") or "")[:4000],
+                "verified": True,
+                "recorded_at": utc_now(),
+                "artifact_refs": [],
+            }
+            if team_step.get("content_hash"):
+                entry["content_hash"] = str(team_step["content_hash"])
+            evidence.append(entry)
             try:
                 self.work_ledger.update_worker_run_metrics(
                     run_id, metrics={EVIDENCE_KEY: evidence[-12:]}

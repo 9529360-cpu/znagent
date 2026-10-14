@@ -23,6 +23,7 @@ from zn_agent.core.completion_verdict import render_completion_report
 from zn_agent.core.models import ModelRoute
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
+from zn_agent.core.team_work_owner import EVIDENCE_KEY
 from zn_agent.core.work_restore_control import RestoreAwareWorkControl
 
 
@@ -254,7 +255,192 @@ class TeamFeedbackLoopTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
-    def test_nested_missing_parents_are_created(self):
+    def test_identical_rewrite_escalates(self):
+        """P1b: byte-identical content rewritten twice escalates.
+
+        Regression for the real-model smoke rewrite loop: every
+        rewrite produced fresh verified evidence, so the no-evidence
+        counter never fired while the run made zero progress.
+
+        Unit-level on purpose: driving two identical verified
+        evidence entries through the full loop is blocked by two
+        pre-existing interactions (recorded as follow-ups, not
+        fixed here): identical write_file rewrites are
+        short-circuited by the generic overwrite-recovery layer,
+        and the team run_python path ends in investigation
+        completion without evidence (verified on clean main).
+        The same-objective rule below IS proven through the loop.
+        """
+        cognition = _ScriptedSpecialist(script=["还在思考中。"] * 40)
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, ledger, event, workspace = self._start(
+                Path(tmp), cognition
+            )
+            try:
+                run_id = None
+                for _ in range(20):
+                    resident.live_once()
+                    child = self._child(ledger, event)
+                    if child is not None:
+                        runs = ledger.list_worker_runs(
+                            work_item_id=child.work_item_id
+                        )
+                        if runs:
+                            run_id = runs[0].worker_run_id
+                            break
+                self.assertIsNotNone(run_id, "no WorkerRun dispatched")
+                assert run_id is not None
+
+                def _evidence(entries):
+                    return [
+                        {
+                            "objective": objective,
+                            "relative_path": path,
+                            "content_hash": content_hash,
+                            "verified": True,
+                        }
+                        for objective, path, content_hash in entries
+                    ]
+
+                # Identical (objective, path, hash) twice -> escalate.
+                ledger.update_worker_run_metrics(
+                    run_id,
+                    metrics={
+                        EVIDENCE_KEY: _evidence(
+                            [
+                                ("写 app.py", "app.py", "abc123"),
+                                ("写 app.py", "app.py", "abc123"),
+                            ]
+                        )
+                    },
+                )
+                reason = resident._check_rewrite_loop(run_id=run_id)
+                assert reason is not None
+                self.assertIn("重复提交相同内容", reason)
+
+                # Same content, different paths -> not a rewrite.
+                ledger.update_worker_run_metrics(
+                    run_id,
+                    metrics={
+                        EVIDENCE_KEY: _evidence(
+                            [
+                                ("写文件", "a.py", "abc123"),
+                                ("写文件", "b.py", "abc123"),
+                            ]
+                        )
+                    },
+                )
+                self.assertIsNone(resident._check_rewrite_loop(run_id=run_id))
+
+                # Same (objective, path) 4x, different content -> escalate.
+                ledger.update_worker_run_metrics(
+                    run_id,
+                    metrics={
+                        EVIDENCE_KEY: _evidence(
+                            [
+                                ("写 app.py", "app.py", f"hash{i}")
+                                for i in range(4)
+                            ]
+                        )
+                    },
+                )
+                reason = resident._check_rewrite_loop(run_id=run_id)
+                assert reason is not None
+                self.assertIn("同一目标重复执行 4 次", reason)
+
+                # Same (objective, path) 3x, different content -> no fire.
+                ledger.update_worker_run_metrics(
+                    run_id,
+                    metrics={
+                        EVIDENCE_KEY: _evidence(
+                            [
+                                ("写 app.py", "app.py", f"hash{i}")
+                                for i in range(3)
+                            ]
+                        )
+                    },
+                )
+                self.assertIsNone(resident._check_rewrite_loop(run_id=run_id))
+            finally:
+                resident.store.close()
+
+    def test_same_objective_loop_escalates(self):
+        """P1b: same (objective, path) four times, any content, escalates."""
+        script = [
+            _proposal(
+                objective="开发员写一份可验证的工作产物",
+                path="app.py",
+                content=f"version {index}\n",
+            )
+            for index in range(4)
+        ]
+        cognition = _ScriptedSpecialist(script=script)
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, ledger, event, workspace = self._start(
+                Path(tmp), cognition
+            )
+            try:
+                terminal = None
+                for _ in range(60):
+                    terminal = resident.live_once()
+                    if terminal is not None:
+                        break
+                self.assertIsNotNone(
+                    terminal, "same-objective loop did not escalate"
+                )
+                assert terminal is not None
+                self.assertFalse(terminal.success)
+                self.assertIn("同一目标重复执行 4 次", str(terminal.reason or ""))
+                self.assertLessEqual(
+                    cognition.calls, 10, "escalation took too many calls"
+                )
+            finally:
+                resident.store.close()
+
+    def test_repeated_steps_then_claim_completes(self):
+        """P1b negative: 3 same-objective steps with different content
+        do NOT escalate; a structured claim then completes the item."""
+        script = [
+            _proposal(
+                objective="调研员写一份可验证的工作产物",
+                path="research/notes.md",
+                content=f"draft {index}\n",
+            )
+            for index in range(3)
+        ]
+        script.append(
+            render_completion_report(
+                conclusion="调研完成，调研结论已写好。",
+                evidence=[
+                    ("调研结论有明确选型建议", "research/notes.md"),
+                    ("风险清单覆盖主要未知项", "research/notes.md"),
+                ],
+                files=["research/notes.md"],
+                unfinished=[],
+            )
+        )
+        cognition = _ScriptedSpecialist(script=script)
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, ledger, event, workspace = self._start(
+                Path(tmp), cognition
+            )
+            try:
+                completed = False
+                terminal = None
+                for _ in range(120):
+                    terminal = resident.live_once()
+                    child = self._child(ledger, event)
+                    if child is not None and child.status == "completed":
+                        completed = True
+                        break
+                    if terminal is not None:
+                        break
+                self.assertTrue(completed, "item did not complete")
+                self.assertIsNone(
+                    terminal, "repeated steps wrongly escalated"
+                )
+            finally:
+                resident.store.close()
         """Fix 1 (product side): deeply nested missing parents are created."""
         valid = _proposal(
             objective="调研员写一份可验证的工作产物",
