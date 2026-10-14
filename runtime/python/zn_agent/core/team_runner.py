@@ -25,7 +25,6 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from .evidence_bound_work import WorkerRun
-from .failure_policy import FailurePolicy
 from .project_team import ProjectTeam, journal_message, team_journal_role_prefix
 from .steerable_work import WorkItem
 from .team_coordinator import TeamCoordinator
@@ -47,6 +46,7 @@ from .team_termination import (
     take_stop,
 )
 from .team_timeline import evidence_from_refs
+from .failure_policy import FailurePolicy
 
 
 @dataclass(slots=True)
@@ -78,10 +78,6 @@ class Escalation:
 class TeamStepResult:
     """What one runner step did."""
 
-    actions: list[str] = field(default_factory=list)
-    escalations: list[Escalation] = field(default_factory=list)
-    team_complete: bool = False
-    retrospective_summary: str | None = None
     # CP-4: a round-level hard stop (e.g. rate limit) ended this round
     # early; ``blocked_report`` carries tried paths + blocking reason +
     # what the user must do. ``needs_user`` means some item escalated as
@@ -89,6 +85,10 @@ class TeamStepResult:
     hard_stopped: bool = False
     needs_user: bool = False
     blocked_report: dict[str, Any] | None = None
+    actions: list[str] = field(default_factory=list)
+    escalations: list[Escalation] = field(default_factory=list)
+    team_complete: bool = False
+    retrospective_summary: str | None = None
     # Hard termination (CP-1): when True, this step dispatched, verified,
     # and completed nothing -- the team is stopped with ``stop_reason``.
     stopped: bool = False
@@ -111,6 +111,7 @@ class TeamRunner:
     def __init__(
         self,
         *,
+        failure_policy: FailurePolicy | None = None,
         team: ProjectTeam,
         ledger: Any,
         memory: Any,
@@ -118,7 +119,6 @@ class TeamRunner:
         root_work_item_id: str,
         tool_scope: tuple[str, ...] = ("terminal",),
         authority_scope: tuple[str, ...] | None = None,
-        failure_policy: FailurePolicy | None = None,
         termination_limits: TerminationLimits | None = None,
         now_fn: Any | None = None,
     ):
@@ -130,6 +130,12 @@ class TeamRunner:
         self._verifier = verifier
         self._root_id = str(root_work_item_id).strip()
         self._tool_scope = tuple(tool_scope)
+        # CP-4 failure policy. The owner rebuilds this runner every pulse,
+        # so rejections + attempt counts are restored from team shared
+        # memory (same durable store as the plan map) instead of living
+        # only in this instance.
+        self._failure_policy = failure_policy or FailurePolicy()
+        self._restore_failure_policy_state()
         thread_id = team.work_thread_id or ""
         self._authority_scope = (
             tuple(authority_scope)
@@ -139,58 +145,12 @@ class TeamRunner:
         self._coordinator = TeamCoordinator(
             team=team, root_work_item_id=self._root_id
         )
-        # CP-4 failure policy. The owner rebuilds this runner every pulse,
-        # so rejections + attempt counts are restored from team shared
-        # memory (same durable store as the plan map) instead of living
-        # only in this instance.
-        self._failure_policy = failure_policy or FailurePolicy()
-        self._restore_failure_policy_state()
         self._limits = termination_limits or TerminationLimits()
         self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
 
     @property
     def team(self) -> ProjectTeam:
         return self._team
-
-    @property
-    def failure_policy(self) -> FailurePolicy:
-        return self._failure_policy
-
-    # -- CP-4 durable failure-policy state ------------------------------
-
-    _FAILURE_POLICY_STATE_KEY = "failure_policy_state"
-
-    def _restore_failure_policy_state(self) -> None:
-        try:
-            shared = team_shared_memory(self._memory, self._team.team_id)
-            match = shared.recall(self._FAILURE_POLICY_STATE_KEY)
-            if match is not None:
-                self._failure_policy.restore_state(match.value)
-        except Exception:
-            # Failure-policy state is best-effort durability: a runner
-            # with a memory that cannot recall still enforces the policy
-            # in-memory for this round.
-            pass
-
-    def _persist_failure_policy_state(self) -> None:
-        try:
-            shared = team_shared_memory(self._memory, self._team.team_id)
-            shared.remember(
-                self._FAILURE_POLICY_STATE_KEY,
-                self._failure_policy.snapshot_state(),
-            )
-        except Exception:
-            pass
-
-    def record_approval_rejection(self, action_key: str, reason: str = "") -> None:
-        """Record an approval-layer rejection (CP-4: never bypass it).
-
-        The approval layer (or the user) calls this when an action is
-        rejected; later attempts to execute the same action -- through
-        any path -- are blocked by :meth:`_apply` before any side effect.
-        """
-        self._failure_policy.record_approval_rejection(action_key, reason)
-        self._persist_failure_policy_state()
 
     # -- hard termination (CP-1) -------------------------------------------
 
@@ -731,6 +691,46 @@ class TeamRunner:
         shared = team_shared_memory(self._memory, team_id)
         save_retrospective(shared, retro)
         return retro.summary()
+
+    # -- CP-4 durable failure-policy state ------------------------------
+
+    @property
+    def failure_policy(self) -> FailurePolicy:
+        return self._failure_policy
+
+    _FAILURE_POLICY_STATE_KEY = "failure_policy_state"
+
+    def _restore_failure_policy_state(self) -> None:
+        try:
+            shared = team_shared_memory(self._memory, self._team.team_id)
+            match = shared.recall(self._FAILURE_POLICY_STATE_KEY)
+            if match is not None:
+                self._failure_policy.restore_state(match.value)
+        except Exception:
+            # Failure-policy state is best-effort durability: a runner
+            # with a memory that cannot recall still enforces the policy
+            # in-memory for this round.
+            pass
+
+    def _persist_failure_policy_state(self) -> None:
+        try:
+            shared = team_shared_memory(self._memory, self._team.team_id)
+            shared.remember(
+                self._FAILURE_POLICY_STATE_KEY,
+                self._failure_policy.snapshot_state(),
+            )
+        except Exception:
+            pass
+
+    def record_approval_rejection(self, action_key: str, reason: str = "") -> None:
+        """Record an approval-layer rejection (CP-4: never bypass it).
+
+        The approval layer (or the user) calls this when an action is
+        rejected; later attempts to execute the same action -- through
+        any path -- are blocked by :meth:`_apply` before any side effect.
+        """
+        self._failure_policy.record_approval_rejection(action_key, reason)
+        self._persist_failure_policy_state()
 
 
 __all__ = [
