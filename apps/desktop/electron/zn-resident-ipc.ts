@@ -272,6 +272,24 @@ export function registerZnResidentIpc(): void {
     if (!key) throw new Error('suggestion key is required')
     return getZnResidentProcess().request('suggestions_dismiss', { key })
   })
+  handleZnDesktopIpc('zn:resident:team-timeline', async (_event, payload) => {
+    const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+    if (!threadId) throw new Error('threadId is required')
+    return getZnResidentProcess().request('team_timeline', {
+      thread_id: threadId
+    })
+  })
+  handleZnDesktopIpc('zn:resident:team-assign', async (_event, payload) => {
+    const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+    const specialist = String(payload?.specialist || '').trim()
+    if (!threadId) throw new Error('threadId is required')
+    if (!specialist) throw new Error('specialist is required')
+    return getZnResidentProcess().request('team_assign', {
+      thread_id: threadId,
+      specialist,
+      instruction: String(payload?.instruction || '')
+    })
+  })
   handleZnDesktopIpc('zn:resident:pulses', async (_event, limit) => history('pulses', limit))
   handleZnDesktopIpc('zn:resident:situations', async (_event, limit) => history('situations', limit))
   handleZnDesktopIpc('zn:resident:thoughts', async (_event, limit) => history('thoughts', limit))
@@ -346,6 +364,72 @@ export function registerZnResidentIpc(): void {
     await resident.stop()
     resident = null
     return { stopped: true }
+  })
+  handleZnDesktopIpc('zn:resident:routine-propose', async (_event, payload) => {
+    const text = String(payload?.text || '').trim()
+    if (!text) throw new Error('text is required')
+    return getZnResidentProcess().request('routine_propose', { text })
+  })
+  handleZnDesktopIpc('zn:resident:routine-confirm', async (_event, payload) => {
+    const draft = payload?.draft
+    if (!draft || typeof draft !== 'object') throw new Error('draft is required')
+    return getZnResidentProcess().request('routine_confirm', { draft })
+  })
+  handleZnDesktopIpc('zn:resident:routine-list', async (_event, payload) => {
+    return getZnResidentProcess().request('routine_list', {
+      limit: Number(payload?.limit || 100)
+    })
+  })
+  handleZnDesktopIpc('zn:resident:routine-get', async (_event, payload) => {
+    const routineId = String(payload?.routineId || payload?.routine_id || '').trim()
+    if (!routineId) throw new Error('routineId is required')
+    return getZnResidentProcess().request('routine_get', { routine_id: routineId })
+  })
+  handleZnDesktopIpc('zn:resident:routine-runs', async (_event, payload) => {
+    const routineId = String(payload?.routineId || payload?.routine_id || '').trim()
+    if (!routineId) throw new Error('routineId is required')
+    return getZnResidentProcess().request('routine_runs', {
+      routine_id: routineId,
+      limit: Number(payload?.limit || 20)
+    })
+  })
+  handleZnDesktopIpc('zn:resident:routine-pause', async (_event, payload) => {
+    const routineId = String(payload?.routineId || payload?.routine_id || '').trim()
+    if (!routineId) throw new Error('routineId is required')
+    return getZnResidentProcess().request('routine_pause', {
+      routine_id: routineId,
+      reason: String(payload?.reason || '')
+    })
+  })
+  handleZnDesktopIpc('zn:resident:routine-resume', async (_event, payload) => {
+    const routineId = String(payload?.routineId || payload?.routine_id || '').trim()
+    if (!routineId) throw new Error('routineId is required')
+    return getZnResidentProcess().request('routine_resume', { routine_id: routineId })
+  })
+  handleZnDesktopIpc('zn:resident:routine-edit', async (_event, payload) => {
+    const routineId = String(payload?.routineId || payload?.routine_id || '').trim()
+    const fields = payload?.fields
+    if (!routineId) throw new Error('routineId is required')
+    if (!fields || typeof fields !== 'object') throw new Error('fields is required')
+    return getZnResidentProcess().request('routine_edit', {
+      routine_id: routineId,
+      fields
+    })
+  })
+  handleZnDesktopIpc('zn:resident:routine-delete', async (_event, payload) => {
+    const routineId = String(payload?.routineId || payload?.routine_id || '').trim()
+    if (!routineId) throw new Error('routineId is required')
+    return getZnResidentProcess().request('routine_delete', { routine_id: routineId })
+  })
+  handleZnDesktopIpc('zn:resident:routine-test-run', async (_event, payload) => {
+    const routineId = String(payload?.routineId || payload?.routine_id || '').trim()
+    if (!routineId) throw new Error('routineId is required')
+    return getZnResidentProcess().request('routine_test_run', { routine_id: routineId })
+  })
+  handleZnDesktopIpc('zn:resident:routine-acknowledge', async (_event, payload) => {
+    const routineId = String(payload?.routineId || payload?.routine_id || '').trim()
+    if (!routineId) throw new Error('routineId is required')
+    return getZnResidentProcess().request('routine_acknowledge', { routine_id: routineId })
   })
 
   app.on('before-quit', () => {

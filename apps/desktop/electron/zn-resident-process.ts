@@ -31,6 +31,8 @@ export type ZnResidentRequest = {
     | 'work_restore_application'
     | 'suggestions_list'
     | 'suggestions_dismiss'
+    | 'team_timeline'
+    | 'team_assign'
     | 'pulses'
     | 'situations'
     | 'thoughts'
@@ -45,6 +47,17 @@ export type ZnResidentRequest = {
     | 'remember'
     | 'forget'
     | 'shutdown'
+    | 'routine_propose'
+    | 'routine_confirm'
+    | 'routine_list'
+    | 'routine_get'
+    | 'routine_runs'
+    | 'routine_pause'
+    | 'routine_resume'
+    | 'routine_edit'
+    | 'routine_delete'
+    | 'routine_test_run'
+    | 'routine_acknowledge'
   params?: Record<string, unknown>
 }
 
