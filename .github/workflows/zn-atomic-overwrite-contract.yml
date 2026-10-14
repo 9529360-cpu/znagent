@@ -43,6 +43,10 @@ on:
       - tests/zn_agent/core/test_windows_atomic_overwrite_namespace_repair.py
   workflow_dispatch:
 
+concurrency:
+  group: zn-atomic-overwrite-contract-${{ github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -70,7 +74,7 @@ jobs:
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: '0.11.6'
-          enable-cache: false
+          enable-cache: true
       - name: Prepare isolated runtime
         run: |
           uv python install 3.12

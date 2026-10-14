@@ -166,7 +166,7 @@ jobs:
         uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
         with:
           version: '0.11.6'
-          enable-cache: false
+          enable-cache: true
       - name: Prepare isolated runtime
         shell: powershell
         run: |
