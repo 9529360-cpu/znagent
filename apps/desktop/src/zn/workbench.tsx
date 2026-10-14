@@ -51,6 +51,7 @@ import {
 } from './i18n'
 import type { ZnLocalePreference } from '../../localization/zn-localization'
 import { ZnMissingRestoreControls } from './restore-controls'
+import { RoutinesPanel } from './routines-panel'
 import { ZnSlidesWorkstation } from './slides-workstation'
 import { ZnDocumentWorkstation } from './document-workstation'
 import {
@@ -254,6 +255,7 @@ export function ZnWorkbench() {
   const [pinnedExpanded, setPinnedExpanded] = useState(false)
   const [recentExpanded, setRecentExpanded] = useState(true)
   const [projectsExpanded, setProjectsExpanded] = useState(true)
+  const [routinesExpanded, setRoutinesExpanded] = useState(false)
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('language')
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
@@ -872,6 +874,10 @@ export function ZnWorkbench() {
               </div>
             ))}
           </div> : null}
+          <button className="zn-section-toggle zn-section-spaced" type="button" aria-expanded={routinesExpanded} onClick={() => setRoutinesExpanded(value => !value)}>
+            <CaretDown className={routinesExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.scheduled')}</span>
+          </button>
+          {routinesExpanded ? <RoutinesPanel /> : null}
 
 
         </nav>
