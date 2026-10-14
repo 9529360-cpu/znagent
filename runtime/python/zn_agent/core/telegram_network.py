@@ -21,7 +21,10 @@ from urllib.parse import urlsplit
 
 import httpx
 
+from .credential_isolation import CredentialRedactingFilter
+
 logger = logging.getLogger(__name__)
+logger.addFilter(CredentialRedactingFilter())
 
 TELEGRAM_API_HOST = "api.telegram.org"
 SEED_FALLBACK_IPS = ("149.154.166.110", "149.154.167.220")
