@@ -1494,6 +1494,31 @@ class NativeBody:
                 ).hexdigest(),
                 "truncated": bool(raw_data.get("truncated")),
             }
+        if action.kind in {"command", "terminal", "shell"}:
+            # Terminal commands can embed secrets (tokens in curl headers,
+            # passwords in CLI args). The audit history keeps a diagnostic
+            # digest, not the raw command text — same precedent as MCP args.
+            command = str(action.args.get("command") or "")
+            action_record["args"] = {
+                key: value
+                for key, value in action.args.items()
+                if key != "command"
+            }
+            action_record["args"]["command"] = {
+                "redacted": True,
+                "chars": len(command),
+                "sha256": hashlib.sha256(command.encode("utf-8")).hexdigest(),
+            }
+        if action.kind in {"terminal_input", "terminal_write", "command_input"}:
+            # Typed input may be a password or token.
+            for key in ("input", "data"):
+                if key in action.args:
+                    raw = str(action.args.get(key) or "")
+                    action_record["args"][key] = {
+                        "redacted": True,
+                        "chars": len(raw),
+                        "sha256": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+                    }
         with closing(self._connect()) as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO native_body_actions"
