@@ -1,0 +1,43 @@
+name: ZN Skill Plugin Nightly Updates
+
+# Nightly check of external skill-plugin pins (skills.lock.json): compare
+# each pinned git SHA against its repo's latest commit; open ONE PR per
+# update-available plugin. A single plugin's failure never blocks the
+# others (the script isolates every check and every bump).
+#
+# This workflow is NOT a required check: it only runs on schedule /
+# manual dispatch on main, never gates PRs. The registry starts empty
+# (no external plugins registered yet) -- nightly runs are no-ops until
+# plugins are registered in the lockfile.
+
+on:
+  schedule:
+    - cron: "0 3 * * *"  # nightly, 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  skill-plugin-updates:
+    name: Check external skill-plugin pins
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Check for plugin updates
+        run: |
+          python3 scripts/skill_plugin_updates.py check --lockfile skills.lock.json | tee /tmp/skill-plugin-check.json
+          echo "PLUGIN_UPDATES=$(python3 -c "import json; print(json.load(open('/tmp/skill-plugin-check.json'))['update_available'])")" >> "$GITHUB_ENV"
+
+      - name: Open one PR per update
+        if: ${{ env.PLUGIN_UPDATES != '0' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "zn-skill-plugin-bot"
+          git config user.email "zn-skill-plugin-bot@users.noreply.github.com"
+          python3 scripts/skill_plugin_updates.py bump --lockfile skills.lock.json
