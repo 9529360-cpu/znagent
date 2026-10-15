@@ -774,3 +774,30 @@ Rules:
   separate, explicit decision.
 - Observations never enter the ledger: like supersession, they are
   evidence records, not contradictable facts.
+
+## 19. Linked memory ids (M0-1)
+
+A new fact never overwrites an old memory: when a new version closes an
+old version's window (§18), the new ledger row carries
+`linked_memory_ids` — the ledger ids of the versions it superseded.
+Mechanism adapted from mem0 (Apache 2.0); implementation is ZN's own,
+on top of the GR-1/GR-2 ledger, not a second supersession mechanism.
+
+- Each `memory_history` row has an `id` (its version identity) and
+  `linked_memory_ids` (JSON list of ledger ids). First versions link
+  nothing. Tables created before M0-1 gain the column in place via
+  `_ensure_history_schema` (PRAGMA + ALTER TABLE); old rows read back
+  with empty links.
+- Links are recorded only on a close-window → open-window transition
+  (same-key contradiction, supersession merge). Same-value rewrites
+  open no new window, so they link nothing (dedup). Consolidation
+  closes loser windows of *different* keys, so the winner links
+  nothing. `forget()` opens no new window, so it links nothing — the
+  chain stays in the ledger.
+- `fact_history(key)` returns every version with `id` +
+  `linked_memory_ids`; walking newest → oldest via links follows the
+  full chain. `recall()` / `recall_as_of()` return the same fields on
+  `FactMatch`. Tests:
+  `tests/zn_agent/core/test_memory_linked_ids.py`.
+- Deliberately not in this change: SUPERSEDE events + retrieval
+  arbitration (a later decision built on these links).

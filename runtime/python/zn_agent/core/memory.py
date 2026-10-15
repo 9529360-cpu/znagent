@@ -134,6 +134,11 @@ class FactMatch:
     matched_by: str
     valid_at: str | None = None
     invalid_at: str | None = None
+    # M0-1: the ledger row id of this version, and the ledger row ids of
+    # the versions this version superseded. ``None`` / ``()`` for
+    # legacy rows with no ledger row (no version chain yet).
+    id: int | None = None
+    linked_memory_ids: tuple[int, ...] = ()
 
 
 # -- CM-1: structured observation records ---------------------------------
@@ -308,7 +313,22 @@ class Observation:
 # value). The window ledger is a sidecar table owned by this module,
 # created lazily via the store connection (the store itself is untouched,
 # so no migration of the facts schema is needed). Each ledger row is one
-# version of one key: its value/aliases snapshot plus its window.
+# version of one key: its value/aliases snapshot plus its window plus its
+# M0-1 link (see below).
+#
+# M0-1 (ADD + linked_memory_ids, mem0 mechanism, own implementation): a
+# new fact never overwrites an old memory. When a new version closes an
+# old version's window (GR-2), the new ledger row carries
+# ``linked_memory_ids`` -- the ledger ids of the versions it superseded
+# -- so the version chain stays auditable and no LLM rewrite can silently
+# destroy history. Links are recorded ONLY on a close-window -> open-
+# window transition (same-key contradiction, supersession merge). Same-
+# value rewrites open no new window, so they link nothing (dedup, not a
+# new version). Consolidation closes loser windows of *different* keys,
+# so it links nothing either -- the winner is not a new version of the
+# losers. forget() opens no new window, so it links nothing; the chain
+# stays in the ledger. SUPERSEDE events / retrieval arbitration are a
+# separate, later decision built on top of these links, not this change.
 #
 # Rows written by paths that bypass StructuredMemory.remember (legacy rows
 # predating this feature, direct put_fact callers, observation records)
@@ -333,8 +353,22 @@ _MEMORY_HISTORY_DDL = (
     "id INTEGER PRIMARY KEY AUTOINCREMENT, "
     "fact_key TEXT NOT NULL, value_json TEXT NOT NULL, "
     "aliases_json TEXT NOT NULL, valid_at TEXT NOT NULL, "
-    "invalid_at TEXT)"
+    "invalid_at TEXT, linked_memory_ids_json TEXT NOT NULL DEFAULT '[]')"
 )
+
+
+def _parse_linked_ids(raw: Any) -> tuple[int, ...]:
+    """Parse a stored linked_memory_ids_json value; corrupt rows link nothing."""
+    try:
+        parsed = json.loads(raw) if isinstance(raw, str) else raw
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(parsed, list):
+        return ()
+    return tuple(
+        item for item in parsed
+        if isinstance(item, int) and not isinstance(item, bool)
+    )
 
 
 def _same_value(left: Any, right: Any) -> bool:
@@ -374,24 +408,64 @@ class StructuredMemory:
     def _ensure_history_schema(self) -> None:
         with self.store._lock, self.store._conn:
             self.store._conn.execute(_MEMORY_HISTORY_DDL)
+            # M0-1 migration: tables created before linked_memory_ids
+            # existed gain the column in place; existing rows keep
+            # their (empty) default link list.
+            columns = {
+                str(row[1])
+                for row in self.store._conn.execute(
+                    "PRAGMA table_info(memory_history)"
+                ).fetchall()
+            }
+            if "linked_memory_ids_json" not in columns:
+                self.store._conn.execute(
+                    "ALTER TABLE memory_history ADD COLUMN "
+                    "linked_memory_ids_json TEXT NOT NULL DEFAULT '[]'"
+                )
 
     def _open_window(
         self, key: str, value: Any, aliases: tuple[str, ...], valid_at: str,
-    ) -> None:
-        """Record a new current version of ``key`` starting at ``valid_at``."""
+        *, linked_memory_ids: tuple[int, ...] = (),
+    ) -> int:
+        """Record a new current version of ``key`` starting at ``valid_at``.
+
+        ``linked_memory_ids`` are the ledger ids of the versions this
+        version supersedes (M0-1). Returns the new ledger row id.
+        """
         self._ensure_history_schema()
+        linked = tuple(int(item) for item in linked_memory_ids)
         with self.store._lock, self.store._conn:
-            self.store._conn.execute(
+            cursor = self.store._conn.execute(
                 "INSERT INTO memory_history"
-                "(fact_key, value_json, aliases_json, valid_at, invalid_at)"
-                " VALUES(?,?,?,?,NULL)",
+                "(fact_key, value_json, aliases_json, valid_at, invalid_at,"
+                " linked_memory_ids_json)"
+                " VALUES(?,?,?,?,NULL,?)",
                 (
                     key,
                     json.dumps(value, ensure_ascii=False),
                     json.dumps(list(aliases), ensure_ascii=False),
                     valid_at,
+                    json.dumps(list(linked), ensure_ascii=False),
                 ),
             )
+            return int(cursor.lastrowid)
+
+    def _open_window_row(self, key: str) -> dict[str, Any] | None:
+        """The open ledger row of ``key`` (id + window + links), if any."""
+        self._ensure_history_schema()
+        with self.store._lock:
+            row = self.store._conn.execute(
+                "SELECT id, valid_at, linked_memory_ids_json FROM memory_history"
+                " WHERE fact_key=? AND invalid_at IS NULL LIMIT 1",
+                (key,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "id": int(row["id"]),
+            "valid_at": str(row["valid_at"]),
+            "linked_memory_ids": _parse_linked_ids(row["linked_memory_ids_json"]),
+        }
 
     def _ensure_open_window(
         self, key: str, value: Any, aliases: tuple[str, ...], valid_at: str,
@@ -420,26 +494,36 @@ class StructuredMemory:
     def _close_open_window(
         self, key: str, invalid_at: str, *,
         fallback: dict[str, Any] | None = None,
-    ) -> None:
+    ) -> list[int]:
         """Close ``key``'s open window at ``invalid_at``.
 
-        When no open window exists (legacy / bypass-written row) and a
-        ``fallback`` facts-row is given, insert a closed snapshot for the
-        pre-existing version instead of losing it: its valid_at is the
-        facts row's created_at, floored at the last recorded invalid_at
-        for the key so windows for one key never overlap.
+        Returns the ledger ids of the versions closed (M0-1: the ids
+        the replacing version must link). When no open window exists
+        (legacy / bypass-written row) and a ``fallback`` facts-row is
+        given, insert a closed snapshot for the pre-existing version
+        instead of losing it: its valid_at is the facts row's
+        created_at, floored at the last recorded invalid_at for the key
+        so windows for one key never overlap. The snapshot's id is
+        returned, so the replacing version links the preserved old
+        version even for legacy rows.
         """
         self._ensure_history_schema()
         with self.store._lock, self.store._conn:
-            cursor = self.store._conn.execute(
-                "UPDATE memory_history SET invalid_at=? "
-                "WHERE fact_key=? AND invalid_at IS NULL",
-                (invalid_at, key),
-            )
-            if cursor.rowcount:
-                return
+            open_rows = self.store._conn.execute(
+                "SELECT id FROM memory_history"
+                " WHERE fact_key=? AND invalid_at IS NULL",
+                (key,),
+            ).fetchall()
+            closed_ids = [int(row["id"]) for row in open_rows]
+            if closed_ids:
+                self.store._conn.execute(
+                    "UPDATE memory_history SET invalid_at=? "
+                    "WHERE fact_key=? AND invalid_at IS NULL",
+                    (invalid_at, key),
+                )
+                return closed_ids
             if fallback is None:
-                return
+                return []
             last_closed = self.store._conn.execute(
                 "SELECT MAX(invalid_at) AS last_end FROM memory_history"
                 " WHERE fact_key=?",
@@ -450,7 +534,7 @@ class StructuredMemory:
                 valid_at = max(valid_at, str(last_closed["last_end"]))
             if valid_at > invalid_at:
                 valid_at = invalid_at
-            self.store._conn.execute(
+            cursor = self.store._conn.execute(
                 "INSERT INTO memory_history"
                 "(fact_key, value_json, aliases_json, valid_at, invalid_at)"
                 " VALUES(?,?,?,?,?)",
@@ -462,6 +546,7 @@ class StructuredMemory:
                     invalid_at,
                 ),
             )
+            return [int(cursor.lastrowid)]
 
     def _validity_index(self) -> tuple[dict[str, str], set[str]]:
         """(open key -> its valid_at, keys with any ledger row).
@@ -516,9 +601,13 @@ class StructuredMemory:
                 # Near-identical values merge, but the old version is not
                 # byte-equal: preserve it as a closed window before the
                 # merge overwrites it (GR-2: invalidation never deletes).
-                self._close_open_window(target, now, fallback=existing)
+                # M0-1: the new version links the closed version's id.
+                closed_ids = self._close_open_window(target, now, fallback=existing)
                 self.store.put_fact(target, value, aliases=tuple(merged_aliases))
-                self._open_window(target, value, tuple(merged_aliases), now)
+                self._open_window(
+                    target, value, tuple(merged_aliases), now,
+                    linked_memory_ids=tuple(closed_ids),
+                )
             else:
                 self.store.put_fact(target, value, aliases=tuple(merged_aliases))
                 if existing is not None:
@@ -535,10 +624,14 @@ class StructuredMemory:
         if existing is not None and not _same_value(existing["value"], value):
             # Contradiction (GR-2): same key, different value. Close the
             # old version's window at the new fact's valid_at; the old
-            # version stays in the ledger for as-of reads.
-            self._close_open_window(new_key, now, fallback=existing)
+            # version stays in the ledger for as-of reads. M0-1: the new
+            # version links the closed version's id.
+            closed_ids = self._close_open_window(new_key, now, fallback=existing)
             self.store.put_fact(new_key, value, aliases=aliases)
-            self._open_window(new_key, value, aliases, now)
+            self._open_window(
+                new_key, value, aliases, now,
+                linked_memory_ids=tuple(closed_ids),
+            )
         elif existing is not None:
             self.store.put_fact(new_key, value, aliases=aliases)
             self._ensure_open_window(
@@ -564,7 +657,8 @@ class StructuredMemory:
         candidates: list[tuple[str, str, dict[str, Any]]] = []
         with self.store._lock:
             rows = self.store._conn.execute(
-                "SELECT fact_key, value_json, aliases_json, valid_at, invalid_at"
+                "SELECT id, fact_key, value_json, aliases_json, valid_at,"
+                " invalid_at, linked_memory_ids_json"
                 " FROM memory_history"
                 " WHERE valid_at<=? AND (invalid_at IS NULL OR invalid_at>?)",
                 (moment, moment),
@@ -586,6 +680,10 @@ class StructuredMemory:
                     "aliases": aliases,
                     "valid_at": str(row["valid_at"]),
                     "invalid_at": row["invalid_at"],
+                    "id": int(row["id"]),
+                    "linked_memory_ids": _parse_linked_ids(
+                        row["linked_memory_ids_json"]
+                    ),
                 },
             ))
         if not candidates:
@@ -600,12 +698,16 @@ class StructuredMemory:
                 return FactMatch(
                     record["key"], record["value"], "key",
                     valid_at=record["valid_at"], invalid_at=record["invalid_at"],
+                    id=record["id"],
+                    linked_memory_ids=record["linked_memory_ids"],
                 )
             for alias in record["aliases"]:
                 if isinstance(alias, str) and normalized == self._normalize(alias):
                     return FactMatch(
                         record["key"], record["value"], alias,
                         valid_at=record["valid_at"], invalid_at=record["invalid_at"],
+                        id=record["id"],
+                        linked_memory_ids=record["linked_memory_ids"],
                     )
         return self._recall_legacy_as_of(normalized, moment)
 
@@ -633,6 +735,11 @@ class StructuredMemory:
     def fact_history(self, key: str) -> list[dict[str, Any]]:
         """All versions of ``key``, oldest first, with their windows.
 
+        Each version carries its ledger ``id`` and ``linked_memory_ids``
+        (M0-1): the new version links the ids of the versions it
+        superseded, so walking the list from newest to oldest follows
+        the full chain. First versions link nothing (``()``).
+
         Returns [] for unknown keys and for legacy rows that have never
         been touched by remember()/forget()/consolidate() (those have no
         ledger rows yet; their current version is the live facts row).
@@ -640,7 +747,8 @@ class StructuredMemory:
         self._ensure_history_schema()
         with self.store._lock:
             rows = self.store._conn.execute(
-                "SELECT value_json, aliases_json, valid_at, invalid_at"
+                "SELECT id, value_json, aliases_json, valid_at, invalid_at,"
+                " linked_memory_ids_json"
                 " FROM memory_history WHERE fact_key=? ORDER BY valid_at, id",
                 (str(key or "").strip(),),
             ).fetchall()
@@ -657,6 +765,10 @@ class StructuredMemory:
                 "aliases": tuple(aliases) if isinstance(aliases, list) else (),
                 "valid_at": str(row["valid_at"]),
                 "invalid_at": row["invalid_at"],
+                "id": int(row["id"]),
+                "linked_memory_ids": _parse_linked_ids(
+                    row["linked_memory_ids_json"]
+                ),
             })
         return history
 
@@ -833,6 +945,9 @@ class StructuredMemory:
                 str(winner.get("created_at") or now),
             )
             for loser in losers:
+                # M0-1: the closed loser ids are intentionally NOT
+                # linked from the winner -- losers are different keys,
+                # not versions the winner superseded.
                 self._close_open_window(loser, now, fallback=by_key[loser])
                 self.store.delete_fact(loser)
                 removed.add(loser)
@@ -917,7 +1032,9 @@ class StructuredMemory:
     def recall(self, query: str) -> FactMatch | None:
         """Current-valid exact match only (GR-1): superseded versions
         (ledger rows, no open window) never surface here. Use
-        recall_as_of() for historical values."""
+        recall_as_of() for historical values. The match carries the
+        current version's ledger ``id`` and ``linked_memory_ids`` (M0-1);
+        legacy rows with no ledger row report ``None`` / ``()``."""
         normalized = self._normalize(query)
         if not normalized:
             return None
@@ -931,16 +1048,22 @@ class StructuredMemory:
                 record["key"], str(record.get("created_at") or None)
             )
             if normalized == key_norm:
+                window = self._open_window_row(record["key"])
                 return FactMatch(
                     record["key"], record["value"], "key", valid_at=valid_at,
+                    id=window["id"] if window else None,
+                    linked_memory_ids=window["linked_memory_ids"] if window else (),
                 )
             for alias in record["aliases"]:
                 alias_norm = self._normalize(alias)
                 if not alias_norm:
                     continue
                 if normalized == alias_norm:
+                    window = self._open_window_row(record["key"])
                     return FactMatch(
                         record["key"], record["value"], alias, valid_at=valid_at,
+                        id=window["id"] if window else None,
+                        linked_memory_ids=window["linked_memory_ids"] if window else (),
                     )
         return None
 
