@@ -16,9 +16,11 @@ from typing import Any
 
 from .body import BodyAction, BodyActionResult
 from .models import utc_now
+from .sandbox import SandboxDeniedError, SandboxGate, SandboxPolicy
 
 
 _AUTHORITY_ARG = "__zn_authority_context"
+_ESCALATION_TOKEN_ARG = "__zn_escalation_token"
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,6 +182,9 @@ class WorkerActionAuthorityEnforcer:
         context: ActionAuthorityContext,
         *,
         permission_policy=None,
+        sandbox_gate: SandboxGate | None = None,
+        sandbox_policy: SandboxPolicy | None = None,
+        escalation_token: str | None = None,
     ) -> None:
         if not context.worker_run_id or not context.work_item_id or not context.work_thread_id:
             raise WorkerActionAuthorityError("worker action authority identity is incomplete")
@@ -187,6 +192,21 @@ class WorkerActionAuthorityEnforcer:
             raise WorkerActionAuthorityError("worker action authority plan_version is invalid")
 
         normalized = str(kind or "").strip().lower()
+
+        # DSH-6: sandbox tier check -- what the call can touch. The W-1
+        # permission policy (checked per kind below) decides whether the
+        # action is allowed; the sandbox decides what it can touch. A gate
+        # carries escalation state; a bare policy gets an ephemeral gate
+        # (plain enforcement, no escalation flow).
+        gate = sandbox_gate
+        if gate is None and sandbox_policy is not None:
+            gate = SandboxGate(sandbox_policy)
+        if gate is not None:
+            try:
+                gate.require(kind, args, escalation_token)
+            except SandboxDeniedError as exc:
+                raise WorkerActionAuthorityError(str(exc)) from exc
+
         tools = set(context.tool_scope)
         authorities = set(context.authority_scope)
 
@@ -278,14 +298,26 @@ class WorkerActionAuthorityEnforcer:
 class AuthorityEnforcedBody:
     """Admission gate that delegates to the original bound ``body.act`` method."""
 
-    def __init__(self, body, *, resident=None, permission_policy=None) -> None:
+    def __init__(
+        self,
+        body,
+        *,
+        resident=None,
+        permission_policy=None,
+        sandbox_gate: SandboxGate | None = None,
+        sandbox_policy: SandboxPolicy | None = None,
+    ) -> None:
         self._body = body
         self._original_act = body.act
         self._resident = resident
         self._permission_policy = permission_policy
+        self._sandbox_gate = sandbox_gate
+        if self._sandbox_gate is None and sandbox_policy is not None:
+            self._sandbox_gate = SandboxGate(sandbox_policy)
 
     def act(self, kind: str, *, event_id: str | None = None, **args: Any) -> BodyActionResult:
         raw_context = args.pop(_AUTHORITY_ARG, None)
+        escalation_token = args.pop(_ESCALATION_TOKEN_ARG, None)
         if raw_context is not None:
             try:
                 if not isinstance(raw_context, dict):
@@ -293,7 +325,12 @@ class AuthorityEnforcedBody:
                 context = ActionAuthorityContext.from_dict(raw_context)
                 self._revalidate_durable_authority(context)
                 WorkerActionAuthorityEnforcer.authorize(
-                    kind, args, context, permission_policy=self._permission_policy
+                    kind,
+                    args,
+                    context,
+                    permission_policy=self._permission_policy,
+                    sandbox_gate=self._sandbox_gate,
+                    escalation_token=escalation_token,
                 )
             except (WorkerActionAuthorityError, TypeError, ValueError) as exc:
                 return self._record_denial(kind, event_id=event_id, args=args, error=exc)
@@ -356,13 +393,21 @@ class AuthorityEnforcedBody:
             )
 
 
-def install_worker_authority_gate(body, *, resident, permission_policy=None) -> AuthorityEnforcedBody:
+def install_worker_authority_gate(
+    body, *, resident, permission_policy=None, sandbox_gate=None, sandbox_policy=None
+) -> AuthorityEnforcedBody:
     """Install once without replacing the existing Body object or its class."""
 
     existing = getattr(body, "_zn_worker_authority_gate", None)
     if isinstance(existing, AuthorityEnforcedBody):
         return existing
-    gate = AuthorityEnforcedBody(body, resident=resident, permission_policy=permission_policy)
+    gate = AuthorityEnforcedBody(
+        body,
+        resident=resident,
+        permission_policy=permission_policy,
+        sandbox_gate=sandbox_gate,
+        sandbox_policy=sandbox_policy,
+    )
     body.act = gate.act
     body._zn_worker_authority_gate = gate
     return gate
