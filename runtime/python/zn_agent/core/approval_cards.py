@@ -44,6 +44,21 @@ auditable. This module owns the ledger; the workbench talks to it through
 the resident RPC, and ``ActionExecutionRuntime`` consults ``ApprovalGate``
 before dispatching actions whose descriptor opts in with an
 ``approval:<kind>`` tag.
+
+Editable commands (W-1): when the user approves a command request they
+may edit the command on the card. The edited command is stored on the
+request as ``approved_command`` and the execution path runs the edited
+version, never the original. The edited command is re-checked against
+the permission policy denylist at decision time (when a policy is
+supplied) and again when the gate consumes the approval (defense in
+depth): a denylisted edit never executes, the approval is spent, and the
+block is audited as ``edited_command_denied``.
+
+Permission policy (W-1): an optional structured ``PermissionPolicy`` may
+be attached to the gate. It is consulted after the sticky-deny check and
+before the rule evaluation: denylist blocks, session auto-approve /
+always_allow lets the action through without a card, ask / agent_decides
+falls through to the existing rules.
 """
 
 import sqlite3
@@ -55,6 +70,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import utc_now
+from .permission_model import PermissionPolicy, PermissionVerdict
 
 
 APPROVAL_KINDS = ("send", "publish", "purchase", "delete", "production_change")
@@ -159,6 +175,10 @@ class ApprovalRequest:
     decided_at: str | None = None
     decision: str | None = None
     event_id: str | None = None
+    # Command approved by the user after editing it on the card. Empty
+    # means "run the original command"; the execution path runs this
+    # version when set.
+    approved_command: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -178,6 +198,7 @@ class ApprovalRequest:
             decided_at=str(raw.get("decided_at") or "") or None,
             decision=str(raw.get("decision") or "") or None,
             event_id=str(raw.get("event_id") or "") or None,
+            approved_command=str(raw.get("approved_command") or ""),
         )
 
 
@@ -225,6 +246,20 @@ class ApprovalGateOutcome:
     allowed: bool
     request_id: str | None = None
     reason: str = ""
+    # Command the execution path must run when set: the user-edited
+    # version approved on the card. None means "run the original".
+    approved_command: str | None = None
+
+
+# Approval kind -> permission-policy action type. "delete" maps to the
+# policy's file_delete type; the rest share names.
+_POLICY_ACTION_TYPE_BY_KIND = {
+    "send": "send",
+    "publish": "publish",
+    "purchase": "purchase",
+    "delete": "file_delete",
+    "production_change": "production_change",
+}
 
 
 _REQUESTS_TABLE = "approval_requests"
@@ -261,7 +296,8 @@ class ApprovalCardStore:
                     expires_at TEXT NOT NULL,
                     decided_at TEXT,
                     decision TEXT,
-                    event_id TEXT
+                    event_id TEXT,
+                    approved_command TEXT NOT NULL DEFAULT ''
                 );
                 CREATE INDEX IF NOT EXISTS idx_approval_requests_status
                     ON {_REQUESTS_TABLE}(status, created_at DESC);
@@ -293,6 +329,19 @@ class ApprovalCardStore:
                 """
             )
             conn.commit()
+            # Migration: databases created before W-1 lack approved_command.
+            columns = {
+                row[1]
+                for row in conn.execute(
+                    f"PRAGMA table_info({_REQUESTS_TABLE})"
+                ).fetchall()
+            }
+            if "approved_command" not in columns:
+                conn.execute(
+                    f"ALTER TABLE {_REQUESTS_TABLE} "
+                    "ADD COLUMN approved_command TEXT NOT NULL DEFAULT ''"
+                )
+                conn.commit()
 
     # -- requests -----------------------------------------------------------
 
@@ -349,8 +398,9 @@ class ApprovalCardStore:
             conn.execute(
                 f"INSERT INTO {_REQUESTS_TABLE} "
                 "(request_id, action_kind, target, scope, value_text, source, "
-                "status, created_at, expires_at, decided_at, decision, event_id) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "status, created_at, expires_at, decided_at, decision, event_id, "
+                "approved_command) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     request.request_id,
                     request.action_kind,
@@ -364,6 +414,7 @@ class ApprovalCardStore:
                     request.decided_at,
                     request.decision,
                     request.event_id,
+                    request.approved_command,
                 ),
             )
             conn.commit()
@@ -445,10 +496,32 @@ class ApprovalCardStore:
         decision: str,
         *,
         now: datetime | None = None,
+        edited_command: str | None = None,
+        permission_policy: PermissionPolicy | None = None,
     ) -> ApprovalRequest:
+        """Decide a pending request.
+
+        ``edited_command`` (W-1) is the user-edited command approved on
+        the card. It is only valid with an approval decision; the edited
+        command is stored as ``approved_command`` and the execution path
+        runs it instead of the original. When a permission policy is
+        supplied, a denylisted edit is rejected here; the gate re-checks
+        it again when consuming the approval.
+        """
         normalized = str(decision or "").strip().lower()
         if normalized not in DECISIONS:
             raise ValueError(f"unsupported approval decision: {normalized or '<empty>'}")
+        normalized_edit: str | None = None
+        if edited_command is not None:
+            if normalized == "deny":
+                raise ValueError("a denied command cannot be edited; the edit is discarded")
+            normalized_edit = " ".join(str(edited_command or "").split())
+            if not normalized_edit:
+                raise ValueError("edited command must not be empty")
+            if permission_policy is not None and permission_policy.denies(
+                "terminal_command", normalized_edit
+            ):
+                raise ValueError("edited command is denied by the permission policy")
         current = now or datetime.now(timezone.utc)
         request = self.get_request(request_id)
         if request is None:
@@ -486,8 +559,15 @@ class ApprovalCardStore:
         with closing(self._connect()) as conn:
             conn.execute(
                 f"UPDATE {_REQUESTS_TABLE} SET status = ?, decided_at = ?, "
-                "decision = ? WHERE request_id = ? AND status = 'pending'",
-                (new_status, current.isoformat(), normalized, request.request_id),
+                "decision = ?, approved_command = ? "
+                "WHERE request_id = ? AND status = 'pending'",
+                (
+                    new_status,
+                    current.isoformat(),
+                    normalized,
+                    normalized_edit or "",
+                    request.request_id,
+                ),
             )
             if conn.execute(
                 f"SELECT status FROM {_REQUESTS_TABLE} WHERE request_id = ?",
@@ -506,6 +586,7 @@ class ApprovalCardStore:
             request.action_kind,
             request.scope,
             rule_id=rule_id,
+            note="command edited on approval" if normalized_edit else "",
         )
         updated = self.get_request(request.request_id)
         assert updated is not None
@@ -718,8 +799,14 @@ class ApprovalCardStore:
 class ApprovalGate:
     """Fail-closed gate consulted before a sensitive action executes."""
 
-    def __init__(self, store: ApprovalCardStore) -> None:
+    def __init__(
+        self,
+        store: ApprovalCardStore,
+        *,
+        permission_policy: PermissionPolicy | None = None,
+    ) -> None:
         self._store = store
+        self._policy = permission_policy
 
     def check(
         self,
@@ -730,6 +817,9 @@ class ApprovalGate:
         value_text: str = "",
         source: str = "resident",
         event_id: str | None = None,
+        command: str | None = None,
+        session_id: str | None = None,
+        action_type: str | None = None,
     ) -> ApprovalGateOutcome:
         kind = validate_approval_kind(action_kind)
         normalized_scope = validate_approval_scope(scope)
@@ -752,14 +842,64 @@ class ApprovalGate:
                     "reconsider explicitly to re-ask"
                 ),
             )
+        # Structured permission policy (W-1): consulted after the sticky
+        # deny and before the rule evaluation. Denylist blocks outright;
+        # a policy ALLOW (session grant / always_allow) skips the card;
+        # ASK / AGENT_DECIDES falls through to the existing rules.
+        if self._policy is not None:
+            resolved_type = (
+                action_type
+                or _POLICY_ACTION_TYPE_BY_KIND.get(kind)
+                or ("terminal_command" if command else None)
+            )
+            if resolved_type is not None:
+                verdict = self._policy.evaluate(
+                    resolved_type, command or "", session_id=session_id
+                )
+                if verdict is PermissionVerdict.DENY:
+                    return ApprovalGateOutcome(
+                        False,
+                        reason="permission policy denied the action (denylist)",
+                    )
+                if verdict is PermissionVerdict.ALLOW:
+                    return ApprovalGateOutcome(
+                        True,
+                        reason="permission policy allowed the action",
+                    )
         if self._store.evaluate(action_kind=kind, scope=normalized_scope) == "auto_allow":
             return ApprovalGateOutcome(True, reason="auto_allow rule matched")
         if latest is not None and latest.status == "approved_once":
+            approved_command = latest.approved_command.strip() or None
+            if (
+                approved_command is not None
+                and self._policy is not None
+                and self._policy.denies("terminal_command", approved_command)
+            ):
+                # Defense in depth: an edit that slipped past decide()
+                # without a policy check never executes. The approval is
+                # spent and the block is audited.
+                self._store.consume(latest.request_id)
+                self._store._audit(
+                    latest.request_id,
+                    "edited_command_denied",
+                    kind,
+                    normalized_scope,
+                    note=(
+                        "approved edited command denied by permission policy; "
+                        "approval spent, action never executes"
+                    ),
+                )
+                return ApprovalGateOutcome(
+                    False,
+                    request_id=latest.request_id,
+                    reason="edited command denied by permission policy",
+                )
             if self._store.consume(latest.request_id):
                 return ApprovalGateOutcome(
                     True,
                     request_id=latest.request_id,
                     reason="approved_once consumed",
+                    approved_command=approved_command,
                 )
         if latest is not None and latest.status == "pending":
             return ApprovalGateOutcome(
