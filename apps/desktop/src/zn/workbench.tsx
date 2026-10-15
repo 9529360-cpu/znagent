@@ -1119,7 +1119,7 @@ export function ZnWorkbench() {
                 value={draft}
                 onChange={event => setDraft(event.target.value)}
                 onKeyDown={event => {
-                  const key = { ...event, isComposing: event.nativeEvent.isComposing }
+                  const key = event.nativeEvent
                   if (znPlainEnterToSend(key) || znWorkbenchShortcut(key) === 'send') {
                     event.preventDefault()
                     event.currentTarget.form?.requestSubmit()
