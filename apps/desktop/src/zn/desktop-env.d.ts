@@ -65,6 +65,7 @@ type ZnDesktopResidentBridge = {
   approvalDecide: (payload: ZnDesktopPayload) => Promise<unknown>
   approvalRuleCreate: (payload: ZnDesktopPayload) => Promise<unknown>
   approvalRuleDelete: (payload: ZnDesktopPayload) => Promise<unknown>
+  approvalUndo: (payload: ZnDesktopPayload) => Promise<unknown>
   teamTimeline: (payload: ZnDesktopPayload) => Promise<unknown>
   teamAssign: (payload: ZnDesktopPayload) => Promise<unknown>
   pulses: (limit?: number) => Promise<unknown>

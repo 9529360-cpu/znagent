@@ -295,7 +295,11 @@ class ActionExecutionRuntime:
         self._observers: dict[str, ObservationReader] = {}
         self._verifiers: dict[str, ObservationVerifier] = {}
         self._approval_scopes: dict[
-            str, Callable[[Mapping[str, Any]], tuple[str, str, str]]
+            str,
+            Callable[
+                [Mapping[str, Any]],
+                tuple[str, str, str] | tuple[str, str, str, dict[str, Any]],
+            ],
         ] = {}
         self._argument_binders: dict[
             str, Callable[[Mapping[str, Any]], Mapping[str, Any]]
@@ -328,14 +332,20 @@ class ActionExecutionRuntime:
     def register_approval_scope(
         self,
         action_id: str,
-        resolver: Callable[[Mapping[str, Any]], tuple[str, str, str]],
+        resolver: Callable[
+            [Mapping[str, Any]],
+            tuple[str, str, str] | tuple[str, str, str, dict[str, Any]],
+        ],
     ) -> None:
         """Bind one approval scope/target resolver for an approval-gated action.
 
         The resolver derives (scope, target, value_text) from the action
         arguments -- canonically, never from model-supplied ``approval_*``
         args -- so an ``always_allow`` rule can only bless the exact target
-        the action will touch.
+        the action will touch. It may additionally return a fourth element,
+        a CUR-4 review dict (diff_text / previous_content /
+        previous_captured / review_note), which is presentation only and
+        never changes the gate's decision.
         """
         normalized = str(action_id or "").strip()
         if self.fabric.descriptor(normalized) is None:
@@ -380,9 +390,19 @@ class ActionExecutionRuntime:
         resolver = self._approval_scopes.get(request.action_id)
         if resolver is not None:
             try:
-                scope, target, value_text = resolver(args)
+                resolved = resolver(args)
             except ValueError as exc:
                 return f"approval gate rejected the action: {exc}", None
+            # CUR-4: resolvers may attach a review dict (diff + undo
+            # snapshot) as an optional fourth element. Presentation only;
+            # the gate decision below is unchanged.
+            if len(resolved) == 4:
+                scope, target, value_text, review = resolved
+            elif len(resolved) == 3:
+                scope, target, value_text = resolved
+                review = None
+            else:
+                return "approval gate rejected the action: scope resolver returned an unexpected shape", None
             scope = str(scope or "").strip()
             target = str(target or "").strip()
             value_text = str(value_text or "")
@@ -392,6 +412,7 @@ class ActionExecutionRuntime:
             target = str(args.get("approval_target") or request.action_id)
             value_text = str(args.get("approval_value_text") or "")
             source = str(args.get("approval_source") or "resident")
+            review = None
         command = args.get("command")
         session_id = args.get("approval_session_id")
         try:
@@ -404,6 +425,7 @@ class ActionExecutionRuntime:
                 event_id=request.event_id,
                 command=command if isinstance(command, str) else None,
                 session_id=session_id if isinstance(session_id, str) else None,
+                review=review if isinstance(review, dict) else None,
             )
         except ValueError as exc:
             return f"approval gate rejected the action: {exc}", None

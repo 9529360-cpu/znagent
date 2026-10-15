@@ -30,6 +30,7 @@ from .action_fabric import (
     ActionDescriptor,
     ActionFabricRegistry,
 )
+from .approval_review import capture_file_review
 from .workspace_file_discipline import (
     list_trash,
     resolve_agent_workspace_path,
@@ -295,32 +296,58 @@ def _workspace_scope(root: Path):
     Bound to one concrete file (``workspace:<rel-path>``), so an
     ``always_allow`` rule can only bless that one file. Model-supplied
     ``approval_scope`` / ``approval_target`` args are ignored here.
+
+    Returns a 4-tuple (scope, target, value_text, review) where review is
+    the CUR-4 diff/snapshot payload for a delete: diff of old content ->
+    nothing plus the undo snapshot. The old file is read here, at request
+    time; a missing or unreadable file degrades to an empty review (the
+    Body handler still fails closed on the missing file).
     """
 
     resolved_root = Path(root).expanduser().resolve(strict=False)
 
-    def resolver(args: Mapping[str, Any]) -> tuple[str, str, str]:
+    def resolver(args: Mapping[str, Any]) -> tuple[str, str, str, dict[str, Any]]:
         target, _kind = resolve_agent_workspace_path(
             resolved_root, str(args.get("path") or "")
         )
         rel = target.relative_to(resolved_root).as_posix()
         scope = f"workspace:{rel}"
-        return scope, scope, ""
+        review = capture_file_review(
+            old_bytes=_read_old_bytes(target),
+            new_text=None,
+            path_label=rel,
+        )
+        return scope, scope, "", review
 
     return resolver
+
+
+def _read_old_bytes(target: Path) -> bytes | None:
+    """Best-effort read of the file as it is now; None when absent/unreadable."""
+    try:
+        if not target.is_file():
+            return None
+        return target.read_bytes()
+    except OSError:
+        return None
 
 
 def _overwrite_scope(root: Path):
     resolved_root = Path(root).expanduser().resolve(strict=False)
 
-    def resolver(args: Mapping[str, Any]) -> tuple[str, str, str]:
+    def resolver(args: Mapping[str, Any]) -> tuple[str, str, str, dict[str, Any]]:
         target, _kind = resolve_agent_workspace_path(
             resolved_root, str(args.get("path") or "")
         )
         rel = target.relative_to(resolved_root).as_posix()
         scope = f"workspace:{rel}"
         preview = " ".join(str(args.get("content") or "").split())[:200]
-        return scope, scope, preview
+        review = capture_file_review(
+            old_bytes=_read_old_bytes(target),
+            new_text=str(args.get("content") or ""),
+            path_label=rel,
+        )
+        return scope, scope, preview, review
 
     return resolver
 

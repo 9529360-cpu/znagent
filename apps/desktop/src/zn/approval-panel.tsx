@@ -5,7 +5,8 @@ import {
   createZnApprovalRule,
   decideZnApproval,
   deleteZnApprovalRule,
-  loadZnApprovals
+  loadZnApprovals,
+  undoZnApproval
 } from './resident-client'
 import type {
   ZnApprovalActionKind,
@@ -78,6 +79,22 @@ export function ZnApprovalPanel() {
     }
   }, [refresh, t])
 
+  // CUR-4: one-click undo of an applied change. The backend restores the
+  // pre-change snapshot and refuses a second undo; the panel just
+  // refreshes so the card flips to its undone state.
+  const undo = useCallback(async (request: ZnApprovalRequest) => {
+    setBusyId(request.id)
+    setError(null)
+    try {
+      await undoZnApproval(request.id)
+      await refresh()
+    } catch {
+      setError(t('approval.undoFailed'))
+    } finally {
+      setBusyId(null)
+    }
+  }, [refresh, t])
+
   // Keyboard: with focus inside the approval panel, A approves the first
   // pending request and D denies it. Typing in a field never triggers this.
   const handlePanelKeyDown = useCallback((event: React.KeyboardEvent) => {
@@ -135,6 +152,7 @@ export function ZnApprovalPanel() {
 
   const pending = approvals?.pending ?? []
   const expired = approvals?.expired ?? []
+  const applied = approvals?.applied ?? []
   const rules = approvals?.rules ?? []
   const audit = approvals?.audit ?? []
 
@@ -158,6 +176,13 @@ export function ZnApprovalPanel() {
                   <div><span>{t('approval.source')}</span><strong>{approvalSourceLabel(request.source, t)}</strong></div>
                   <div><span>{t('approval.expires')}</span><strong>{new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(request.expiresAt))}</strong></div>
                 </div>
+                {request.diffText ? (
+                  <div className="zn-approval-diff">
+                    <div><span>{t('approval.diff')}</span></div>
+                    <pre className="zn-approval-diff-text">{request.diffText}</pre>
+                    {request.reviewNote ? <p className="zn-muted zn-small">{t('approval.reviewNote')}: {request.reviewNote}</p> : null}
+                  </div>
+                ) : null}
                 <div className="zn-inline-actions">
                   <button className="zn-primary" type="button" disabled={busyId === request.id} aria-keyshortcuts="a" onClick={() => void decide(request, 'allow_once')}>{t('approval.allowOnce')}</button>
                   <button type="button" disabled={busyId === request.id} onClick={() => void decide(request, 'always_allow')}>{t('approval.alwaysAllow')}</button>
@@ -180,6 +205,37 @@ export function ZnApprovalPanel() {
                 </div>
                 <div className="zn-inline-actions">
                   <button type="button" disabled={busyId === request.id} onClick={() => void decide(request, 'always_allow')}>{t('approval.alwaysAllowKind')}</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : null}
+        {applied.length > 0 ? (
+          <div className="zn-approval-applied">
+            <h3>{t('approval.applied')}</h3>
+            <p className="zn-muted zn-small">{t('approval.undoSideEffect')}</p>
+            {applied.map(request => (
+              <div className="zn-approval-card zn-approval-card-applied" key={request.id}>
+                <div className="zn-approval-meta">
+                  <div><span>{t('approval.action')}</span><strong>{approvalKindLabel(request.actionKind, t)}</strong></div>
+                  <div><span>{t('approval.target')}</span><strong>{request.target}</strong></div>
+                  <div><span>{t('approval.scope')}</span><strong>{request.scope}</strong></div>
+                </div>
+                {request.diffText ? (
+                  <div className="zn-approval-diff">
+                    <div><span>{t('approval.diff')}</span></div>
+                    <pre className="zn-approval-diff-text">{request.diffText}</pre>
+                    {request.reviewNote ? <p className="zn-muted zn-small">{t('approval.reviewNote')}: {request.reviewNote}</p> : null}
+                  </div>
+                ) : null}
+                <div className="zn-inline-actions">
+                  {request.undone ? (
+                    <span className="zn-muted zn-small">{t('approval.undone')}</span>
+                  ) : request.previousCaptured ? (
+                    <button type="button" disabled={busyId === request.id} onClick={() => void undo(request)}>{t('approval.undo')}</button>
+                  ) : (
+                    <span className="zn-muted zn-small">{t('approval.noUndoSnapshot')}</span>
+                  )}
                 </div>
               </div>
             ))}

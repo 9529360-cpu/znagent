@@ -275,10 +275,14 @@ class NativeBody:
         if bool(action.args.get("create_parents", True)):
             path.parent.mkdir(parents=True, exist_ok=True)
         if append:
-            with path.open("a", encoding=encoding) as handle:
+            # newline="": text-mode writes translate "\n" -> os.linesep on
+            # Windows (\r\n), but the workspace verifier SHA-checks exact
+            # bytes and CUR-4 snapshots read raw bytes, so writes must be
+            # byte-faithful: the disk content must equal the requested text.
+            with path.open("a", encoding=encoding, newline="") as handle:
                 written = handle.write(content)
         else:
-            written = path.write_text(content, encoding=encoding)
+            written = path.write_text(content, encoding=encoding, newline="")
         return self._ok(
             action,
             started,

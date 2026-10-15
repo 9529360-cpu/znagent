@@ -462,7 +462,13 @@ function normalizeApprovalRequest(value: unknown): ZnApprovalRequest {
     ...(decision === 'allow_once' || decision === 'always_allow' || decision === 'deny'
       ? { decision: decision as ZnApprovalDecision }
       : {}),
-    ...(item.event_id || item.eventId ? { eventId: String(item.event_id || item.eventId) } : {})
+    ...(item.event_id || item.eventId ? { eventId: String(item.event_id || item.eventId) } : {}),
+    // CUR-4 diff-first review fields; default to empty/false for payloads
+    // from older residents that do not send them.
+    diffText: String(item.diff_text || item.diffText || ''),
+    previousCaptured: item.previous_captured === true || item.previousCaptured === true,
+    reviewNote: String(item.review_note || item.reviewNote || ''),
+    undone: item.undone === true || item.undone === 1
   }
 }
 
@@ -503,11 +509,13 @@ export function normalizeApprovalList(value: unknown): ZnApprovalList {
   if (!item) throw new Error('Resident returned an invalid approval list')
   const pending = Array.isArray(item.pending) ? item.pending : []
   const expired = Array.isArray(item.expired) ? item.expired : []
+  const applied = Array.isArray(item.applied) ? item.applied : []
   const rules = Array.isArray(item.rules) ? item.rules : []
   const audit = Array.isArray(item.audit) ? item.audit : []
   return {
     pending: pending.map(normalizeApprovalRequest),
     expired: expired.map(normalizeApprovalRequest),
+    applied: applied.map(normalizeApprovalRequest),
     rules: rules.map(normalizeApprovalRule),
     audit: audit.map(normalizeApprovalAuditEntry)
   }
@@ -1091,6 +1099,12 @@ export async function deleteZnApprovalRule(ruleId: string): Promise<void> {
   const normalized = ruleId.trim()
   if (!normalized) throw new Error('Approval rule id is required')
   await desktop().resident.approvalRuleDelete({ ruleId: normalized })
+}
+
+export async function undoZnApproval(requestId: string): Promise<void> {
+  const normalized = requestId.trim()
+  if (!normalized) throw new Error('Approval request id is required')
+  await desktop().resident.approvalUndo({ requestId: normalized })
 }
 
 export async function attachZnWorkspace(threadId: string): Promise<ZnThread | null> {

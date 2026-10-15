@@ -14,7 +14,8 @@ test('approval cards: Electron IPC forwards the approval RPC methods', () => {
     ['zn:resident:approval-request', 'approval_request'],
     ['zn:resident:approval-decide', 'approval_decide'],
     ['zn:resident:approval-rule-create', 'approval_rule_create'],
-    ['zn:resident:approval-rule-delete', 'approval_rule_delete']
+    ['zn:resident:approval-rule-delete', 'approval_rule_delete'],
+    ['zn:resident:approval-undo', 'approval_undo']
   ] as const) {
     assert.match(ipc, new RegExp(`handleZnDesktopIpc\\('${channel}'`))
     assert.match(ipc, new RegExp(`request\\('${method}'`))
@@ -27,22 +28,28 @@ test('approval cards: Electron IPC forwards the approval RPC methods', () => {
 
 test('approval cards: preload exposes the approval bridge and the resident accepts the RPC methods', () => {
   const preload = read('electron/zn-preload.ts')
-  for (const name of ['approvalList', 'approvalRequest', 'approvalDecide', 'approvalRuleCreate', 'approvalRuleDelete']) {
+  for (const name of ['approvalList', 'approvalRequest', 'approvalDecide', 'approvalRuleCreate', 'approvalRuleDelete', 'approvalUndo']) {
     assert.match(preload, new RegExp(`${name}:`))
   }
   const process = read('electron/zn-resident-process.ts')
-  for (const method of ['approval_list', 'approval_request', 'approval_decide', 'approval_rule_create', 'approval_rule_delete']) {
+  for (const method of ['approval_list', 'approval_request', 'approval_decide', 'approval_rule_create', 'approval_rule_delete', 'approval_undo']) {
     assert.match(process, new RegExp(`\\| '${method}'`))
   }
 })
 
 test('approval cards: resident client normalizes and exposes approval helpers', () => {
   const client = read('src/zn/resident-client.ts')
-  for (const name of ['normalizeApprovalList', 'loadZnApprovals', 'decideZnApproval', 'createZnApprovalRule', 'deleteZnApprovalRule']) {
+  for (const name of ['normalizeApprovalList', 'loadZnApprovals', 'decideZnApproval', 'createZnApprovalRule', 'deleteZnApprovalRule', 'undoZnApproval']) {
     assert.match(client, new RegExp(name))
   }
   // The normalizer must fail closed on an unknown action kind.
   assert.match(client, /invalid approval action kind/)
+  // CUR-4: the normalizer maps the diff-first review fields and the
+  // applied list through to the workbench.
+  assert.match(client, /diffText/)
+  assert.match(client, /previousCaptured/)
+  assert.match(client, /reviewNote/)
+  assert.match(client, /applied/)
 })
 
 test('approval cards: workbench shows a pending banner and a settings section', () => {
@@ -67,6 +74,15 @@ test('approval cards: panel offers allow once / always allow / deny plus rules a
   assert.match(panel, /approval\.target/)
   assert.match(panel, /approval\.scope/)
   assert.match(panel, /approval\.value/)
+  // CUR-4: pending cards show the pending diff; applied cards offer
+  // one-click undo and state that external copies are not recalled.
+  assert.match(panel, /approval\.diff/)
+  assert.match(panel, /approval\.applied/)
+  assert.match(panel, /approval\.undo/)
+  assert.match(panel, /approval\.undone/)
+  assert.match(panel, /approval\.noUndoSnapshot/)
+  assert.match(panel, /approval\.undoSideEffect/)
+  assert.match(panel, /zn-approval-diff-text/)
 })
 
 test('approval cards: every approval string exists in both locales', () => {
@@ -107,6 +123,15 @@ test('approval cards: every approval string exists in both locales', () => {
     'approval.ruleTooBroad',
     'approval.banner',
     'approval.review',
+    'approval.diff',
+    'approval.reviewNote',
+    'approval.applied',
+    'approval.noApplied',
+    'approval.undo',
+    'approval.undone',
+    'approval.noUndoSnapshot',
+    'approval.undoFailed',
+    'approval.undoSideEffect',
     'settings.approvals.title',
     'settings.approvals.description'
   ]

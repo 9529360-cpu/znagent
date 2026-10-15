@@ -49,6 +49,8 @@ contextBridge.exposeInMainWorld('znDesktop', {
       ipcRenderer.invoke('zn:resident:approval-rule-create', payload || {}),
     approvalRuleDelete: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:approval-rule-delete', payload || {}),
+    approvalUndo: (payload?: ZnDesktopPayload) =>
+      ipcRenderer.invoke('zn:resident:approval-undo', payload || {}),
     teamTimeline: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:team-timeline', payload || {}),
     teamAssign: (payload?: ZnDesktopPayload) =>

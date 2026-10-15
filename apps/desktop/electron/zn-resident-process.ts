@@ -34,6 +34,7 @@ export type ZnResidentRequest = {
     | 'approval_decide'
     | 'approval_rule_create'
     | 'approval_rule_delete'
+    | 'approval_undo'
     | 'team_timeline'
     | 'team_assign'
     | 'pulses'

@@ -94,7 +94,11 @@ def cleanup_overwrite_artifacts(
 
 
 def _write_stage(path: Path, content: str, encoding: str) -> int:
-    with path.open("x", encoding=encoding) as handle:
+    # newline="": text-mode writes translate "\n" -> os.linesep on Windows
+    # (\r\n), but the workspace verifier SHA-checks exact bytes and CUR-4
+    # snapshots read raw bytes, so staged writes must be byte-faithful:
+    # the disk content must equal the requested text.
+    with path.open("x", encoding=encoding, newline="") as handle:
         written = handle.write(content)
         handle.flush()
         os.fsync(handle.fileno())

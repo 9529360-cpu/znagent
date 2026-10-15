@@ -76,6 +76,39 @@ class NativeBodyTests(unittest.TestCase):
             self.assertEqual(second.capabilities.names(), capabilities_before)
             second.store.close()
 
+    def test_body_write_text_is_byte_faithful(self):
+        # Regression guard for #518: NativeBody text writes must land
+        # byte-faithful on disk (no Windows "\n" -> "\r\n" translation),
+        # or the workspace SHA verifier and CUR-4 snapshots disagree
+        # with the requested content.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "body" / "note.txt"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=root / "kernel.db",
+            )
+            try:
+                written = resident.body.act(
+                    "write_text",
+                    event_id="evt-body-bytes",
+                    path=str(target),
+                    content="before\n",
+                )
+                self.assertTrue(written.success)
+                self.assertEqual(target.read_bytes(), b"before\n")
+                appended = resident.body.act(
+                    "write_text",
+                    event_id="evt-body-bytes-append",
+                    path=str(target),
+                    content="more\r\n",
+                    append=True,
+                )
+                self.assertTrue(appended.success)
+                self.assertEqual(target.read_bytes(), b"before\nmore\r\n")
+            finally:
+                resident.store.close()
+
     def test_process_observation_is_a_body_movement(self):
         with tempfile.TemporaryDirectory() as tmp:
             resident = build_resident_runtime_from_existing_stack(

@@ -97,6 +97,18 @@ class WriteGuardTests(unittest.TestCase):
             with self.assertRaises(WorkspaceFileDisciplineError):
                 resolve_write_path(layout.root, "draft", "/absolute.txt")
 
+    def test_write_text_is_byte_faithful_for_lf_and_crlf(self):
+        # Regression guard for #518: on Windows, text-mode writes without
+        # newline="" translate "\n" -> "\r\n" (and "\r\n" -> "\r\r\n"),
+        # which broke the SHA verifier (exact bytes) and CUR-4 snapshots
+        # (raw bytes). Disk bytes must equal the requested text, exactly.
+        with tempfile.TemporaryDirectory() as tmp:
+            layout = _layout(Path(tmp))
+            lf = write_text(layout.root, "draft", "lf.txt", "line one\nline two\n")
+            self.assertEqual(lf.read_bytes(), "line one\nline two\n".encode("utf-8"))
+            crlf = write_text(layout.root, "draft", "crlf.txt", "keep me\r\n")
+            self.assertEqual(crlf.read_bytes(), b"keep me\r\n")
+
     def test_write_text_and_bytes_happy_path_and_overwrite_rule(self):
         with tempfile.TemporaryDirectory() as tmp:
             layout = _layout(Path(tmp))

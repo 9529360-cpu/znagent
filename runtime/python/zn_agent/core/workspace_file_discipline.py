@@ -268,7 +268,10 @@ def write_text(
         )
     target = resolve_write_path(root, kind, relative)
     _write_checked(target, overwrite=overwrite)
-    target.write_text(content, encoding=encoding)
+    # newline="": text-mode writes translate "\n" -> os.linesep on Windows
+    # (\r\n), but callers (SHA verifier, CUR-4 undo snapshot) compare raw
+    # bytes against the requested text, so writes must be byte-faithful.
+    target.write_text(content, encoding=encoding, newline="")
     return target
 
 
