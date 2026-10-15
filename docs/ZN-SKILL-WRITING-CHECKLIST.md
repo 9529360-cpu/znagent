@@ -2,7 +2,7 @@
 
 > 来源：anthropics/knowledge-work-plugins（Apache 2.0）与 addyosmani/agent-skills（MIT）。
 > 只抄机制，不抄具体业务插件内容。本清单是 ZN 作者写新 Skill 时的唯一检查入口。
-> AS-4（Evals Tier 1 + Tier 2，进 CI 的触发校验）是下一项，不在本清单。
+> AS-4（Evals Tier 1 + Tier 2，进 CI 的触发校验）已落地，见 §11。
 
 ## 0. 先说清三个容易混淆的点
 
@@ -147,5 +147,39 @@ print(result.passed, result.violations, result.warnings, result.layers)
 
 ## 10. 不在本清单的事
 
-- AS-4（Evals Tier 1 + Tier 2，进 CI 的触发校验）是下一项，本清单不做。
 - 不改 `SkillStore` / `SkillRouter` 的行为、不改 Skill 沉淀流程、不碰 workflows。
+
+## 11. Evals（AS-4）：Tier 1 + Tier 2，进 CI
+
+校验器绿 ≠ 写得好（见 §9）；Evals 是第二道机械防线：新 Skill 提交前，
+两层校验都要通过。两层都是确定性的、零 token 的（不调模型、不联网、
+不写文件），只读检查，不改变 `SkillStore` / `SkillRouter` 的运行时行为。
+
+| 层 | 查什么 | 实现 | 失败 = |
+| --- | --- | --- | --- |
+| Tier 1 结构 | 本清单校验 + intake 校验 + 正文至少一个章节标题 + 本地链接全部可达 | `runtime/python/zn_agent/core/skill_evals.py` 的 `eval_tier1_file` | 违规（见下） |
+| Tier 2 触发 | 正向引号触发短语经真实 Router 排进 top-k 且可激活；泛负向无关任务不触发；共享引号触发短语判碰撞违规；description 词集 Jaccard ≥0.6 判碰撞警告 | 同上，`eval_tier2_root`（用 `SkillRouter` 真实 `match` / `route`，不造玩具 ranking） | 正向未命中 / 负向误触发 / 共享触发短语 |
+
+分层语义（与 §0 一致，不放宽运行时上限）：description `>1024` 字符判违规；
+`(500, 1024]` 判警告（清单通过，但 `SkillStore` / `Router` 会丢弃该 Skill，
+且 Tier 2 会报“磁盘上有但 Router 发现不了”警告）。Tier 1 中 intake 的
+`description exceeds 500 characters` 原因被降为警告，不重复清单已有的
+runtime-cap 警告，其余 intake 原因仍是违规。
+
+碰撞是词法启发式：共享引号触发短语是真碰撞（触发分不清两个 Skill）；
+Jaccard 只抓复制粘贴级近似描述，改写级语义相近可能漏网——那需要
+embedding / 模型，本层故意不用。
+
+本地跑：
+
+```bash
+# 仓库全量（Tier 1 扫全部 Skill 文件；Tier 2 跑 skills/ 目录，如存在）
+PYTHONPATH=runtime/python python scripts/skill_evals.py
+# 单个 Skill 根目录（子目录即 Skill 包，如 $ZN_HOME/skills），JSON 报告
+PYTHONPATH=runtime/python python scripts/skill_evals.py --root <skills-root> --json
+```
+
+CI：`.github/workflows/zn-skill-evals.yml` 在 PR / push 到 main 时跑
+仓库扫描 + `test_skill_evals.py`。该 workflow 是独立检查，未接进
+`zn-ci.yml` 的必需检查门（`zn-ci.yml` 未动）；升为必需检查是单独的
+分支保护决策，不在本 PR。
