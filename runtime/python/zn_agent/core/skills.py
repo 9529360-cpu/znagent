@@ -15,11 +15,30 @@ This adapts the file-based skill-bundle idea (markdown knowledge + explicit
 metadata) behind ZN-owned discovery, matching, bounds and lifecycle. There is
 no plugin runtime, no code execution and no external marketplace here: bundles
 are read as text and injected as bounded cognition context.
+
+Two-stage Rules (CUR-1): injection is NOT activation.
+
+- Resident stage (always on, minimal): the cognition context carries only
+  one short entry per matched skill — a capped summary, a trigger
+  description (when to use it), the version, and ``globs`` that scope which
+  file types the rule applies to. Full bodies are NEVER in the resident
+  layer, so there is no fixed per-turn token tax for rules that never fire.
+- Activation stage (on demand): :meth:`SkillStore.activate_skill` loads the
+  full body of one skill, only after its trigger matched. Unmatched skills'
+  bodies are never read.
+
+The legacy full-body injection is kept only as an explicit opt-in
+(``bind_cognition_context(..., include_bodies=True)``) for callers that
+already proved they need it. The default path is the two-stage one, and
+:func:`validate_resident_entry` rejects any resident entry whose summary
+or trigger exceeds the cap — over-cap text is truncated at build time
+(with ``truncated: True``) and rejected at validation time.
 """
 
+import fnmatch
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import yaml
@@ -32,6 +51,11 @@ from .skill_routing import SkillRouter
 MAX_SKILL_CONTEXT_BYTES = 8192
 MAX_SKILL_BODY_CHARS = 20000
 MAX_SKILL_DESCRIPTION_CHARS = 500
+#: Resident-layer cap (CUR-1): a summary or trigger description longer than
+#: this is truncated at build time and rejected at validation time. ~70
+#: tokens: enough for what-it-is + when-to-use, small enough that a
+#: resident rule list stays cheap no matter how many skills exist.
+MAX_RESIDENT_SUMMARY_CHARS = 280
 _DEFAULT_MAX_SKILLS = 3
 
 _NAME_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
@@ -56,6 +80,169 @@ def _split_frontmatter(text: str) -> tuple[dict[str, Any], str]:
     return meta, text[end + 4 :].lstrip("\n")
 
 
+def _first_sentence(text: str) -> str:
+    """First sentence of ``text`` (split on sentence enders / newline).
+
+    An ASCII ender (``.``/``!``/``?``) only counts when followed by a
+    space or the end of the string, so dots inside ``TASKS.md`` or
+    ``e.g.`` do not cut the sentence early.
+    """
+    cleaned = _clean(text)
+    for index, char in enumerate(cleaned):
+        if char in "。！？\n":
+            head = cleaned[:index].strip()
+            if head:
+                return head
+        elif char in ".!?":
+            nxt = cleaned[index + 1] if index + 1 < len(cleaned) else ""
+            if nxt in ("", " ", "\t"):
+                head = cleaned[:index].strip()
+                if head:
+                    return head
+    return cleaned
+
+
+def _cap_entry_text(text: str) -> tuple[str, bool]:
+    """Truncate ``text`` to the resident cap. Returns (text, truncated)."""
+    cleaned = _clean(text)
+    if len(cleaned) <= MAX_RESIDENT_SUMMARY_CHARS:
+        return cleaned, False
+    return cleaned[: MAX_RESIDENT_SUMMARY_CHARS - 1].rstrip() + "…", True
+
+
+def make_resident_entry(
+    name: str,
+    description: str,
+    version: str,
+    globs: tuple[str, ...] | list[str] = (),
+) -> dict[str, Any]:
+    """Build one resident-stage entry: summary + trigger, never the body.
+
+    Summary is the first sentence of the description; trigger is the full
+    description (what the skill does AND when to use it). Both are capped;
+    over-cap text is truncated and reported via ``truncated: True``.
+    """
+    summary, summary_cut = _cap_entry_text(_first_sentence(description))
+    trigger, trigger_cut = _cap_entry_text(description)
+    return {
+        "name": name,
+        "summary": summary,
+        "trigger": trigger,
+        "version": version,
+        "globs": list(globs),
+        "truncated": summary_cut or trigger_cut,
+    }
+
+
+def validate_resident_entry(entry: dict[str, Any]) -> None:
+    """Reject a resident entry whose summary/trigger exceeds the cap.
+
+    Builders truncate; this is the enforcement point for entries that
+    arrive from anywhere else (foreign data, hand-built dicts).
+    """
+    if not isinstance(entry, dict):
+        raise ValueError("resident entry must be a dict")
+    for key in ("summary", "trigger"):
+        value = entry.get(key)
+        if not isinstance(value, str):
+            raise ValueError(f"resident entry {key!r} must be a string")
+        if len(value) > MAX_RESIDENT_SUMMARY_CHARS:
+            raise ValueError(
+                f"resident entry {key!r} exceeds "
+                f"{MAX_RESIDENT_SUMMARY_CHARS} chars ({len(value)})"
+            )
+
+
+def _is_absolute_pattern(pattern: str) -> bool:
+    """Platform-independent absolute-path check for a glob pattern.
+
+    ``Path.is_absolute()`` is platform-dependent: on Windows,
+    ``Path('/abs/path').is_absolute()`` is False (no drive letter), so a
+    POSIX absolute pattern would slip through as a glob on Windows.
+    Check both POSIX and Windows semantics so the same frontmatter is
+    rejected on every platform. A leading ``\\`` (Windows rooted path)
+    and a drive prefix (``C:...``) are absolute on Windows even though
+    ``PureWindowsPath.is_absolute()`` reports them as not absolute.
+    """
+    if pattern.startswith(("/", "\\")):
+        return True
+    if len(pattern) >= 2 and pattern[1] == ":" and pattern[0].isalpha():
+        return True
+    return PurePosixPath(pattern).is_absolute() or PureWindowsPath(
+        pattern
+    ).is_absolute()
+
+
+def _parse_globs(meta: dict[str, Any]) -> tuple[str, ...]:
+    """Valid ``globs`` patterns from frontmatter; invalid entries dropped.
+
+    A pattern is valid when it is a non-empty relative pattern without
+    ``..`` or NUL. Invalid entries are ignored (the skill stays
+    discoverable) instead of failing the whole bundle.
+    """
+    raw = meta.get("globs")
+    if not isinstance(raw, list):
+        return ()
+    patterns: list[str] = []
+    for item in raw:
+        if not isinstance(item, str):
+            continue
+        pattern = item.strip()
+        if not pattern or "\x00" in pattern or ".." in pattern:
+            continue
+        if _is_absolute_pattern(pattern):
+            continue
+        patterns.append(pattern)
+    return tuple(patterns)
+
+
+def rule_applies_to_path(globs: tuple[str, ...] | list[str], path: str | Path) -> bool:
+    """True when a rule with ``globs`` applies to ``path``.
+
+    Empty globs mean "applies everywhere". Otherwise the pattern is matched
+    against both the file name (``*.py``) and the full posix path
+    (``src/**/*.py``); ``*`` also crosses ``/`` under fnmatch, so
+    ``**`` needs no special handling.
+    """
+    patterns = list(globs or ())
+    if not patterns:
+        return True
+    if not path:
+        return False
+    text = str(path)
+    name = Path(text).name
+    posix = Path(text).as_posix()
+    return any(
+        fnmatch.fnmatch(name, pattern) or fnmatch.fnmatch(posix, pattern)
+        for pattern in patterns
+    )
+
+
+def _read_frontmatter_globs(path: Path) -> tuple[str, ...]:
+    """Read only the frontmatter ``globs`` of a skill file (no body)."""
+    try:
+        with open(path, "rb") as handle:
+            first = handle.readline()
+            if first.strip() != b"---":
+                return ()
+            lines: list[bytes] = []
+            for line in handle:
+                if line.strip() == b"---":
+                    break
+                lines.append(line)
+            else:
+                return ()
+            try:
+                meta = yaml.safe_load(b"".join(lines).decode("utf-8")) or {}
+            except (UnicodeError, yaml.YAMLError):
+                return ()
+    except OSError:
+        return ()
+    if not isinstance(meta, dict):
+        return ()
+    return _parse_globs(meta)
+
+
 @dataclass(slots=True)
 class Skill:
     name: str
@@ -63,6 +250,7 @@ class Skill:
     version: str
     path: Path
     body: str
+    globs: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -108,7 +296,14 @@ class SkillStore:
             return None
         if len(body) > MAX_SKILL_BODY_CHARS:
             body = body[:MAX_SKILL_BODY_CHARS]
-        return Skill(name=name, description=description, version=version, path=path, body=body)
+        return Skill(
+            name=name,
+            description=description,
+            version=version,
+            path=path,
+            body=body,
+            globs=_parse_globs(meta),
+        )
 
     def skill_lock(self) -> SkillLock:
         """The version lockfile for this skills root (created on save)."""
@@ -156,21 +351,31 @@ class SkillStore:
         *,
         max_skills: int = _DEFAULT_MAX_SKILLS,
         max_skill_chars: int = 4000,
+        file_path: str | Path | None = None,
     ) -> list[Skill]:
         """Match skills via the progressive-disclosure router.
 
         Only matched skills' bodies are read (Activation); unmatched
         skills' bodies are never loaded. Matching itself uses
         name/description cues only, never body full-text search.
+
+        When ``file_path`` is given, skills whose ``globs`` do not match
+        that path are filtered out BEFORE activation, so their bodies are
+        never read either. Skills without ``globs`` apply everywhere.
         """
         count = max(0, min(10, int(max_skills)))
         per_skill = max(1, min(12000, int(max_skill_chars)))
         if not count or not _clean(query):
             return []
         router = SkillRouter(self.root)
-        result = router.route(query, max_skills=count)
         selected: list[Skill] = []
-        for activated in result.matched:
+        for match in router.match(query, max_skills=count):
+            globs = _read_frontmatter_globs(match.header.path)
+            if file_path is not None and not rule_applies_to_path(globs, file_path):
+                continue
+            activated = router.activate(match.header.name)
+            if activated is None:
+                continue
             body = activated.body[:per_skill].strip()
             if not body:
                 continue
@@ -181,21 +386,59 @@ class SkillStore:
                     version=activated.header.version,
                     path=activated.header.path,
                     body=body,
+                    globs=globs,
                 )
             )
         return selected
+
+    def activate_skill(self, name: str) -> Skill | None:
+        """Activation stage: load one skill's full body on demand.
+
+        Call only after the skill's trigger matched (see
+        :meth:`relevant_skills` / :meth:`bind_cognition_context`, which
+        bind resident summaries). Returns None for unknown or
+        unactivatable skills. Never executes anything.
+        """
+        router = SkillRouter(self.root)
+        activated = router.activate(name)
+        if activated is None:
+            return None
+        return Skill(
+            name=activated.header.name,
+            description=activated.header.description,
+            version=activated.header.version,
+            path=activated.header.path,
+            body=activated.body,
+            globs=_read_frontmatter_globs(activated.header.path),
+        )
 
     # NOTE: SkillStore.discover() below still reads full bodies for
     # backwards compatibility. New callers should use
     # SkillRouter.discover(), which reads frontmatter only.
 
     def bind_cognition_context(
-        self, event: AgentEvent, request: CognitionRequest,
+        self,
+        event: AgentEvent,
+        request: CognitionRequest,
+        *,
+        include_bodies: bool = False,
     ) -> CognitionRequest:
         """Inject relevant skill bundles as bounded, read-only cognition data.
 
+        Two-stage (CUR-1, default): the resident layer carries only one
+        summary + trigger entry per matched skill — never a body. Call
+        :meth:`activate_skill` to load a full body on demand, only for a
+        skill whose trigger matched.
+
+        ``include_bodies=True`` is the legacy full-body injection, kept
+        only for callers that already proved they need it. It must not
+        become the default again: the resident layer stays minimal.
+
         Skills are never instructions and never authority. An explicit isolated
-        question never inherits skill context from another task.
+        question never inherits skill context from another task. When the
+        event payload carries ``file_path`` (or ``path``), ``globs``
+        filtering applies: rules whose globs do not match that file are
+        not bound at all.
         """
         context = dict(request.context or {})
         context.pop("resident_skills", None)
@@ -204,11 +447,19 @@ class SkillStore:
         if str(payload.get("cognition_question") or payload.get("unknown") or "").strip():
             return request
 
-        skills = self.relevant_skills(event.task)
+        file_path = payload.get("file_path") or payload.get("path")
+        if not isinstance(file_path, str) or not file_path.strip():
+            file_path = None
+        skills = self.relevant_skills(event.task, file_path=file_path)
         if not skills:
             return request
         bundle: dict[str, Any] = {
             "source": "resident_skill_bundles",
+            "stage": "full-body (legacy opt-in)" if include_bodies else "resident-summary",
+            "activation": (
+                "Call SkillStore.activate_skill(name) to load one skill's "
+                "full body on demand; unmatched skills' bodies are never read."
+            ),
             "execution_authority": False,
             "completion_evidence": False,
             "interpretation": (
@@ -221,12 +472,20 @@ class SkillStore:
             "truncated": False,
         }
         for skill in skills:
-            item = {
-                "name": skill.name,
-                "description": skill.description,
-                "version": skill.version,
-                "body": skill.body,
-            }
+            if include_bodies:
+                item: dict[str, Any] = {
+                    "name": skill.name,
+                    "description": skill.description,
+                    "version": skill.version,
+                    "body": skill.body,
+                }
+            else:
+                item = make_resident_entry(
+                    skill.name, skill.description, skill.version, skill.globs
+                )
+                validate_resident_entry(item)
+                if item["truncated"]:
+                    bundle["truncated"] = True
             bundle["skills"].append(item)
             if _context_size(bundle) > MAX_SKILL_CONTEXT_BYTES:
                 bundle["skills"].pop()

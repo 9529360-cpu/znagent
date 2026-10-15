@@ -115,9 +115,13 @@ class SkillBindingTests(unittest.TestCase):
         )
 
     def bind(self, task, **payload):
+        # Legacy full-body path (explicit opt-in); the default two-stage
+        # binding is covered in test_cur1_rules_two_stage.py.
         event = AgentEvent("event", task, payload=payload)
         request = CognitionRequest("request", "impasse", event.event_id, task)
-        return self.store.bind_cognition_context(event, request).context.get("resident_skills")
+        return self.store.bind_cognition_context(
+            event, request, include_bodies=True
+        ).context.get("resident_skills")
 
     def test_binds_relevant_skill_as_data_not_authority(self):
         bundle = self.bind("help me with task management")
