@@ -51,6 +51,18 @@ Every model request ZN sends is rebuildable from the append-only session event l
 
 Never logged: pre-redaction text, credentials (API keys travel outside the logged body), image bytes (images are referenced by SHA-256 + MIME + size), and model thinking/reasoning blocks. Logging failures never break cognition. Covered send paths: OpenAI-compatible, Anthropic single-turn, Gemini text + image, Anthropic tool-loop turns, and direct `invoke` callers (e.g. specialist debug) via the same resource-level sink. Evidence: `test_session_log_source_of_truth.py` (14 tests), including a kernel end-to-end rebuild of the assembled kernel context.
 
+## Team task state machine (DSH-2): revision CAS + tombstones + advisory writeScopes
+
+Team tasks live in `team_task_state.py` (`TeamTaskStateStore` + immutable `TaskSnapshot`). It adds what the existing pieces lack: `WorkItem` has only a thread-level `plan_version` and overwrites unconditionally (last writer wins); AF-3 `ProgressLedger` tracks status transitions in memory but has no revision, no delete, no full-snapshot shape, and no write scopes; disband hard-deletes team records.
+
+- Full snapshots: `TaskSnapshot.to_dict` / `from_dict` round-trip every field (status, assignee, dependencies, acceptance criteria, writeScopes, revision, history, tombstone fields). The caller owns durability (export/import); the store only enforces the state machine.
+- Revision CAS: every successful write bumps `revision` by exactly 1. `update_task` requires `expected_revision`; a mismatch raises `RevisionConflictError` and changes nothing (re-read and retry). No-op writes consume no revision.
+- Tombstones: `delete_task` never erases a row -- it sets `deleted=True` + `deleted_at` + `deleted_reason`, keeps the last status and full history, and bumps the revision. Tombstones are excluded from `list_tasks` by default, stay queryable via `get_task(..., include_deleted=True)` / `get_tombstone` / `list_tombstones`, and refuse further updates. There is deliberately no hard-delete API.
+- Advisory writeScopes: per-task suggested relative path prefixes. `check_write_scope` only advises -- an out-of-scope path returns a warning advisory and is recorded in the advisory log; it never raises, never blocks, and never replaces the hard file isolation (`workspace_file_discipline`), which stays the only enforcement. Empty scopes mean unrestricted.
+- Status vocabulary is shared with AF-3 (`todo` / `in_progress` / `done` / `failed`, same transition rules; `done` is terminal). `mirror_decision` mirrors coordinator dispatch/complete into task state via read-then-CAS as an observer that never raises. The module does not touch `CheckpointStorage`, LG-1 two-phase writes, the Work ledger, daemon, or approval gates.
+
+Evidence: `test_team_task_state.py` (16 tests), including a two-reader lost-update rejection, tombstone retention + refusal, and advisory-not-blocking checks.
+
 ## Recently retired scenario-owned surfaces
 
 The cleanup removes product code whose primary owner was a narrow representative task rather than a reusable capability contract, including:
