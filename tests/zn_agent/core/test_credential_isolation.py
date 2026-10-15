@@ -101,21 +101,27 @@ class MemoryWriteInterceptionTests(unittest.TestCase):
         self.addCleanup(self.store.close)
         self.memory = StructuredMemory(self.store)
 
-    def test_memory_rejects_credential_shaped_value(self) -> None:
-        with self.assertRaises(CredentialValueDetected):
-            self.memory.remember("openai key", f"api_key={FAKE_SK}")
-        self.assertIsNone(self.store.get_fact("openai key"))
-        self.assertEqual(self.store.list_facts(), [])
+    def test_memory_redacts_credential_shaped_value(self) -> None:
+        # CM-3 supersedes M15's reject at the memory path: the choke
+        # redacts the secret and the write lands. The secret must be
+        # absent from the whole store. The put_fact gate still rejects
+        # unchoked paths (config writes, direct put_fact callers).
+        self.memory.remember("openai key", f"api_key={FAKE_SK}")
+        self.assertEqual(self.store.get_fact("openai key"), "api_key <redacted>")
+        self.assertNotIn(FAKE_SK, str(self.store.list_facts()))
 
-    def test_memory_rejects_bare_token_value(self) -> None:
-        with self.assertRaises(CredentialValueDetected):
-            self.memory.remember("provider token", FAKE_SK)
-        self.assertEqual(self.store.list_facts(), [])
+    def test_memory_redacts_bare_token_value(self) -> None:
+        self.memory.remember("provider token", FAKE_SK)
+        self.assertEqual(self.store.get_fact("provider token"), "<redacted>")
+        self.assertNotIn(FAKE_SK, str(self.store.list_facts()))
 
-    def test_memory_rejects_credential_shaped_alias(self) -> None:
-        with self.assertRaises(CredentialValueDetected):
-            self.memory.remember("plain key", "plain value", aliases=(FAKE_SK,))
-        self.assertEqual(self.store.list_facts(), [])
+    def test_memory_redacts_credential_shaped_alias(self) -> None:
+        self.memory.remember("plain key", "plain value", aliases=(FAKE_SK,))
+        facts = self.store.list_facts()
+        self.assertEqual(len(facts), 1)
+        self.assertEqual(facts[0]["value"], "plain value")
+        self.assertIn("<redacted>", facts[0]["aliases"])
+        self.assertNotIn(FAKE_SK, str(facts))
 
     def test_memory_accepts_opaque_reference_value(self) -> None:
         reference = mint_credential_reference("openai")
