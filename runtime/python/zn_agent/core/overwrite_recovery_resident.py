@@ -7,7 +7,6 @@ from typing import Any
 from .action import NativeActionIntent
 from .durable_body_accounting_resident import DurableBodyAccountingResidentRuntime
 from .file_identity import compare_file_identities, observe_file_identity
-from .models import ExecutionPath, ResidentRunResult
 from .side_effect_body import SideEffectAwareBody
 
 
@@ -417,17 +416,30 @@ class OverwriteRecoveryResidentRuntime(DurableBodyAccountingResidentRuntime):
                 }
             )
             state.data[self._SIDE_EFFECT_RECOVERY_KEY] = recovery
-            state.stage = "complete"
-            state.next_action = None
-            state.blocked_by = None
-            self._sync_execution_context(event, state)
-            self.store.record_runtime_task(model_invocations=0)
-            return ResidentRunResult(
-                event=event,
-                execution_path=ExecutionPath.BODY,
-                success=True,
+            # LG-1 two-phase write: a verified effect is NOT a terminal
+            # event completion by itself. Route it through the
+            # checkpointed completion path instead of returning a
+            # terminal result directly:
+            #   phase 1 (event write + state checkpoint) --
+            #   ``_complete_successful_body_action`` persists
+            #   ``native_completion`` (carrying this reconciled
+            #   claim/verify result) via ``save_working_state`` before
+            #   anything terminal takes effect. Team / rolling
+            #   interceptors consume phase 1 (evidence recorded /
+            #   child roll-forward) and keep the event alive, so a team
+            #   step still goes through claim + runner verify.
+            #   phase 2 (terminal outcome) -- only the caller publishes
+            #   the EventOutcome (``complete_event``). A crash between
+            #   the phases restarts at ``native_completion`` and rebuilds
+            #   the same result: no re-verification, no replay.
+            # The pre-LG-1 code returned a terminal result here with the
+            # working state never saved, so a team event was completed
+            # without ever passing claim/verify.
+            return self._complete_successful_body_action(
+                event,
+                state,
+                intent,
                 response=path,
-                model_invocations=0,
                 reason=(
                     "ZN independently observed the exact requested overwrite state after "
                     "interruption and completed without replaying the stale mutation"

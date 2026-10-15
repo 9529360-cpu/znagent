@@ -288,6 +288,14 @@ class Checkpoint:
     completed_step_ids: tuple[str, ...] = ()
     pending_step_ids: tuple[str, ...] = ()
     state: dict[str, Any] = field(default_factory=dict)
+    # LG-1 parent chain: the previous checkpoint this one extends.
+    # "" is the genesis checkpoint (no parent). A checkpoint is never
+    # older than its parent chain: ``save`` rejects a pulse older than
+    # the stored latest, and a non-empty parent that is not already
+    # stored (a broken chain). Completion state on resume is rebuilt
+    # from the latest checkpoint + the durable ledger, never from a
+    # stale checkpoint alone.
+    parent_checkpoint_id: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -297,6 +305,7 @@ class Checkpoint:
             "completed_step_ids": list(self.completed_step_ids),
             "pending_step_ids": list(self.pending_step_ids),
             "state": dict(self.state),
+            "parent_checkpoint_id": str(self.parent_checkpoint_id or ""),
         }
 
     @classmethod
@@ -318,6 +327,7 @@ class Checkpoint:
                 str(s) for s in (raw.get("pending_step_ids") or ())
             ),
             state=dict(raw.get("state") or {}),
+            parent_checkpoint_id=str(raw.get("parent_checkpoint_id") or ""),
         )
 
 
@@ -357,9 +367,25 @@ class InMemoryCheckpointStorage:
     def save(self, checkpoint: Checkpoint) -> None:
         if not checkpoint.team_id or not checkpoint.checkpoint_id:
             raise ValueError("checkpoint needs team_id and checkpoint_id")
-        self._by_team.setdefault(checkpoint.team_id, {})[
-            checkpoint.checkpoint_id
-        ] = checkpoint
+        entries = self._by_team.setdefault(checkpoint.team_id, {})
+        # LG-1: a checkpoint is never older than its parent chain.
+        latest = self.latest(team_id=checkpoint.team_id)
+        if latest is not None and int(checkpoint.pulse) < int(latest.pulse):
+            raise ValueError(
+                "checkpoint pulse "
+                f"{int(checkpoint.pulse)} is older than the stored latest "
+                f"pulse {int(latest.pulse)} for team {checkpoint.team_id!r}"
+            )
+        parent = str(checkpoint.parent_checkpoint_id or "").strip()
+        if parent:
+            if parent == checkpoint.checkpoint_id:
+                raise ValueError("checkpoint cannot be its own parent")
+            if parent not in entries:
+                raise ValueError(
+                    f"checkpoint parent {parent!r} is not stored for team "
+                    f"{checkpoint.team_id!r}: broken parent chain"
+                )
+        entries[checkpoint.checkpoint_id] = checkpoint
 
     def load(
         self, *, team_id: str, checkpoint_id: str
@@ -484,8 +510,20 @@ class TeamRunner:
                 completed.append(plan_item.item_id)
         pending = [p.item_id for p in self._team.plan if p.item_id not in completed]
         pulse = max(0, int(state.pulses or 0))
+        checkpoint_id = f"{self._team.team_id}:pulse-{pulse}"
+        # LG-1: chain this checkpoint onto the stored latest so the
+        # parent chain is unbroken. A same-pulse re-save keeps the
+        # existing parent instead of pointing at itself.
+        parent = ""
+        latest = self.latest_checkpoint()
+        if latest is not None:
+            parent = (
+                latest.parent_checkpoint_id
+                if latest.checkpoint_id == checkpoint_id
+                else latest.checkpoint_id
+            )
         return Checkpoint(
-            checkpoint_id=f"{self._team.team_id}:pulse-{pulse}",
+            checkpoint_id=checkpoint_id,
             team_id=self._team.team_id,
             pulse=pulse,
             completed_step_ids=tuple(completed),
@@ -494,6 +532,7 @@ class TeamRunner:
                 "plan_item_map": dict(id_map),
                 "stop_reason": state.stop_reason,
             },
+            parent_checkpoint_id=parent,
         )
 
     def save_checkpoint(self) -> Checkpoint | None:

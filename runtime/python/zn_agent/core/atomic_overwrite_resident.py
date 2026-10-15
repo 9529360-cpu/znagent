@@ -586,10 +586,24 @@ class AtomicOverwriteRecoveryResidentRuntime(OverwriteRecoveryResidentRuntime):
         return True
 
     def _complete_successful_body_action(self, event, state, intent, *, response, reason):
+        # Recovery owns its own artifact cleanup. LG-1 routes a verified
+        # overwrite-recovery effect through this checkpointed completion
+        # path, and the namespace-recovery layer (which owns the
+        # side-effect-recovery step) must checkpoint cleanup authority
+        # BEFORE any retained artifact is unlinked -- it checks exact
+        # ownership and re-validates identity at deletion time, and a
+        # crash between its checkpoint and the unlink must resume at the
+        # cleanup decision, not at a bare "complete_without_replay".
+        # Immediate cleanup here would delete the backup + protocol
+        # before that checkpoint exists, leaving the phase-1 decision
+        # persisted and the drift check unreachable on resume.
+        # Fresh completions (stage != side_effect_recovery) keep the
+        # historical immediate cleanup: no recovery-step caller owns it.
+        in_recovery = str(state.stage or "") == "side_effect_recovery"
         result = super()._complete_successful_body_action(
             event, state, intent, response=response, reason=reason
         )
-        if result is not None and result.success:
+        if result is not None and result.success and not in_recovery:
             self._cleanup(event, intent)
         return result
 
