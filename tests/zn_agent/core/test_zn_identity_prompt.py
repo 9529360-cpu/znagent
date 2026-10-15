@@ -59,16 +59,22 @@ class ZNIdentityPromptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             factory = _CaptureFactory()
             resident = _resident(Path(tmp) / "kernel.db", factory)
-            result = resident.submit(
-                "What does SQLite SQLITE_BUSY mean during a transaction?",
-                payload={
-                    "cognition_question": "What does SQLite SQLITE_BUSY mean?",
-                    "required_capabilities": ["database"],
-                },
-            )
-            self.assertTrue(result.success)
-            self.assertEqual(len(factory.contexts), 1)
-            return factory.contexts[0]
+            try:
+                result = resident.submit(
+                    "What does SQLite SQLITE_BUSY mean during a transaction?",
+                    payload={
+                        "cognition_question": "What does SQLite SQLITE_BUSY mean?",
+                        "required_capabilities": ["database"],
+                    },
+                )
+                self.assertTrue(result.success)
+                self.assertEqual(len(factory.contexts), 1)
+                return factory.contexts[0]
+            finally:
+                # Windows: an open sqlite handle locks kernel.db, so the
+                # TemporaryDirectory cleanup would fail with WinError 32.
+                # Release the store before the tmp dir is removed.
+                resident.store.close()
 
     def test_kernel_worker_context_identifies_as_zn(self):
         context = self._captured_context()
