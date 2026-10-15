@@ -48,6 +48,7 @@ from .broad_goal_coding_resident import BroadGoalCodingResidentRuntime
 from .cognition import CognitiveIncrement
 from .models import ExecutionPath, utc_now
 from .repeat_reminder import observe_tool_call, pending_reminder
+from .subagent_delegation import format_delegation_context
 from .plan_mode import (
     PLAN_GATE_STATE_KEY,
     parse_plan_proposal,
@@ -385,6 +386,26 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 ),
                 "proposal_excerpt": "、".join(feedback.get("missing_items") or []),
             }
+
+        # DSH-7: the live delegation (or the only thing that could run)
+        # is paused by the supervisor. Block the event alive with no
+        # cognition call for the paused delegation -- its run, evidence,
+        # and pending messages all wait for the resume. Other
+        # delegations already advanced this pulse via owner.advance().
+        if step.paused_delegation is not None:
+            paused = step.paused_delegation
+            state.blocked_by = "user_presence_required"
+            state.stage = "native_deliberation"
+            state.next_action = (
+                "子 agent 委托已暂停："
+                f"{str(paused.get('item_title') or paused.get('plan_item_id') or '')} "
+                f"（{str(paused.get('specialist') or '')}），"
+                f"原因：{str(paused.get('pause_reason') or '')[:200]}。"
+                "等待主管恢复后继续，不会从头重派。"
+            )
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
 
         if step.team_complete:
             state.data[TEAM_COMPLETE_STATE_KEY] = True
@@ -751,6 +772,17 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         )
         if repeat_reminder:
             repeat_text = f"{repeat_reminder} "
+        # DSH-7: supervisor follow-ups for this delegation (appended
+        # messages + resume note), delivered exactly once by the owner
+        # into the live context. Quoted supervisor context under a
+        # non-authority guard -- never an approval, never a bypass.
+        delegation_text = ""
+        delegation_rendered = format_delegation_context(
+            messages=context.get("appended_messages"),
+            resume_value=context.get("delegation_resume"),
+        )
+        if delegation_rendered:
+            delegation_text = f"{delegation_rendered} "
         request.question = (
             "You are the "
             f"{context.get('specialist_name') or 'specialist'} specialist on one "
@@ -816,6 +848,7 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             f"{rejection_text}"
             f"{repeat_text}"
             f"{resume_text}"
+            f"{delegation_text}"
             f"Your brief: {context.get('specialist_prompt') or ''} "
             f"Your item: {context.get('objective') or ''}. "
             f"Acceptance criteria: {json.dumps(context.get('acceptance_criteria') or [], ensure_ascii=False)}. "

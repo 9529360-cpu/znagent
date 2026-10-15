@@ -486,6 +486,7 @@ class TeamRunner:
         termination_limits: TerminationLimits | None = None,
         now_fn: Any | None = None,
         checkpoint_storage: CheckpointStorage | None = None,
+        paused_plan_item_ids: frozenset[str] | None = None,
     ):
         if not root_work_item_id or not str(root_work_item_id).strip():
             raise ValueError("root_work_item_id must not be empty")
@@ -513,6 +514,10 @@ class TeamRunner:
         )
         self._limits = termination_limits or TerminationLimits()
         self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
+        # DSH-7: plan-item ids whose delegations the supervisor paused.
+        # Translated to work-item ids in step(), AFTER ensure_plan_items
+        # builds the plan map (the map is empty before the first pulse).
+        self._paused_plan_item_ids = frozenset(paused_plan_item_ids or ())
         # DSH-3: uncertain steps found by reconcile_interrupted_pulse()
         # this instance, carried into the next checkpoint it builds.
         self._uncertain_step_ids: set[str] = set()
@@ -967,6 +972,14 @@ class TeamRunner:
 
         thread_id = self._team.work_thread_id or ""
         id_map = self.ensure_plan_items()
+        # DSH-7: translate paused plan items to work-item ids now that
+        # the map exists. A paused item with no work item yet cannot
+        # dispatch anyway (the coordinator waits on the missing item).
+        paused_wids = {
+            wid
+            for pid in self._paused_plan_item_ids
+            if (wid := id_map.get(pid))
+        }
         items = {
             item.work_item_id: item
             for item in self._ledger.list_work_items(thread_id)
@@ -977,7 +990,10 @@ class TeamRunner:
             if history:
                 runs[wid] = history[-1]  # ASC by started_at: latest last
         decisions = self._coordinator.step(
-            self._ledger, runs=runs, id_map=id_map
+            self._ledger,
+            runs=runs,
+            id_map=id_map,
+            paused_work_item_ids=paused_wids,
         )
         result = TeamStepResult()
         result.uncertain_step_ids = list(uncertain)

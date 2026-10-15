@@ -23,7 +23,7 @@ from typing import Any
 
 from .privacy_choke import strip_tags
 
-JOURNAL_KINDS = ("note", "progress", "handoff", "blocker", "decision")
+JOURNAL_KINDS = ("note", "progress", "handoff", "blocker", "decision", "delegation")
 
 #: Deletion-scope reminder, shown in every disband plan / cleanup checklist:
 #: ZN deletes its own team records only. Workspace files and browser logins

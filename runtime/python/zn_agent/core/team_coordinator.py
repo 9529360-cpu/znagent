@@ -399,6 +399,7 @@ class TeamCoordinator:
         runs: Mapping[str, Any] | None = None,
         id_map: Mapping[str, str] | None = None,
         progress_ledger: ProgressLedger | None = None,
+        paused_work_item_ids: Any | None = None,
     ) -> list[CoordinatorDecision]:
         """Compute the next decisions for the team, in plan order.
 
@@ -440,6 +441,27 @@ class TeamCoordinator:
             if item.status == "completed":
                 continue
             all_completed = False
+
+            # DSH-7: a paused delegation is frozen -- no dispatch,
+            # verify, complete, or stall escalation while paused. The
+            # check sits before every action branch on purpose: pausing
+            # must not let a verify / complete / escalate slip through
+            # for an item the supervisor froze. Unpausing resumes the
+            # same run; nothing is re-decided from scratch.
+            if paused_work_item_ids is not None and (
+                lookup_id in paused_work_item_ids
+            ):
+                decisions.append(
+                    CoordinatorDecision(
+                        action="wait",
+                        work_item_id=item.work_item_id,
+                        reason=(
+                            "delegation paused by supervisor (DSH-7); "
+                            "resume to continue"
+                        ),
+                    )
+                )
+                continue
 
             readiness = ledger.dependency_readiness(item.work_item_id)
             run = runs.get(item.work_item_id)

@@ -81,6 +81,23 @@ Known boundary (pre-existing, verified on clean main, not introduced here): the 
 
 Evidence: `test_repeat_reminder.py` (10 tests: key-order invariance, reminders exactly at 3/5/8 with the detailed form naming tool + params, consecutive-reset, new-message / new-run reset) + `test_team_feedback_loop.py` (loop wiring: the 3rd identical dispatch injects the short reminder into the next question and the loop keeps asking; resident-wiring: 5/8 detailed reminders through the real observe hook + reset).
 
+## Continuable sub-agent delegations (DSH-7): delegate / append / interrupt / resume
+
+A delegation is the supervisor's continuable handle on one specialist working one plan item (`supervisor -> one specialist -> one plan item -> one live run`). It is not a second control plane: the runner still dispatches, the resident still executes steps, and completion is still decided only by the claim / verification path. Four transitions, all supervisor-only owner APIs with deliberately NO tool spec -- a sub-agent cannot append to, pause, or resume any delegation (including its own):
+
+- **Delegate** names the current holder of a plan item. It never reassigns (reassignment is AF-4 handoff's job) and never completes (only claim / verification completes).
+- **Append** queues an adjacent message (supplement / course-correct) for a running delegation. The owner delivers it into the sub-agent's NEXT cognition question exactly once, then marks it delivered in team shared memory.
+- **Interrupt** pauses a delegation: the coordinator answers "wait" for its item (never dispatch / verify / complete / escalate while paused) and the resident sends it no cognition. The live run is kept with its evidence; the item is not failed. A Body action dispatched before the pause may still land once -- pause stops new work, it does not drop an in-flight completion.
+- **Resume** unpauses it: the SAME live run continues with its existing evidence, never a fresh dispatch from scratch. An optional resume value rides along as one more cognition input, delivered once.
+
+Permission boundary (structural, not prompt-only): appended messages are delivered as quoted supervisor *context* under a non-authority guard -- they never change tools, permissions, or approval state, never approve anything, and any destructive step still needs its normal approval. The delegation record holds messages + pause state only; no approval / authority fields exist for a message to flip. The delegation is per-item: after an AF-4 handoff the record follows the new holder, and pending messages belong to the item's work.
+
+Persistence: delegation records live in team shared memory (the same durable store as the AF-4 handoff log and the LG-2 interrupt record); no new persistence mechanism. Pause / resume are journaled (kind `delegation`); appends are not journaled (their durable record is the audit trail).
+
+Evidence: `test_subagent_delegation.py` (16 tests: pure state machine incl. cap / double-pause / resume-without-pause / completed-wins-over-paused; owner validation incl. delegate-must-name-current-holder; advance-level exactly-once delivery of messages and resume values; pause-before-dispatch suppresses dispatch; pause freezes the live run and resume continues the same run id; coordinator pause gate incl. deferred verification of a landed claim; full resident loop: Q2 carries the appended message with the guard, paused pulses make zero cognition calls and keep the same run, Q3 carries the resume value without repeating the message, and the resumed run executes to disk).
+
+Known boundary: delivery marking happens in the same owner step that attaches input to the live context (the same commit-point semantics as the LG-2 resume-value pop). A crash before that owner step leaves everything pending for the next pulse; nothing is marked delivered without being attached.
+
 ## Recently retired scenario-owned surfaces
 
 The cleanup removes product code whose primary owner was a narrow representative task rather than a reusable capability contract, including:
