@@ -5,10 +5,12 @@ import sys
 import threading
 import time
 from dataclasses import asdict
+from pathlib import Path
 from typing import Any, Callable, Sequence, TextIO
 
 from .approval_cards import ApprovalCardStore
 from .approval_review import undo_approved_change
+from .checkpoint import CheckpointStore
 from .error_safety import public_exception_text
 from .workspace_file_discipline import default_workspace_root
 from .mcp_read_capability_host import ApprovedMcpReadProvider, McpReadCapabilityHost
@@ -79,6 +81,25 @@ class ResidentRpcServer:
         self._world_thread: threading.Thread | None = None
         self._fatal_life_error_handler: Callable[[BaseException], None] | None = None
         self._approval_store: ApprovalCardStore | None = None
+
+    def _checkpoint_store(
+        self, params: dict[str, Any], *, allowed: set[str]
+    ) -> CheckpointStore:
+        """Build the checkpoint store for one checkpoint_* RPC call.
+
+        ``workspace_root`` is optional and defaults to the product
+        workspace root; tests pass an explicit temp root so no real
+        workspace is ever touched. Unknown params are rejected so a
+        typo cannot silently change what the RPC does.
+        """
+        unknown = set(params) - set(allowed)
+        if unknown:
+            raise ValueError(
+                "unknown checkpoint params: " + ", ".join(sorted(unknown))
+            )
+        raw_root = str(params.get("workspace_root") or "").strip()
+        root = Path(raw_root).expanduser() if raw_root else default_workspace_root()
+        return CheckpointStore(root)
 
     def _approvals(self) -> ApprovalCardStore:
         if self._approval_store is None:
@@ -447,11 +468,63 @@ class ResidentRpcServer:
             # CUR-4: one-click undo of an applied (consumed) approval.
             # Restores the file to its pre-change snapshot; the replaced
             # version goes to trash first, so undo never destroys data.
+            # CUR-3: a major change gets an automatic pre-change
+            # checkpoint first (trigger pre_undo), so the pre-undo
+            # workspace state stays recoverable even beyond trash.
             store = self._approvals()
+            request_id = str(params.get("request_id") or "")
+            pre_undo = CheckpointStore(default_workspace_root())
+            pre_undo_snapshot = pre_undo.ensure_pre_change_snapshot(
+                trigger="pre_undo",
+                reason=f"pre-undo backup for approval {request_id}",
+            )
             result = undo_approved_change(
                 store,
-                str(params.get("request_id") or ""),
+                request_id,
                 workspace_root=default_workspace_root(),
+            )
+            result["pre_undo_checkpoint_id"] = pre_undo_snapshot.checkpoint_id
+        elif method == "checkpoint_create":
+            # CUR-3: manual snapshot of the workspace files (git-free).
+            # Trigger is forced to manual: auto triggers (pre_restore /
+            # pre_undo) only happen server-side, never from an RPC caller.
+            store = self._checkpoint_store(
+                params, allowed={"workspace_root", "reason"}
+            )
+            result = store.create(
+                trigger="manual",
+                reason=str(params.get("reason") or ""),
+            ).to_dict()
+        elif method == "checkpoint_list":
+            store = self._checkpoint_store(
+                params, allowed={"workspace_root", "limit"}
+            )
+            result = store.list(
+                limit=max(1, min(200, int(params.get("limit") or 50))),
+            )
+        elif method == "checkpoint_preview":
+            store = self._checkpoint_store(
+                params, allowed={"workspace_root", "checkpoint_id"}
+            )
+            checkpoint_id = str(params.get("checkpoint_id") or "").strip()
+            if not checkpoint_id:
+                raise ValueError("checkpoint_preview requires checkpoint_id")
+            result = store.preview(checkpoint_id)
+        elif method == "checkpoint_restore":
+            # CUR-3: restore exactly one selected snapshot. The store
+            # takes an automatic pre-restore backup first, and the
+            # result carries the external-side-effects notice: restore
+            # cannot undo side effects that already happened outside
+            # the workspace. Callers must surface that notice.
+            store = self._checkpoint_store(
+                params, allowed={"workspace_root", "checkpoint_id", "reason"}
+            )
+            checkpoint_id = str(params.get("checkpoint_id") or "").strip()
+            if not checkpoint_id:
+                raise ValueError("checkpoint_restore requires checkpoint_id")
+            result = store.restore(
+                checkpoint_id,
+                reason=str(params.get("reason") or ""),
             )
         elif method == "approval_decide":
             store = self._approvals()
