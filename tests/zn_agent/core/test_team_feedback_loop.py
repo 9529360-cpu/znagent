@@ -547,6 +547,178 @@ class TeamFeedbackLoopTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
+    def test_tiered_repeat_reminders_fire_without_blocking(self):
+        """DSH-4 (loop wiring): the 3rd identical dispatch injects the
+        short reminder into the next cognition question, and the loop
+        keeps going -- the reminder never blocks anything.
+
+        The specialist proposes the SAME write_file step (same path,
+        same content) with a different objective each time, so #493's
+        same-objective rule stays silent and only the (tool, params)
+        identity repeats. The loop test stops at the short reminder:
+        further identical repeats trip pre-existing generic-layer
+        guards (verified on clean main, unrelated to DSH-4 -- an
+        identical run_python re-dispatch blocks in side-effect
+        recovery, and a 5th identical write_file dispatch crashes
+        the restore-point layer on intent_id). The 5/8 detailed
+        reminders are covered by the resident-wiring tests below
+        plus the pure-module threshold tests.
+        """
+        script = [
+            _proposal(
+                objective=f"写文件 第{index}次",
+                path="notes.md",
+                content="same content\n",
+            )
+            for index in range(1, 5)
+        ]
+        cognition = _ScriptedSpecialist(script=script)
+        with tempfile.TemporaryDirectory() as tmp:
+            resident, ledger, event, workspace = self._start(
+                Path(tmp), cognition
+            )
+            try:
+                terminal = None
+                for _ in range(80):
+                    terminal = resident.live_once()
+                    if any(
+                        "连续 3 次" in question
+                        for question in cognition.questions
+                    ):
+                        break
+                    if terminal is not None:
+                        break
+                short = [
+                    question
+                    for question in cognition.questions
+                    if "连续 3 次" in question
+                ]
+                self.assertTrue(
+                    short, "short 3-repeat reminder never reached a question"
+                )
+                self.assertNotIn(
+                    "参数为",
+                    short[0],
+                    "short reminder must not name parameters",
+                )
+                # Advisory only: the loop kept asking after the 3rd
+                # identical dispatch (a 4th question exists), and no
+                # terminal was caused by a reminder.
+                self.assertGreaterEqual(
+                    cognition.specialist_calls,
+                    4,
+                    "loop stalled after the 3rd identical dispatch",
+                )
+                if terminal is not None:
+                    self.assertNotIn(
+                        "提醒",
+                        str(terminal.reason or ""),
+                        "a reminder must never terminate the run",
+                    )
+            finally:
+                resident.store.close()
+
+    def test_repeat_reminder_wiring_detailed_and_reset(self):
+        """DSH-4 (resident wiring): 5/8 detailed reminders + reset.
+
+        Drives the resident's observe hook directly with fake
+        intents -- the full loop cannot reach 5 identical dispatches
+        (pre-existing generic-layer guards, see the loop test above),
+        but the hook is the same code the loop calls per dispatch.
+        Five identical run_python observes yield the detailed
+        5-repeat reminder naming run_python and its params; eight
+        identical write_file observes yield the 8-repeat reminder;
+        a new user message resets the count.
+        """
+        from types import SimpleNamespace
+
+        from zn_agent.core.repeat_reminder import pending_reminder
+        from zn_agent.core.team_work_resident import TeamWorkResidentRuntime
+
+        def _run_observe(*, tool, args, path, times, message_id="msg-1"):
+            state = SimpleNamespace(data={})
+            event = SimpleNamespace(
+                payload={"work_message_id": message_id}
+            )
+            context = {"run_id": "run-1"}
+            intent = SimpleNamespace(args=dict(args))
+            step_detail = {"action_kind": tool, "relative_path": path}
+            for _ in range(times):
+                TeamWorkResidentRuntime._observe_repeat_tool_call(
+                    TeamWorkResidentRuntime,
+                    event,
+                    state,
+                    context,
+                    intent,
+                    step_detail,
+                )
+            return state, pending_reminder(
+                state.data.get("team_repeat_reminder"),
+                run_id="run-1",
+                message_id=message_id,
+            )
+
+        _, reminder5 = _run_observe(
+            tool="run_python",
+            args={"command": "python script.py"},
+            path="script.py",
+            times=5,
+        )
+        self.assertIsNotNone(reminder5)
+        assert reminder5 is not None
+        self.assertIn("连续 5 次", reminder5)
+        self.assertIn("run_python", reminder5)
+        self.assertIn("path=script.py", reminder5)
+
+        _, reminder8 = _run_observe(
+            tool="write_file",
+            args={"content": "same content\n"},
+            path="notes.md",
+            times=8,
+        )
+        self.assertIsNotNone(reminder8)
+        assert reminder8 is not None
+        self.assertIn("连续 8 次", reminder8)
+        self.assertIn("write_file", reminder8)
+        self.assertIn("path=notes.md", reminder8)
+
+        # A new user message resets the count: the next identical
+        # call starts a fresh streak of 1, and no stale reminder shows.
+        state = SimpleNamespace(data={})
+        event = SimpleNamespace(payload={"work_message_id": "msg-1"})
+        context = {"run_id": "run-1"}
+        intent = SimpleNamespace(args={"content": "same content\n"})
+        step_detail = {"action_kind": "write_file", "relative_path": "notes.md"}
+        for _ in range(2):
+            TeamWorkResidentRuntime._observe_repeat_tool_call(
+                TeamWorkResidentRuntime,
+                event,
+                state,
+                context,
+                intent,
+                step_detail,
+            )
+        new_event = SimpleNamespace(payload={"work_message_id": "msg-2"})
+        self.assertIsNone(
+            pending_reminder(
+                state.data.get("team_repeat_reminder"),
+                run_id="run-1",
+                message_id="msg-2",
+            )
+        )
+        TeamWorkResidentRuntime._observe_repeat_tool_call(
+            TeamWorkResidentRuntime,
+            new_event,
+            state,
+            context,
+            intent,
+            step_detail,
+        )
+        history = state.data.get("team_repeat_reminder")
+        assert isinstance(history, dict)
+        self.assertEqual(history.get("streak"), 1)
+        self.assertIsNone(history.get("pending_reminder"))
+
 
 if __name__ == "__main__":
     unittest.main()

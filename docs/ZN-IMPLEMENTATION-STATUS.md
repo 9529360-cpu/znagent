@@ -71,6 +71,16 @@ Interrupted tool calls resume as unknown, never retried. The detector is durable
 
 Evidence: `test_dsh3_checkpoint_failclosed.py` (12 tests), including save/load failure raising, step() propagating a save failure, interrupted-pulse marking with no second dispatch, first-pulse crash, and uncertainty clearing on completion.
 
+## Tiered repeat reminders (DSH-4): advisory nudges, never a gate
+
+When a specialist repeats the *same tool call* -- same tool, same parameters -- the resident injects a graded reminder into the next cognition question: a short reminder at 3 consecutive repeats, a detailed reminder naming the tool and its parameters at 5 and at 8. The reminder is advice, not enforcement: it never blocks, rejects, escalates, or changes execution, and the run continues exactly as it would without it.
+
+Complement to #493 (hard rewrite-loop escalation), not a second copy. #493 counts *verified evidence* -- identical (objective, path, content) twice or the same (objective, path) four times -- and escalates. DSH-4 (`repeat_reminder.py`) counts *dispatched tool calls* -- (tool, params) with no objective in the identity -- so it also catches repeats #493 cannot see (the same call re-proposed under a different objective, or a run_python call with identical args), and it nudges *before* the hard escalation fires instead of replacing it. The observation point is `_begin_team_step` (one dispatched step = one tool call; a rejected proposal was never called and is not counted). Identity is exact matching over a canonical form: parameters are normalized with deep-sorted keys and serialized deterministically before hashing, so key order never changes the identity and any value difference is a different call. A new user message (`work_message_id` change) or a new run clears the count.
+
+Known boundary (pre-existing, verified on clean main, not introduced here): the full loop cannot drive many identical repeats through the Body -- an identical run_python re-dispatch blocks in side-effect recovery, and a 5th identical write_file dispatch crashes the restore-point layer on intent_id. Those generic-layer guards cap how far identical repeats can go in practice; DSH-4 does not touch them.
+
+Evidence: `test_repeat_reminder.py` (10 tests: key-order invariance, reminders exactly at 3/5/8 with the detailed form naming tool + params, consecutive-reset, new-message / new-run reset) + `test_team_feedback_loop.py` (loop wiring: the 3rd identical dispatch injects the short reminder into the next question and the loop keeps asking; resident-wiring: 5/8 detailed reminders through the real observe hook + reset).
+
 ## Recently retired scenario-owned surfaces
 
 The cleanup removes product code whose primary owner was a narrow representative task rather than a reusable capability contract, including:

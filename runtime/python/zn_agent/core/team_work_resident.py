@@ -47,6 +47,7 @@ from .action import NativeActionIntent
 from .broad_goal_coding_resident import BroadGoalCodingResidentRuntime
 from .cognition import CognitiveIncrement
 from .models import ExecutionPath, utc_now
+from .repeat_reminder import observe_tool_call, pending_reminder
 from .plan_mode import (
     PLAN_GATE_STATE_KEY,
     parse_plan_proposal,
@@ -110,6 +111,12 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
     # circling without converging -- escalate instead of spinning.
     _MAX_IDENTICAL_CONTENT_REWRITES = 2
     _MAX_SAME_OBJECTIVE_STEPS = 4
+    # DSH-4: tiered repeat reminders (advisory only, never a gate).
+    # One dispatched specialist step = one tool call; consecutive
+    # identical (tool, params) calls at streaks 3/5/8 leave a pending
+    # reminder for the next cognition question. A new user message
+    # (work_message_id change) or a new run clears the count.
+    _TEAM_REPEAT_KEY = "team_repeat_reminder"
 
     # -- disband: DisbandPlan executed for real (P3-8) ---------------------
 
@@ -623,6 +630,50 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
 
     # -- cognition: scope the question to the live specialist ----------------
 
+    def _observe_repeat_tool_call(self, event, state, context, intent, step_detail):
+        """Record one dispatched specialist step for DSH-4 reminders.
+
+        Tool identity is (action kind, params) with no objective, so a
+        repeat re-proposed under a different objective still counts.
+        write_file params are path + content; run_python params are
+        path + the dispatched command (interpreter + script + args).
+        Unknown action kinds are not observed. Advisory only: this
+        mutates one working-state key and never touches the dispatch.
+        """
+        action_kind = str(step_detail.get("action_kind") or "")
+        relative_path = str(step_detail.get("relative_path") or "")
+        args = intent.args if isinstance(intent.args, dict) else {}
+        if action_kind == "write_file":
+            content = args.get("content")
+            content_text = content if isinstance(content, str) else ""
+            params = {"path": relative_path, "content": content_text}
+            display = (
+                f"path={relative_path}, content={content_text[:200]!r}"
+            )
+        elif action_kind == "run_python":
+            command = args.get("command")
+            command_text = command if isinstance(command, str) else ""
+            params = {"path": relative_path, "command": command_text}
+            display = (
+                f"path={relative_path}, command={command_text[:300]!r}"
+            )
+        else:
+            return
+        history = state.data.get(self._TEAM_REPEAT_KEY)
+        if not isinstance(history, dict):
+            history = {}
+        observe_tool_call(
+            history,
+            run_id=str(context.get("run_id") or ""),
+            message_id=_work_message_id(event),
+            tool=action_kind,
+            params=params,
+            params_display=display,
+        )
+        state.data[self._TEAM_REPEAT_KEY] = history
+
+    # -- cognition: scope the question to the live specialist ----------------
+
     def _build_cognition_request(self, event, impasse, required, deliberation=None):
         request = super()._build_cognition_request(
             event,
@@ -690,6 +741,16 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 "已批准的计划（用户改完批准的版本，按它执行，不要重新"
                 f"规划，不要偏离）：{approved_plan[:6000]} "
             )
+        # DSH-4: tiered repeat reminder (advisory only) for the live run.
+        repeat_text = ""
+        repeat_history = state.data.get(self._TEAM_REPEAT_KEY)
+        repeat_reminder = pending_reminder(
+            repeat_history,
+            run_id=str(context.get("run_id") or ""),
+            message_id=_work_message_id(event),
+        )
+        if repeat_reminder:
+            repeat_text = f"{repeat_reminder} "
         request.question = (
             "You are the "
             f"{context.get('specialist_name') or 'specialist'} specialist on one "
@@ -753,6 +814,7 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             "or a non-empty \"unfinished\" list will be sent back for rework; "
             "repeated identical rejections escalate to the user. "
             f"{rejection_text}"
+            f"{repeat_text}"
             f"{resume_text}"
             f"Your brief: {context.get('specialist_prompt') or ''} "
             f"Your item: {context.get('objective') or ''}. "
@@ -1242,6 +1304,12 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             content_hash = hashlib.sha256(
                 raw_content.encode("utf-8", errors="replace")
             ).hexdigest()[:16]
+        # DSH-4: one dispatched step = one tool call. Observe it for the
+        # tiered repeat reminder (advisory only: this never blocks,
+        # rejects, or changes the dispatch below).
+        self._observe_repeat_tool_call(
+            event, state, context, intent, step_detail
+        )
         state.data[self._TEAM_STEP_KEY] = {
             "run_id": str(context.get("run_id") or ""),
             "work_item_id": str(context.get("work_item_id") or ""),
@@ -1410,6 +1478,14 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             "intent_id": intent.intent_id,
             "action_signature": self._intent_signature(intent),
         }
+
+
+def _work_message_id(event: Any) -> str:
+    """User-message id carried by an event payload ("" when absent)."""
+    payload = getattr(event, "payload", None)
+    if not isinstance(payload, dict):
+        return ""
+    return str(payload.get("work_message_id") or "").strip()
 
 
 def _identity(event: Any, increment: Any) -> str:
