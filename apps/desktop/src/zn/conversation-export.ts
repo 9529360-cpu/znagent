@@ -1,4 +1,14 @@
-import type { ZnThread, ZnThreadMessage } from './state'
+// Pure serializable input contract: deliberately independent of renderer
+// globals and Resident internals, so export can be tested in a Node context.
+export type ZnExportableConversation = {
+  id: string
+  title: string
+  messages: readonly {
+    role: 'user' | 'zn' | 'activity'
+    text: string
+    at: number
+  }[]
+}
 
 export type ZnConversationExportFormat = 'markdown' | 'json'
 
@@ -9,13 +19,13 @@ export type ZnConversationExportFormat = 'markdown' | 'json'
  * The user may choose to share an exported file, so include only the
  * conversation content already visible in the transcript.
  */
-export function znConversationExportPayload(thread: ZnThread) {
+export function znConversationExportPayload(thread: ZnExportableConversation) {
   return {
     format: 'zn-conversation-v1' as const,
     threadId: thread.id,
     title: thread.title,
     messages: thread.messages
-      .filter((message): message is ZnThreadMessage => message.role === 'user' || message.role === 'zn')
+      .filter(message => message.role === 'user' || message.role === 'zn')
       .map(message => ({
         role: message.role === 'user' ? 'user' as const : 'assistant' as const,
         text: message.text,
@@ -24,7 +34,7 @@ export function znConversationExportPayload(thread: ZnThread) {
   }
 }
 
-export function znExportConversation(thread: ZnThread, format: ZnConversationExportFormat): string {
+export function znExportConversation(thread: ZnExportableConversation, format: ZnConversationExportFormat): string {
   const payload = znConversationExportPayload(thread)
   if (format === 'json') return JSON.stringify(payload, null, 2) + '\n'
   const heading = payload.title.replace(/[\r\n]+/g, ' ').trim() || 'ZN conversation'
@@ -35,7 +45,7 @@ export function znExportConversation(thread: ZnThread, format: ZnConversationExp
   return '# ' + heading + '\n\n' + messages.join('\n')
 }
 
-export function znExportFilename(thread: ZnThread, format: ZnConversationExportFormat): string {
+export function znExportFilename(thread: ZnExportableConversation, format: ZnConversationExportFormat): string {
   const stem = thread.title.normalize('NFKC')
     .replace(/[^a-zA-Z0-9\u4e00-\u9fff_-]+/g, '-')
     .replace(/^-+|-+$/g, '')
