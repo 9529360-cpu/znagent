@@ -144,6 +144,8 @@ class RelevantMemoryContextTests(unittest.TestCase):
         self.assertEqual(len(huge), 1)
         self.assertTrue(str(huge[0]["value"]).startswith("[redacted: field exceeded"))
         self.assertNotIn("x" * 100, str(huge[0]["value"]))
+        # 例外审查条件 2：畸形 bad 记录必须被跳过，不在结果中。
+        self.assertNotIn("bad", [fact["key"] for fact in result])
 
 
 if __name__ == "__main__":
