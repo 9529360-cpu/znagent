@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 
 from .credential_isolation import CredentialRedactingFilter
 from .models import Goal, ModelRoute, WorkerResult
+from .proxy_env import build_sdk_client
 
 
 @dataclass(slots=True)
@@ -291,7 +292,9 @@ class OpenAICompatibleCognitiveResource:
         timeout = self.route.metadata.get("timeout")
         if timeout is not None:
             kwargs["timeout"] = timeout
-        return builder(**kwargs)
+        # Malformed proxy env must never take cognition offline: fall back to
+        # a direct-connection http_client instead of crashing at construction.
+        return build_sdk_client(builder, **kwargs)
 
     def invoke(
         self,
