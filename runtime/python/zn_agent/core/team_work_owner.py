@@ -40,6 +40,29 @@ from .specialist_workspace import (
     materialize_team_workspaces,
     specialist_prompt_for,
 )
+from .subagent_delegation import (
+    DELEGATIONS_CAP,
+    STATUS_PAUSED,
+    append_message as _delegation_append_message,
+)
+from .subagent_delegation import (
+    effective_status as _delegation_effective_status,
+)
+from .subagent_delegation import (
+    mark_delivered as _delegation_mark_delivered,
+)
+from .subagent_delegation import (
+    new_delegation as _new_delegation,
+)
+from .subagent_delegation import (
+    pause_delegation as _delegation_pause,
+)
+from .subagent_delegation import (
+    pending_delivery as _delegation_pending_delivery,
+)
+from .subagent_delegation import (
+    resume_delegation as _delegation_resume,
+)
 from .team_memory import team_shared_memory
 from .team_runner import (
     Checkpoint,
@@ -108,6 +131,17 @@ class TeamOwnerStep:
     # on this pulse (durable records; see HandoffRecord). Empty when the
     # middleware ran clean with nothing to do.
     handoffs: list[dict[str, Any]] = field(default_factory=list)
+    # DSH-7: the paused delegation blocking this pulse, if any (see
+    # ``paused_delegation`` below). Set only when the pause actually
+    # blocks progress -- the live delegation itself is paused, or no
+    # live run exists and a paused delegation is the reason nothing
+    # was dispatched. The resident blocks the event (no cognition)
+    # while this is set; other delegations keep running.
+    paused_delegation: dict[str, Any] | None = None
+    # DSH-7: appended messages delivered into this pulse's live context
+    # (exactly once; marked delivered in team shared memory). Empty
+    # when nothing was pending.
+    delivered_messages: list[dict[str, Any]] = field(default_factory=list)
     # DSH-3: plan-step ids whose in-flight tool call outcome is unknown
     # because the previous pulse was interrupted (see TeamRunner).
     # The steps were marked uncertain, never re-dispatched.
@@ -159,6 +193,11 @@ HANDOFF_REQUESTS_CAP = 50
 HANDOFF_PROGRESS_CAP = 2000
 #: Max evidence refs kept in one record.
 HANDOFF_EVIDENCE_CAP = 20
+
+#: Team shared-memory key holding the durable sub-agent delegation
+#: records (DSH-7): one per plan item the supervisor has touched, each
+#: with its appended messages + pause/resume state.
+TEAM_DELEGATIONS_KEY = "team_subagent_delegations"
 
 #: Capability signals: capability label -> keywords. A member "has" a
 #: capability when any keyword appears in its role key / title /
@@ -952,6 +991,13 @@ class TeamWorkOwner:
             # (resolve_team applies the durable overrides handoff wrote).
             team = self.resolve_team(event=event, state=state, thread_id=thread_id)
         claim_outcome = self._apply_pending_claim(state=state, team=team)
+        # DSH-7: paused delegations freeze their items (coordinator
+        # answers "wait", never dispatch / verify / complete), while
+        # every other delegation keeps running. Plan-item ids travel
+        # to the runner, which translates them to work-item ids AFTER
+        # ensure_plan_items builds the plan map (the map is empty
+        # before the first pulse, so translating here would miss).
+        paused_plan_ids = self._paused_plan_item_ids(team=team)
         runner = TeamRunner(
             team=team,
             ledger=self.ledger,
@@ -959,6 +1005,7 @@ class TeamWorkOwner:
             verifier=ResidentTeamVerifier(self.ledger),
             root_work_item_id=root_work_item_id,
             checkpoint_storage=self.checkpoint_storage,
+            paused_plan_item_ids=paused_plan_ids,
         )
         result = runner.step()
         if result.stopped:
@@ -1012,6 +1059,19 @@ class TeamWorkOwner:
             for plan_item in team.plan:
                 if id_map.get(plan_item.item_id) == live.work_item_id:
                     step.live_specialist_name = plan_item.assignee
+                    # DSH-7: the live delegation is paused -- freeze it.
+                    # No live context is built (the resident blocks
+                    # before cognition), and pending messages stay
+                    # pending for delivery after the resume.
+                    if self._is_delegation_paused(
+                        team=team, plan_item_id=plan_item.item_id
+                    ):
+                        step.paused_delegation = (
+                            self._public_paused_delegation(
+                                team=team, plan_item=plan_item
+                            )
+                        )
+                        break
                     specialist = team.member(plan_item.assignee)
                     # File workspaces are the source of truth: re-read on
                     # every dispatch so a SOUL.md edit takes effect next time.
@@ -1058,9 +1118,28 @@ class TeamWorkOwner:
                             for entry in verified_evidence(live)
                         ],
                     }
+                    # DSH-7: deliver this delegation's pending input
+                    # (appended messages + resume value) into the live
+                    # context exactly once; the resident injects it
+                    # into the next cognition question.
+                    step.delivered_messages = self._deliver_delegation_input(
+                        team=team, plan_item=plan_item, live_context=step.live_context
+                    )
                     break
         else:
             step.message = "team runner step applied; " + "; ".join(result.actions)[:600]
+            # DSH-7: nothing live and nothing dispatched this pulse --
+            # if a paused delegation is the reason, say so explicitly
+            # instead of leaving the resident on a generic "driving"
+            # message. Cognition is already skipped in this state; the
+            # pause block only makes the wait legible.
+            if not any(
+                str(action or "").startswith("dispatched:")
+                for action in result.actions
+            ):
+                paused = self._first_paused_delegation(team=team)
+                if paused is not None:
+                    step.paused_delegation = paused
         step.handoffs = [
             *handoff_result.executed,
             *handoff_result.rejected,
@@ -1544,6 +1623,399 @@ class TeamWorkOwner:
         return result
 
 
+    # -- sub-agent delegations (DSH-7) ------------------------------------
+    #
+    # A delegation is the supervisor's continuable handle on one
+    # specialist working one plan item. Supervisor-only owner APIs:
+    # there is deliberately NO tool spec for these -- a sub-agent
+    # cannot append to, pause, or resume any delegation (including its
+    # own). Appended messages are delivered as quoted supervisor
+    # context into the next cognition question; they never carry
+    # authority (see subagent_delegation.format_delegation_context).
+    # Reassignment is NOT done here -- use AF-4 handoff for that.
+    # Completion is NOT done here -- only the claim / verification
+    # path can complete a plan item.
+
+    def _load_delegations(self, *, team_id: str) -> list[dict[str, Any]]:
+        try:
+            match = self._shared(team_id).recall(TEAM_DELEGATIONS_KEY)
+        except (
+            AttributeError,
+            KeyError,
+            LookupError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ):
+            return []
+        if match is None or not isinstance(match.value, list):
+            return []
+        return [
+            dict(entry) for entry in match.value if isinstance(entry, dict)
+        ]
+
+    def _save_delegations(
+        self, *, team_id: str, records: list[dict[str, Any]]
+    ) -> None:
+        self._shared(team_id).remember(
+            TEAM_DELEGATIONS_KEY, [dict(entry) for entry in records][-DELEGATIONS_CAP:]
+        )
+
+    @staticmethod
+    def _find_delegation(
+        records: list[dict[str, Any]], plan_item_id: str
+    ) -> dict[str, Any] | None:
+        for record in records:
+            if str(record.get("plan_item_id") or "") == plan_item_id:
+                return record
+        return None
+
+    def _get_or_create_delegation(
+        self, *, team: ProjectTeam, plan_item_id: str
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], Any]:
+        """The delegation record for an item, creating it if needed.
+
+        Validates the item exists (on the effective team) and is not
+        completed. The specialist defaults to the item's current
+        assignee -- the delegation names the holder, it never picks a
+        new one. Returns (records, record, plan_item); the caller
+        persists via :meth:`_save_delegations` after mutating.
+        """
+        effective = self._effective_team(team)
+        plan_item = self._plan_item(effective, str(plan_item_id or ""))
+        if plan_item is None:
+            raise ValueError(f"unknown plan item: {plan_item_id!r}")
+        if plan_item.item_id in self._completed_plan_item_ids(effective):
+            raise ValueError(
+                f"plan item {plan_item.item_id} is already completed"
+            )
+        records = self._load_delegations(team_id=effective.team_id)
+        record = self._find_delegation(records, plan_item.item_id)
+        if record is None:
+            record = _new_delegation(
+                team_id=effective.team_id,
+                plan_item_id=plan_item.item_id,
+                specialist=str(plan_item.assignee or ""),
+                now_iso=self._now_iso(None),
+            )
+            records.append(record)
+        else:
+            # The delegation is per-item; its specialist is always the
+            # CURRENT holder. After an AF-4 handoff the holder changed,
+            # so the record follows -- pending messages belong to the
+            # item's work, and the new holder sees them.
+            record["specialist"] = str(plan_item.assignee or "")
+        return records, record, plan_item
+
+    def _is_delegation_paused(
+        self, *, team: ProjectTeam, plan_item_id: str
+    ) -> bool:
+        effective = self._effective_team(team)
+        record = self._find_delegation(
+            self._load_delegations(team_id=effective.team_id),
+            str(plan_item_id or ""),
+        )
+        if record is None:
+            return False
+        return (
+            _delegation_effective_status(
+                record,
+                completed=plan_item_id
+                in self._completed_plan_item_ids(effective),
+            )
+            == STATUS_PAUSED
+        )
+
+    def _public_paused_delegation(
+        self, *, team: ProjectTeam, plan_item: Any
+    ) -> dict[str, Any] | None:
+        effective = self._effective_team(team)
+        record = self._find_delegation(
+            self._load_delegations(team_id=effective.team_id),
+            str(plan_item.item_id or ""),
+        )
+        if record is None:
+            return None
+        return {
+            "delegation_id": str(record.get("delegation_id") or ""),
+            "team_id": effective.team_id,
+            "plan_item_id": str(plan_item.item_id or ""),
+            "item_title": str(plan_item.title or ""),
+            "specialist": str(record.get("specialist") or ""),
+            "status": STATUS_PAUSED,
+            "pause_reason": str(record.get("pause_reason") or ""),
+            "paused_at": str(record.get("paused_at") or ""),
+        }
+
+    def _first_paused_delegation(
+        self, *, team: ProjectTeam
+    ) -> dict[str, Any] | None:
+        effective = self._effective_team(team)
+        for plan_item in effective.plan:
+            if self._is_delegation_paused(
+                team=effective, plan_item_id=plan_item.item_id
+            ):
+                return self._public_paused_delegation(
+                    team=effective, plan_item=plan_item
+                )
+        return None
+
+    def _paused_plan_item_ids(self, *, team: ProjectTeam) -> frozenset[str]:
+        """Plan-item ids whose delegations are paused (runner input)."""
+        effective = self._effective_team(team)
+        completed = self._completed_plan_item_ids(effective)
+        records = self._load_delegations(team_id=effective.team_id)
+        paused: set[str] = set()
+        for record in records:
+            plan_item_id = str(record.get("plan_item_id") or "")
+            if not plan_item_id or plan_item_id in completed:
+                continue
+            if str(record.get("status") or "") != STATUS_PAUSED:
+                continue
+            paused.add(plan_item_id)
+        return frozenset(paused)
+
+    def _deliver_delegation_input(
+        self,
+        *,
+        team: ProjectTeam,
+        plan_item: Any,
+        live_context: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        """Attach pending delegation input to a live context, once.
+
+        Pending appended messages + the pending resume value ride into
+        ``live_context`` (the resident injects them into the next
+        cognition question) and are marked delivered in the same step.
+        Returns public copies of the messages delivered this pulse.
+        """
+        effective = self._effective_team(team)
+        records = self._load_delegations(team_id=effective.team_id)
+        record = self._find_delegation(records, str(plan_item.item_id or ""))
+        if record is None:
+            return []
+        pending, resume_value = _delegation_pending_delivery(record)
+        if not pending and resume_value is None:
+            return []
+        delivered = [
+            {
+                "message_id": str(message.get("message_id") or ""),
+                "author": str(message.get("author") or "supervisor"),
+                "text": str(message.get("text") or ""),
+            }
+            for message in pending
+        ]
+        live_context["appended_messages"] = [
+            {
+                "message_id": str(message.get("message_id") or ""),
+                "author": str(message.get("author") or "supervisor"),
+                "text": str(message.get("text") or ""),
+            }
+            for message in pending
+        ]
+        if resume_value is not None:
+            live_context["delegation_resume"] = resume_value
+        _delegation_mark_delivered(
+            record,
+            message_ids=[str(message.get("message_id") or "") for message in pending],
+            now_iso=self._now_iso(None),
+        )
+        self._save_delegations(team_id=effective.team_id, records=records)
+        return delivered
+
+    def _journal_delegation(
+        self,
+        *,
+        team: ProjectTeam,
+        record: dict[str, Any],
+        verb: str,
+        detail: str = "",
+    ) -> None:
+        """Journal a pause / resume (best-effort: never fails the op)."""
+        thread_id = team.work_thread_id or ""
+        if not thread_id:
+            return
+        try:
+            message = journal_message(
+                team.team_id,
+                "supervisor",
+                f"委托{verb}：{record.get('plan_item_id')} "
+                f"（{record.get('specialist')}）"
+                + (f"——{detail}" if detail else ""),
+                kind="delegation",
+            )
+            message["detail"].update(
+                {
+                    "delegation_id": record.get("delegation_id"),
+                    "plan_item_id": record.get("plan_item_id"),
+                    "specialist": record.get("specialist"),
+                    "status": record.get("status"),
+                }
+            )
+            self.ledger.append_message(
+                thread_id,
+                role=str(message.get("role") or ""),
+                text=str(message.get("text") or ""),
+                detail=dict(message.get("detail") or {}),
+            )
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return
+
+    def delegate(
+        self,
+        *,
+        team: ProjectTeam,
+        plan_item_id: str,
+        specialist: str,
+    ) -> dict[str, Any]:
+        """Name the current holder of a plan item as its delegation.
+
+        Validates: item exists, specialist is a member, specialist IS
+        the current assignee (reassignment goes through AF-4 handoff,
+        never here), item not completed. Idempotent: calling twice for
+        the same item returns the existing record.
+        """
+        effective = self._effective_team(team)
+        plan_item = self._plan_item(effective, str(plan_item_id or ""))
+        if plan_item is None:
+            raise ValueError(f"unknown plan item: {plan_item_id!r}")
+        members = {member.name for member in effective.members}
+        if str(specialist or "") not in members:
+            raise ValueError(f"unknown specialist: {specialist!r}")
+        if str(plan_item.assignee or "") != str(specialist or ""):
+            raise ValueError(
+                f"plan item {plan_item.item_id} is held by "
+                f"{plan_item.assignee!r}, not {specialist!r}; "
+                "use handoff to reassign"
+            )
+        records, record, _ = self._get_or_create_delegation(
+            team=effective, plan_item_id=plan_item.item_id
+        )
+        self._save_delegations(team_id=effective.team_id, records=records)
+        return dict(record)
+
+    def append_delegation_message(
+        self,
+        *,
+        team: ProjectTeam,
+        plan_item_id: str,
+        text: str,
+        author: str = "supervisor",
+    ) -> dict[str, Any]:
+        """Append an adjacent message to a running delegation.
+
+        The supervisor's follow-up (supplement / course-correct) for a
+        sub-agent already at work. Auto-creates the delegation record
+        for the item's current holder when none exists. The message
+        is queued as pending and delivered into the sub-agent's NEXT
+        cognition question (exactly once, via :meth:`advance`); it
+        executes nothing by itself and carries no authority.
+        """
+        records, record, _ = self._get_or_create_delegation(
+            team=team, plan_item_id=str(plan_item_id or "")
+        )
+        message = _delegation_append_message(
+            record,
+            text=text,
+            author=str(author or "supervisor").strip() or "supervisor",
+            message_id=f"msg-{uuid.uuid4().hex[:12]}",
+            now_iso=self._now_iso(None),
+        )
+        effective = self._effective_team(team)
+        self._save_delegations(team_id=effective.team_id, records=records)
+        return message
+
+    def interrupt_delegation(
+        self,
+        *,
+        team: ProjectTeam,
+        plan_item_id: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        """Pause a delegation: freeze it, keep its live run + evidence.
+
+        The coordinator dispatches nothing for the item while paused,
+        and the resident sends it no cognition. The live run is NOT
+        abandoned and the item is NOT failed -- :meth:`resume_delegation`
+        continues the same run. Auto-creates the delegation record
+        when none exists.
+        """
+        records, record, _ = self._get_or_create_delegation(
+            team=team, plan_item_id=str(plan_item_id or "")
+        )
+        _delegation_pause(record, reason=reason, now_iso=self._now_iso(None))
+        effective = self._effective_team(team)
+        self._save_delegations(team_id=effective.team_id, records=records)
+        self._journal_delegation(
+            team=effective,
+            record=record,
+            verb="已暂停",
+            detail=str(reason or "").strip()[:600],
+        )
+        return dict(record)
+
+    def resume_delegation(
+        self,
+        *,
+        team: ProjectTeam,
+        plan_item_id: str,
+        resume_value: str = "",
+    ) -> dict[str, Any]:
+        """Resume a paused delegation: the same live run continues.
+
+        Raises when the delegation is not paused or its item already
+        completed. An optional resume value rides along as one more
+        cognition input on the next pulse (delivered once, like an
+        appended message); empty means a plain unpause.
+        """
+        effective = self._effective_team(team)
+        plan_item = self._plan_item(effective, str(plan_item_id or ""))
+        if plan_item is None:
+            raise ValueError(f"unknown plan item: {plan_item_id!r}")
+        if plan_item.item_id in self._completed_plan_item_ids(effective):
+            raise ValueError(
+                f"plan item {plan_item.item_id} is already completed"
+            )
+        records = self._load_delegations(team_id=effective.team_id)
+        record = self._find_delegation(records, plan_item.item_id)
+        if record is None:
+            raise ValueError(
+                f"plan item {plan_item.item_id} has no delegation to resume"
+            )
+        _delegation_resume(
+            record, resume_value=resume_value, now_iso=self._now_iso(None)
+        )
+        self._save_delegations(team_id=effective.team_id, records=records)
+        self._journal_delegation(
+            team=effective, record=record, verb="已恢复"
+        )
+        return dict(record)
+
+    def list_delegations(self, *, team: ProjectTeam) -> list[dict[str, Any]]:
+        """Delegation records for a team, with derived effective status."""
+        effective = self._effective_team(team)
+        completed = self._completed_plan_item_ids(effective)
+        titles = {
+            plan_item.item_id: str(plan_item.title or "")
+            for plan_item in effective.plan
+        }
+        result = []
+        for record in self._load_delegations(team_id=effective.team_id):
+            plan_item_id = str(record.get("plan_item_id") or "")
+            status = _delegation_effective_status(
+                record, completed=plan_item_id in completed
+            )
+            result.append(
+                {
+                    **dict(record),
+                    "status": status,
+                    "item_title": titles.get(plan_item_id, ""),
+                }
+            )
+        return result
+
+    # -- end sub-agent delegations (DSH-7) ---------------------------------
+
 __all__ = [
     "EVIDENCE_KEY",
     "HANDOFF_LOG_KEY",
@@ -1551,6 +2023,7 @@ __all__ = [
     "HANDOFF_TOOL_NAME",
     "TEAM_CLAIM_STATE_KEY",
     "TEAM_COMPLETE_STATE_KEY",
+    "TEAM_DELEGATIONS_KEY",
     "TEAM_ID_STATE_KEY",
     "TEAM_INTERRUPT_KEY",
     "TEAM_VERDICT_STATE_KEY",
