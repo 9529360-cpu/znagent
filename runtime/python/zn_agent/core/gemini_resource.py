@@ -17,6 +17,7 @@ from urllib.parse import quote
 
 from .cognitive_resource import CognitiveIncrement
 from .models import ModelRoute
+from .privacy_choke import redact_for_egress
 from .proxy_env import build_httpx_client
 
 
@@ -278,11 +279,22 @@ class GeminiCognitiveResource:
         if not parts:
             raise ValueError("Gemini request parts must not be empty")
 
+        # W-2 egress redaction (single point for invoke + invoke_image):
+        # only ``text`` leaves are scrubbed. ``inlineData`` (base64 image
+        # bytes) is deliberately left untouched -- scrubbing it could
+        # corrupt the payload if encoded bytes happen to spell a
+        # credential-shaped pattern, and image bytes are not user text.
+        scrubbed_parts = [
+            {**part, "text": redact_for_egress(part["text"])}
+            if isinstance(part, dict) and isinstance(part.get("text"), str)
+            else part
+            for part in parts
+        ]
         payload: dict[str, Any] = {
-            "contents": [{"role": "user", "parts": list(parts)}],
+            "contents": [{"role": "user", "parts": scrubbed_parts}],
             "generationConfig": dict(generation),
         }
-        bounded_context = str(context or "").strip()
+        bounded_context = redact_for_egress(str(context or "").strip())
         if bounded_context:
             payload["systemInstruction"] = {"parts": [{"text": bounded_context}]}
 

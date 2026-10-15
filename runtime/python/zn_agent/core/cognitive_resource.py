@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 
 from .credential_isolation import CredentialRedactingFilter
 from .models import Goal, ModelRoute, WorkerResult
+from .privacy_choke import redact_for_egress
 from .proxy_env import build_sdk_client
 
 
@@ -303,12 +304,17 @@ class OpenAICompatibleCognitiveResource:
         context: str,
         on_delta: Callable[[str], None] | None = None,
     ) -> CognitiveIncrement:
-        text = str(question or "").strip()
+        # W-2 egress redaction: this is the boundary where ZN text leaves
+        # for a model server -- question and context are scrubbed here,
+        # before the request is built. Same single point as the CM-3
+        # capture choke; the egress variant keeps long benign inputs
+        # intact (no overlong-field replacement).
+        text = redact_for_egress(str(question or "").strip())
         if not text:
             raise ValueError("bounded cognition question must not be empty")
 
         messages: list[dict[str, str]] = []
-        bounded_context = str(context or "").strip()
+        bounded_context = redact_for_egress(str(context or "").strip())
         if bounded_context:
             messages.append({"role": "system", "content": bounded_context})
         messages.append({"role": "user", "content": text})

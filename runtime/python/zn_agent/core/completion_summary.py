@@ -28,6 +28,7 @@ import unicodedata
 from typing import Any
 
 from .models import utc_now
+from .privacy_choke import strip_tags
 from .work_outcome_summary import public_work_text
 
 MEMORY_CATEGORY_PROJECT_SUMMARY = "project_summary"
@@ -328,7 +329,14 @@ def save_completion_summary(memory: Any, summary: dict[str, Any]) -> dict[str, A
     distinct record keyed by event id and must never supersede/merge into
     another run's summary. Prunes the oldest summaries/pitfalls past the
     retention caps so memory cannot grow without bound.
+
+    CM-3 follow-up F1: the summary is choked here because this path
+    bypasses ``StructuredMemory.remember`` (and its choke). ``build_``
+    already applies ``public_work_text``, but callers may persist a
+    summary built elsewhere -- the choke at the write boundary is what
+    guarantees no credential-shaped value lands via this path.
     """
+    summary = strip_tags(summary)
     store = memory.store
     thread_id = str(summary.get("thread_id") or "").strip()
     event_id = str(summary.get("event_id") or "").strip()

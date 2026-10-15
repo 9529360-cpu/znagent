@@ -50,6 +50,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .memory import FactMatch, StructuredMemory
+from .privacy_choke import strip_tags
 
 #: Target size of the hot cache, in facts (~100 lines of memory).
 HOT_CAPACITY = 100
@@ -404,21 +405,29 @@ def capture_nickname(
     consolidation cannot merge nickname rows either.
     Operates on the underlying ``StructuredMemory`` (nicknames are global,
     not per-specialist; team-scoped adapters reject ``:`` in keys).
+
+    CM-3 follow-up F1: this path writes ``put_fact`` directly, bypassing
+    ``StructuredMemory.remember`` (and its choke), so the nickname,
+    canonical target and source are choked here. Lookups choke the same
+    way (see :func:`resolve_nickname` / :func:`forget_nickname`) so a
+    choked nickname still resolves.
     """
-    name = str(nickname or "").strip()
-    target = str(canonical or "").strip()
+    name = strip_tags(str(nickname or "").strip())
+    target = strip_tags(str(canonical or "").strip())
+    source = strip_tags(str(source or ""))
     if not name or not target:
         return False
     memory.store.put_fact(
         f"{NICKNAME_PREFIX}{name}",
-        {"canonical": target, "source": str(source or "")},
+        {"canonical": target, "source": source},
     )
     return True
 
 
 def resolve_nickname(memory: StructuredMemory, nickname: str) -> str | None:
     """Canonical name for ``nickname``, or None when unknown."""
-    name = str(nickname or "").strip()
+    # Choked the same way as capture, so a choked nickname still resolves.
+    name = strip_tags(str(nickname or "").strip())
     if not name:
         return None
     match = memory.recall(f"{NICKNAME_PREFIX}{name}")
@@ -443,7 +452,7 @@ def list_nicknames(memory: StructuredMemory) -> dict[str, str]:
 
 def forget_nickname(memory: StructuredMemory, nickname: str) -> bool:
     """Delete one nickname mapping. Returns False when it did not exist."""
-    name = str(nickname or "").strip()
+    name = strip_tags(str(nickname or "").strip())
     if not name or resolve_nickname(memory, name) is None:
         return False
     memory.forget(f"{NICKNAME_PREFIX}{name}")
