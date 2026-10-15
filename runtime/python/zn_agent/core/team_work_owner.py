@@ -43,6 +43,8 @@ from .specialist_workspace import (
 from .team_memory import team_shared_memory
 from .team_runner import (
     Checkpoint,
+    CheckpointLoadError,
+    CheckpointSaveError,
     CheckpointStorage,
     Escalation,
     TeamRunner,
@@ -106,6 +108,10 @@ class TeamOwnerStep:
     # on this pulse (durable records; see HandoffRecord). Empty when the
     # middleware ran clean with nothing to do.
     handoffs: list[dict[str, Any]] = field(default_factory=list)
+    # DSH-3: plan-step ids whose in-flight tool call outcome is unknown
+    # because the previous pulse was interrupted (see TeamRunner).
+    # The steps were marked uncertain, never re-dispatched.
+    uncertain_step_ids: list[str] = field(default_factory=list)
 
 
 def verified_evidence(run: Any) -> list[dict[str, Any]]:
@@ -415,13 +421,22 @@ class TeamWorkOwner:
         return describe_team_route(team)
 
     def latest_checkpoint(self, team_id: str) -> Checkpoint | None:
-        """Latest checkpoint for a team, or None when none exists."""
+        """Latest checkpoint for a team, or None when none exists.
+
+        Fail-closed (DSH-3): a load failure raises CheckpointLoadError
+        instead of masquerading as "no checkpoint".
+        """
         if self.checkpoint_storage is None:
             return None
         try:
             return self.checkpoint_storage.latest(team_id=team_id)
-        except Exception:
-            return None
+        except CheckpointLoadError:
+            raise
+        except Exception as exc:
+            raise CheckpointLoadError(
+                f"checkpoint load failed for team {team_id!r}: "
+                f"{type(exc).__name__}: {exc}"
+            ) from exc
 
     # -- interrupt + resume (LG-2) --------------------------------------
     #
@@ -564,8 +579,10 @@ class TeamWorkOwner:
 
         The checkpoint is the runner's snapshot (completed vs pending
         steps, LG-1 parent chain) with ``pending_interrupt`` merged into
-        ``state``. Returns None when no storage is wired or the save
-        fails -- a checkpoint is a resume aid, never a gate.
+        ``state``. Returns None only when no storage is wired. When
+        storage IS wired and the save fails, raises
+        :class:`CheckpointSaveError` (DSH-3 fail-closed): the caller
+        records the explicit error instead of silently proceeding.
         """
         if self.checkpoint_storage is None:
             return None
@@ -589,8 +606,15 @@ class TeamWorkOwner:
                 },
             )
             self.checkpoint_storage.save(checkpoint)
-        except Exception:
-            return None
+        except CheckpointSaveError:
+            raise
+        except CheckpointLoadError:
+            raise
+        except Exception as exc:
+            raise CheckpointSaveError(
+                "interrupt checkpoint save failed for team "
+                f"{team.team_id!r}: {type(exc).__name__}: {exc}"
+            ) from exc
         return checkpoint
 
     # -- routing ---------------------------------------------------------
@@ -950,6 +974,7 @@ class TeamWorkOwner:
                 ),
                 stop_reason=result.stop_reason,
                 stop_trigger=dict(result.stop_trigger or {}),
+                uncertain_step_ids=list(result.uncertain_step_ids),
             )
         live = self.live_run(team=team)
         step = TeamOwnerStep(
@@ -957,6 +982,7 @@ class TeamWorkOwner:
             escalations=list(result.escalations),
             team_complete=result.team_complete,
             retrospective_summary=result.retrospective_summary,
+            uncertain_step_ids=list(result.uncertain_step_ids),
         )
         if claim_outcome is not None and not claim_outcome["landed"]:
             verdict = claim_outcome["verdict"]
