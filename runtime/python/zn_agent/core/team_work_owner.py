@@ -126,6 +126,9 @@ class ResidentTeamVerifier:
             expected_output=expected,
             evidence=evidence,
             summary=summary,
+            # AS-3: the product path requires both tracks -- the task
+            # acceptance criteria AND the standing Definition of Done.
+            require_standing_dod=True,
         )
         if verdict.verdict != "verified":
             return VerificationOutcome(
@@ -438,6 +441,8 @@ class TeamWorkOwner:
             ),
             evidence=verified_evidence(run),
             summary=summary,
+            # AS-3: see the verifier above -- both tracks required.
+            require_standing_dod=True,
         )
         if verdict.verdict == "verified":
             data.pop(TEAM_VERDICT_STATE_KEY, None)

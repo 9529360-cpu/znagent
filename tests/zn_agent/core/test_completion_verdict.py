@@ -6,7 +6,9 @@ citation -> verified); owner tests pin the retry budget (identical
 rejection escalates at once, distinct rejections escalate past the
 budget, a corrected report still completes); resident tests drive the
 real loop (a prose claim is sent back with actionable feedback, the
-corrected structured report completes the item).
+corrected structured report completes the item). AS-3 dual-track tests
+pin the standing Definition of Done: either track missing refuses the
+claim, both tracks complete verifies it.
 """
 
 from __future__ import annotations
@@ -73,12 +75,51 @@ def _run_evidence(*, ref: str = "test_app.py") -> list[dict]:
     ]
 
 
+def _dod(
+    *,
+    ref: str = "research/notes.md",
+    omit: tuple[str, ...] = (),
+    override: dict[str, dict[str, str]] | None = None,
+) -> dict[str, dict[str, str]]:
+    """A complete standing-DoD attestation for the fixture evidence."""
+    dod: dict[str, dict[str, str]] = {
+        "no_regression": {
+            "status": "satisfied",
+            "detail": "相关测试集已运行并通过。",
+            "evidence_ref": ref,
+        },
+        "runtime_verified": {
+            "status": "satisfied",
+            "detail": "关键行为已在真实运行时验证过。",
+            "evidence_ref": ref,
+        },
+        "docs": {
+            "status": "satisfied",
+            "detail": "结论与风险已写入 research/notes.md。",
+        },
+        "rollback": {
+            "status": "satisfied",
+            "detail": "删除 research/notes.md 即可回退。",
+        },
+        "approval": {
+            "status": "satisfied",
+            "detail": "无破坏性/外部动作，无需审批。",
+        },
+    }
+    for key in omit:
+        dod.pop(key, None)
+    for key, entry in (override or {}).items():
+        dod[key] = entry
+    return dod
+
+
 def _full_report(*, ref: str = "research/notes.md") -> str:
     return render_completion_report(
         conclusion="调研完成，结论已写好。",
         evidence=[(criterion, ref) for criterion in CRITERIA],
         files=[ref],
         unfinished=[],
+        standing_dod=_dod(ref=ref),
     )
 
 
@@ -119,6 +160,7 @@ class AdjudicateCompletionTests(unittest.TestCase):
                 evidence=[(CRITERIA[0], "research/notes.md")],
                 files=["research/notes.md"],
                 unfinished=[],
+                standing_dod=_dod(),
             ),
         )
         self.assertEqual(verdict.verdict, "partial")
@@ -134,6 +176,7 @@ class AdjudicateCompletionTests(unittest.TestCase):
                 evidence=[(c, "research/notes.md") for c in CRITERIA],
                 files=["research/notes.md"],
                 unfinished=[CRITERIA[1]],
+                standing_dod=_dod(),
             ),
         )
         self.assertEqual(verdict.verdict, "partial")
@@ -151,6 +194,7 @@ class AdjudicateCompletionTests(unittest.TestCase):
                 ],
                 files=["research/notes.md"],
                 unfinished=[],
+                standing_dod=_dod(),
             ),
         )
         self.assertEqual(verdict.verdict, "partial")
@@ -189,6 +233,7 @@ class AdjudicateCompletionTests(unittest.TestCase):
                 evidence=[(c, "research/notes.md") for c in CRITERIA],
                 files=["research/notes.md"],
                 unfinished=[],
+                standing_dod=_dod(),
             ),
         )
         self.assertEqual(verdict.verdict, "rejected")
@@ -261,6 +306,196 @@ class AdjudicateCompletionTests(unittest.TestCase):
             ),
         )
         self.assertEqual(verdict.verdict, "verified")
+
+
+class DualTrackDoDTests(unittest.TestCase):
+    """AS-3: both tracks must pass; either track missing refuses the claim."""
+
+    def _report(self, *, standing_dod=None, **kwargs) -> str:
+        args: dict[str, object] = {
+            "conclusion": "调研完成，结论已写好。",
+            "evidence": [(c, "research/notes.md") for c in CRITERIA],
+            "files": ["research/notes.md"],
+            "unfinished": [],
+        }
+        args.update(kwargs)
+        if standing_dod is not None:
+            args["standing_dod"] = standing_dod
+        return render_completion_report(**args)  # type: ignore[arg-type]
+
+    def test_both_tracks_complete_is_verified(self):
+        verdict = adjudicate_completion(
+            expected_output=CRITERIA,
+            evidence=_evidence(),
+            summary=self._report(standing_dod=_dod()),
+        )
+        self.assertEqual(verdict.verdict, "verified")
+        self.assertEqual(verdict.dod_missing, ())
+        self.assertEqual(verdict.missing_items, ())
+
+    def test_missing_dod_section_is_partial_when_required(self):
+        verdict = adjudicate_completion(
+            expected_output=CRITERIA,
+            evidence=_evidence(),
+            summary=self._report(),
+            require_standing_dod=True,
+        )
+        self.assertEqual(verdict.verdict, "partial")
+        self.assertEqual(
+            verdict.dod_missing,
+            (
+                "no_regression",
+                "runtime_verified",
+                "docs",
+                "rollback",
+                "approval",
+            ),
+        )
+        for key in verdict.dod_missing:
+            self.assertIn(f"standing_dod:{key}", verdict.missing_items)
+        self.assertIn("standing DoD", verdict.reason)
+
+    def test_missing_dod_section_is_track1_only_when_not_required(self):
+        # Backward compatibility: library callers that never attested DoD
+        # keep the old track-1-only behaviour.
+        verdict = adjudicate_completion(
+            expected_output=CRITERIA,
+            evidence=_evidence(),
+            summary=self._report(),
+        )
+        self.assertEqual(verdict.verdict, "verified")
+        self.assertEqual(verdict.dod_missing, ())
+
+    def test_each_single_dod_item_missing_refuses(self):
+        for key in (
+            "no_regression",
+            "runtime_verified",
+            "docs",
+            "rollback",
+            "approval",
+        ):
+            with self.subTest(dod_item=key):
+                verdict = adjudicate_completion(
+                    expected_output=CRITERIA,
+                    evidence=_evidence(),
+                    summary=self._report(standing_dod=_dod(omit=(key,))),
+                    require_standing_dod=True,
+                )
+                self.assertEqual(verdict.verdict, "partial")
+                self.assertEqual(verdict.dod_missing, (key,))
+                self.assertIn(f"standing_dod:{key}", verdict.missing_items)
+
+    def test_dod_detail_empty_refuses(self):
+        verdict = adjudicate_completion(
+            expected_output=CRITERIA,
+            evidence=_evidence(),
+            summary=self._report(
+                standing_dod=_dod(
+                    override={"rollback": {"status": "satisfied", "detail": ""}}
+                )
+            ),
+            require_standing_dod=True,
+        )
+        self.assertEqual(verdict.verdict, "partial")
+        self.assertEqual(verdict.dod_missing, ("rollback",))
+
+    def test_evidence_anchored_item_without_ref_refuses(self):
+        verdict = adjudicate_completion(
+            expected_output=CRITERIA,
+            evidence=_evidence(),
+            summary=self._report(
+                standing_dod=_dod(
+                    override={
+                        "no_regression": {
+                            "status": "satisfied",
+                            "detail": "测试都过了。",
+                        }
+                    }
+                )
+            ),
+        )
+        self.assertEqual(verdict.verdict, "partial")
+        self.assertEqual(verdict.dod_missing, ("no_regression",))
+
+    def test_dangling_dod_ref_refuses(self):
+        verdict = adjudicate_completion(
+            expected_output=CRITERIA,
+            evidence=_evidence(),
+            summary=self._report(
+                standing_dod=_dod(
+                    override={
+                        "docs": {
+                            "status": "satisfied",
+                            "detail": "文档已更新。",
+                            "evidence_ref": "nonexistent/file.md",
+                        }
+                    }
+                )
+            ),
+        )
+        self.assertEqual(verdict.verdict, "partial")
+        self.assertEqual(verdict.dod_missing, ("docs",))
+
+    def test_not_applicable_with_reason_passes(self):
+        dod = _dod(
+            override={
+                "no_regression": {
+                    "status": "not_applicable",
+                    "detail": "纯调研任务，无代码变更，无回归面。",
+                },
+                "runtime_verified": {
+                    "status": "not_applicable",
+                    "detail": "纯调研任务，无需运行时验证。",
+                },
+                "rollback": {
+                    "status": "not_applicable",
+                    "detail": "无产物变更，删除笔记即可回退。",
+                },
+            }
+        )
+        verdict = adjudicate_completion(
+            expected_output=CRITERIA,
+            evidence=_evidence(),
+            summary=self._report(standing_dod=dod),
+        )
+        self.assertEqual(verdict.verdict, "verified")
+        self.assertEqual(verdict.dod_missing, ())
+
+    def test_unknown_dod_key_is_rejected(self):
+        dod = _dod()
+        dod["invented_item"] = {"status": "satisfied", "detail": "编造的 DoD。"}
+        verdict = adjudicate_completion(
+            expected_output=CRITERIA,
+            evidence=_evidence(),
+            summary=self._report(standing_dod=dod),
+        )
+        self.assertEqual(verdict.verdict, "rejected")
+        self.assertIn("不存在的 DoD", verdict.reason)
+
+    def test_malformed_dod_section_is_rejected(self):
+        verdict = adjudicate_completion(
+            expected_output=CRITERIA,
+            evidence=_evidence(),
+            summary=self._report(standing_dod="yes"),
+        )
+        self.assertEqual(verdict.verdict, "rejected")
+        self.assertIn("standing_dod", verdict.reason)
+
+    def test_both_tracks_missing_combine_in_one_missing_list(self):
+        verdict = adjudicate_completion(
+            expected_output=CRITERIA,
+            evidence=_evidence(),
+            summary=self._report(
+                evidence=[(CRITERIA[0], "research/notes.md")],
+                standing_dod=_dod(omit=("docs",)),
+            ),
+            require_standing_dod=True,
+        )
+        self.assertEqual(verdict.verdict, "partial")
+        self.assertIn(CRITERIA[1], verdict.missing_items)
+        self.assertIn("standing_dod:docs", verdict.missing_items)
+        self.assertEqual(verdict.dod_missing, ("docs",))
+        self.assertIn("文档", verdict.feedback_text())
 
 
 class VerdictRetryBudgetTests(unittest.TestCase):
@@ -407,6 +642,7 @@ class OwnerVerdictTests(unittest.TestCase):
                 evidence=[(CRITERIA[0], "research/notes.md")],
                 files=["research/notes.md"],
                 unfinished=[],
+                standing_dod=_dod(),
             ),
         )
         step = self._advance()
