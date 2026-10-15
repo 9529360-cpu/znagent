@@ -3,6 +3,7 @@ from __future__ import annotations
 """Work-facing browser Body movements with durable replay boundaries."""
 
 from dataclasses import asdict
+import logging
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -19,6 +20,8 @@ from .browser import (
 )
 from .browser_semantic_action import execute_fresh_semantic_action
 from .models import utc_now
+
+_LOG = logging.getLogger(__name__)
 
 
 class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
@@ -539,7 +542,11 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 try:
                     browser.close_session(session.session_id)
                 except Exception:
-                    pass
+                    _LOG.warning(
+                        "browser_select_named_option cleanup close_session "
+                        "failed; original error propagates",
+                        exc_info=True,
+                    )
             raise
 
     def _browser_click_named_button_to_url(

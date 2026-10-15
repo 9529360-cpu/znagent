@@ -319,7 +319,12 @@ def perform_select_option(owner: Any, session: Any, action: BrowserAction) -> Br
     elif post_target.target_id != action.target.target_id:
         error = "browser select_option postcondition observed changed target identity"
     elif not value_matches or not label_matches:
-        error = "browser select_option selected a different native option"
+        # Precise diagnosis first; the legacy generic phrase stays so
+        # existing "postcondition was not observed" matchers keep matching.
+        error = (
+            "browser select_option selected a different native option; "
+            "postcondition was not observed"
+        )
     elif after_fp["length"] != request.length or after_fp["sha256"] != request.sha256:
         error = "browser select_option postcondition was not observed"
 
