@@ -95,9 +95,16 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
     _TEAM_NO_PROGRESS_KEY = "team_no_evidence_progress"
     _MAX_NO_EVIDENCE_PULSES = 8
     # P2: a specialist that hits a missing design/scope gap reports it
-    # instead of inventing scope. The pending gap is stored here by the
-    # integration step; the next deliberation fails closed with it.
+    # instead of inventing scope. LG-2: the gap is an INTERRUPT, not a
+    # terminal failure -- the integration step persists the pending
+    # decision (team shared memory + AF-2 checkpoint), the next
+    # deliberation blocks the event alive until resume_interrupt()
+    # supplies the decision value, and the interrupted node then
+    # re-runs with that value.
     _TEAM_GAP_KEY = "team_specialist_gap"
+    # LG-2: the consumed resume value, carried exactly once into the
+    # interrupted node's next cognition call.
+    _TEAM_RESUME_KEY = "team_interrupt_resume"
     # Rewrite-loop convergence: byte-identical content rewritten twice,
     # or the same (objective, path) four times, means the specialist is
     # circling without converging -- escalate instead of spinning.
@@ -215,22 +222,73 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         # pulse sees it resolved and the driver continues.
         thread_id = str(event.payload.get("work_thread_id") or "").strip()
         team = owner.resolve_team(event=event, state=state, thread_id=thread_id)
-        # P2: a specialist-reported design/scope gap stops the team for a
-        # user decision -- it must not be answered with another cognition
-        # call, or the specialist will invent the missing scope.
-        gap = state.data.get(self._TEAM_GAP_KEY)
-        if isinstance(gap, dict) and str(gap.get("missing") or "").strip():
+        # LG-2: a specialist-reported design/scope gap is an INTERRUPT,
+        # not a terminal failure. The pending decision lives in team
+        # shared memory (durable across crash/restart) and in the AF-2
+        # checkpoint; the event stays alive + blocked until
+        # resume_interrupt() supplies the decision value. The interrupt
+        # must not be answered with another cognition call, or the
+        # specialist will invent the missing scope.
+        interrupt = owner.pending_interrupt(team_id=team.team_id)
+        if interrupt is not None and str(interrupt.get("status") or "") == "resumed":
+            # Command(resume) landed: consume exactly once and carry
+            # the value into this pulse's cognition call, so the
+            # interrupted node re-runs with the decision.
+            owner.clear_interrupt(team_id=team.team_id)
+            consumed_id = str(interrupt.get("interrupt_id") or "")
+            gap_mirror = state.data.get(self._TEAM_GAP_KEY)
             state.data.pop(self._TEAM_GAP_KEY, None)
-            reason = (
-                "专员上报缺口，团队已停止等待用户拍板：缺失："
-                f"{str(gap.get('missing') or '')[:600]}；"
-                f"需要：{str(gap.get('needed') or '')[:600]}；"
-                f"影响：{str(gap.get('impact') or '')[:600]}。"
+            if (
+                isinstance(gap_mirror, dict)
+                and str(gap_mirror.get("missing") or "").strip()
+                and str(gap_mirror.get("interrupt_id") or "")
+                not in ("", consumed_id)
+            ):
+                # A newer gap arrived while the old one was pending:
+                # re-record it and stay blocked instead of losing it.
+                self._record_gap_interrupt(
+                    owner, team_id=team.team_id, gap=gap_mirror
+                )
+                state.data[self._TEAM_GAP_KEY] = dict(gap_mirror)
+                return self._block_on_interrupt(
+                    event,
+                    state,
+                    missing=str(gap_mirror.get("missing") or ""),
+                )
+            state.data[self._TEAM_RESUME_KEY] = {
+                "interrupt_id": consumed_id,
+                "kind": str(interrupt.get("kind") or "gap"),
+                "resume_value": str(interrupt.get("resume_value") or "")[:4000],
+            }
+        elif interrupt is not None:
+            # Still waiting on the user's decision: mirror the pending
+            # decision into working state and block the event alive.
+            state.data[self._TEAM_GAP_KEY] = {
+                "interrupt_id": str(interrupt.get("interrupt_id") or ""),
+                "run_id": str(interrupt.get("run_id") or ""),
+                "work_item_id": str(interrupt.get("work_item_id") or ""),
+                "kind": str(interrupt.get("kind") or "gap"),
+                "missing": str(interrupt.get("missing") or "")[:600],
+                "needed": str(interrupt.get("needed") or "")[:600],
+                "impact": str(interrupt.get("impact") or "")[:600],
+            }
+            return self._block_on_interrupt(
+                event,
+                state,
+                missing=str(interrupt.get("missing") or ""),
             )
-            state.data["local_failure"] = reason[:3000]
-            self._sync_execution_context(event, state)
-            self.store.save_working_state(state)
-            return self._checkpoint_terminal_failure(event, state, reason=reason)
+        else:
+            # No shared-memory record: a working-state gap left behind
+            # is still an interrupt, never a terminal failure --
+            # re-record it and block.
+            gap = state.data.get(self._TEAM_GAP_KEY)
+            if isinstance(gap, dict) and str(gap.get("missing") or "").strip():
+                self._record_gap_interrupt(owner, team_id=team.team_id, gap=gap)
+                return self._block_on_interrupt(
+                    event,
+                    state,
+                    missing=str(gap.get("missing") or ""),
+                )
         # CUR-2 Plan Mode: a pending plan blocks dispatch (never a work
         # step before approval); a rejected plan fails the team closed.
         # This mirrors the handover branch -- the event stays alive while
@@ -393,6 +451,20 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             state.next_action = (
                 f"专员 {step.live_specialist_name or 'specialist'} 执行下一步"
             )
+            # LG-2: exactly-once delivery of the resume value into the
+            # interrupted node's re-run (popped here, so a later pulse
+            # never repeats a decision already delivered).
+            if step.live_context is not None:
+                resume = state.data.pop(self._TEAM_RESUME_KEY, None)
+                if isinstance(resume, dict) and str(
+                    resume.get("resume_value") or ""
+                ).strip():
+                    step.live_context["resume_value"] = str(
+                        resume["resume_value"]
+                    )[:4000]
+                    step.live_context["resumed_interrupt_id"] = str(
+                        resume.get("interrupt_id") or ""
+                    )
             state.data.pop(self._TEAM_LIVE_CONTEXT_KEY, None)
             if step.live_context is not None:
                 state.data[self._TEAM_LIVE_CONTEXT_KEY] = dict(step.live_context)
@@ -413,6 +485,38 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         # complete the event before the runner finishes the transition.
         state.next_action = "团队驱动推进中，等待验收/完成确认"
         state.data.pop(self._TEAM_LIVE_CONTEXT_KEY, None)
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
+
+    def _record_gap_interrupt(self, owner, *, team_id: str, gap: dict) -> dict | None:
+        """Best-effort: persist one gap as the team's pending interrupt.
+
+        A failure here must not kill the pulse -- the working-state gap
+        mirror still blocks the team, and the next deliberation
+        re-records it. Returns the record, or None when not recorded.
+        """
+        try:
+            return owner.record_interrupt(
+                team_id=team_id,
+                run_id=str(gap.get("run_id") or ""),
+                work_item_id=str(gap.get("work_item_id") or ""),
+                kind=str(gap.get("kind") or "gap"),
+                missing=str(gap.get("missing") or ""),
+                needed=str(gap.get("needed") or ""),
+                impact=str(gap.get("impact") or ""),
+            )
+        except (OSError, RuntimeError, ValueError):
+            return None
+
+    def _block_on_interrupt(self, event, state, *, missing: str):
+        """Block the event alive on a pending decision (LG-2 interrupt)."""
+        state.blocked_by = "user_presence_required"
+        state.stage = "native_deliberation"
+        state.next_action = (
+            "等待主人拍板缺口："
+            f"{str(missing or '')[:200]}（恢复后继续）"
+        )
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return None
@@ -553,6 +657,17 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 "与之矛盾的范围）:"
                 f" {json.dumps(prior_items, ensure_ascii=False)} "
             )
+        # LG-2: the resume value for the interrupted node -- the user's
+        # decision that unblocks this re-run.
+        resume_value = context.get("resume_value")
+        resume_text = ""
+        if isinstance(resume_value, str) and resume_value.strip():
+            resume_text = (
+                "用户已拍板（恢复值）："
+                f"{resume_value.strip()[:4000]} "
+                "按这个决定继续你的事项，不要重新上报同一缺口，"
+                "不要从头重做已完成步骤。 "
+            )
         # CUR-2 Plan Mode: when enabled, a multi-file / design-decision
         # item plans first -- no files are written before approval.
         plan_text = ""
@@ -638,6 +753,7 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             "or a non-empty \"unfinished\" list will be sent back for rework; "
             "repeated identical rejections escalate to the user. "
             f"{rejection_text}"
+            f"{resume_text}"
             f"Your brief: {context.get('specialist_prompt') or ''} "
             f"Your item: {context.get('objective') or ''}. "
             f"Acceptance criteria: {json.dumps(context.get('acceptance_criteria') or [], ensure_ascii=False)}. "
@@ -718,16 +834,69 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             return None
 
         # P2: a specialist gap report is not a work step and must never be
-        # executed. Record it; the next deliberation fails closed with it
-        # so the team waits for the user instead of inventing the scope.
+        # executed. LG-2: persist it as the team's pending interrupt
+        # (shared memory + AF-2 checkpoint) and block; the next
+        # deliberation waits for the user's resume value instead of
+        # inventing the scope.
         gap_shape = parse_exact_json_payload(increment.content)
         if isinstance(gap_shape, dict) and "gap_report" in gap_shape:
             gap_value = gap_shape.get("gap_report")
             if isinstance(gap_value, dict) and str(
                 gap_value.get("missing") or ""
             ).strip():
+                interrupt_id = ""
+                team_id = str(state.data.get(TEAM_ID_STATE_KEY) or "").strip()
+                if team_id:
+                    interrupt_owner = TeamWorkOwner(
+                        ledger=self.work_ledger, memory=self.memory
+                    )
+                    record = self._record_gap_interrupt(
+                        interrupt_owner,
+                        team_id=team_id,
+                        gap={
+                            "run_id": str(context.get("run_id") or ""),
+                            "work_item_id": str(
+                                context.get("work_item_id") or ""
+                            ),
+                            "kind": "gap",
+                            "missing": str(gap_value.get("missing") or ""),
+                            "needed": str(gap_value.get("needed") or ""),
+                            "impact": str(gap_value.get("impact") or ""),
+                        },
+                    )
+                    if record is not None:
+                        interrupt_id = str(record.get("interrupt_id") or "")
+                    # Best-effort checkpoint carrying the pending
+                    # decision: a failure here must not kill the pulse.
+                    try:
+                        root_item = self.work_ledger.work_item_for_event(
+                            event.event_id
+                        )
+                        thread_id = str(
+                            event.payload.get("work_thread_id") or ""
+                        ).strip()
+                        team = interrupt_owner.resolve_team(
+                            event=event, state=state, thread_id=thread_id
+                        )
+                        if root_item is not None:
+                            interrupt_owner.save_interrupt_checkpoint(
+                                team=team,
+                                root_work_item_id=root_item.work_item_id,
+                            )
+                    except (
+                        AttributeError,
+                        KeyError,
+                        LookupError,
+                        OSError,
+                        RuntimeError,
+                        ValueError,
+                    ):
+                        pass
                 state.data[self._TEAM_GAP_KEY] = {
+                    "interrupt_id": interrupt_id,
                     "run_id": str(context.get("run_id") or ""),
+                    "work_item_id": str(context.get("work_item_id") or ""),
+                    "kind": "gap",
                     "missing": str(gap_value.get("missing") or "")[:600],
                     "needed": str(gap_value.get("needed") or "")[:600],
                     "impact": str(gap_value.get("impact") or "")[:600],
