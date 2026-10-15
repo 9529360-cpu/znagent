@@ -137,7 +137,9 @@ class TeamWorkOwnerIntegrationTests(unittest.TestCase):
             root_work_item_id="root-entry",
         )
 
-    def _record_evidence(self, run_id: str, summary: str = "调研完成") -> None:
+    def _record_evidence(
+        self, run_id: str, summary: str = "调研完成", *, action_kind: str = ""
+    ) -> None:
         run = self.ledger.worker_run(run_id)
         assert run is not None
         evidence = verified_evidence(run)
@@ -148,6 +150,10 @@ class TeamWorkOwnerIntegrationTests(unittest.TestCase):
                 "result": summary,
                 "verified": True,
                 "artifact_refs": [],
+                # P2: a test-coverage claim needs a run_python evidence
+                # entry -- the dev fixture records one honestly instead
+                # of claiming coverage from a write alone.
+                "action_kind": action_kind,
             }
         )
         self.ledger.update_worker_run_metrics(
@@ -202,8 +208,11 @@ class TeamWorkOwnerIntegrationTests(unittest.TestCase):
         self.assertEqual(step.live_specialist_name, "开发-02")
 
         # Second specialist, same rhythm: verify, complete, team_complete.
+        # P2: the dev claim cites test coverage, so its evidence carries
+        # a run_python entry -- coverage claimed from a write alone is
+        # now partial, not verified.
         assert step.live_run_id is not None
-        self._record_evidence(step.live_run_id, "实现完成")
+        self._record_evidence(step.live_run_id, "实现完成", action_kind="run_python")
         self.state.data[TEAM_CLAIM_STATE_KEY] = {
             "run_id": step.live_run_id,
             "summary": render_completion_report(
