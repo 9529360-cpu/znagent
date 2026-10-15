@@ -8,8 +8,9 @@ Body instance, preserving the one Body object's class/store/recovery semantics.
 """
 
 import hashlib
+import json
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,107 @@ class ActionAuthorityContext:
     @staticmethod
     def command_digest(command: str) -> str:
         return hashlib.sha256(str(command).encode("utf-8", errors="replace")).hexdigest()
+
+
+class WorkerActionAuthorityError(PermissionError):
+    pass
+
+
+class ApprovalSnapshotMismatchError(PermissionError):
+    """Raised when execution args no longer match the approved snapshot."""
+
+
+def canonical_args_digest(args: dict[str, Any]) -> str:
+    """Deterministic digest of execution args for approval snapshots.
+
+    Keys are sorted and values are JSON-normalized, so two equal arg dicts
+    always produce the same digest regardless of insertion order.
+    Non-JSON values fall back to their string form so the digest never
+    fails on an unusual argument type.
+    """
+    canonical = json.dumps(dict(args or {}), sort_keys=True, separators=(",", ":"), default=str)
+    return hashlib.sha256(canonical.encode("utf-8", errors="replace")).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalSnapshot:
+    """Immutable snapshot of the exact args an approval was granted for.
+
+    Captured at approval time, verified immediately before dispatch. Any
+    approved key that changed or disappeared between approval and dispatch
+    is a post-approval parameter swap and must refuse execution. Keys added
+    after approval (resident-applied bindings such as a workspace root)
+    are not part of the snapshot and are permitted; they are recorded in
+    the execution audit trail instead of being treated as tampering.
+    """
+
+    action_id: str
+    event_id: str | None
+    approved_args: dict[str, Any] = field(default_factory=dict)
+    args_digest: str = ""
+    approved_command: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "action_id", str(self.action_id or "").strip())
+        object.__setattr__(self, "approved_args", dict(self.approved_args or {}))
+        if not self.args_digest:
+            object.__setattr__(
+                self, "args_digest", canonical_args_digest(self.approved_args)
+            )
+
+    @classmethod
+    def capture(
+        cls,
+        action_id: str,
+        args: dict[str, Any],
+        event_id: str | None,
+        *,
+        approved_command: str | None = None,
+    ) -> "ApprovalSnapshot":
+        """Snapshot ``args`` with an approved edited command applied.
+
+        When the approval card approved a user-edited command (W-1), the
+        edited command is the approved value: the snapshot stores it, so
+        a later substitution back to the pre-approval command is itself
+        a mismatch.
+        """
+        approved_args = dict(args or {})
+        if approved_command is not None and isinstance(approved_args.get("command"), str):
+            approved_args = dict(approved_args)
+            approved_args["command"] = approved_command
+        return cls(
+            action_id=action_id,
+            event_id=str(event_id or "").strip() or None,
+            approved_args=approved_args,
+            args_digest=canonical_args_digest(approved_args),
+            approved_command=approved_command,
+        )
+
+    def verify(
+        self,
+        action_id: str,
+        args: dict[str, Any],
+        event_id: str | None,
+    ) -> list[str]:
+        """Return human-readable mismatches between snapshot and dispatch args."""
+        mismatches: list[str] = []
+        if str(action_id or "").strip() != self.action_id:
+            mismatches.append(
+                f"action changed: approved {self.action_id!r}, dispatch {str(action_id or '').strip()!r}"
+            )
+        normalized_event = str(event_id or "").strip() or None
+        if normalized_event != self.event_id:
+            mismatches.append("event_id changed after approval")
+        current = dict(args or {})
+        for key, approved_value in self.approved_args.items():
+            if key not in current:
+                mismatches.append(f"approved parameter removed: {key}")
+            elif current[key] != approved_value:
+                mismatches.append(f"approved parameter changed: {key}")
+        return mismatches
+
+    def matches(self, action_id: str, args: dict[str, Any], event_id: str | None) -> bool:
+        return not self.verify(action_id, args, event_id)
 
 
 class WorkerActionAuthorityError(PermissionError):
