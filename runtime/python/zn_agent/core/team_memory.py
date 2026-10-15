@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .memory import FactMatch, StructuredMemory
+from .privacy_choke import strip_tags
 from .project_team import (
     JOURNAL_KINDS,
     Specialist,
@@ -81,10 +82,14 @@ class TeamMemory:
         return scoped_key[len(self._prefix):]
 
     def remember(self, key: str, value: Any, *, aliases: tuple[str, ...] = ()) -> None:
+        # CM-3 privacy choke: team capture sanitizes here (defense in
+        # depth -- StructuredMemory.remember chokes again at the write
+        # boundary). The key is sanitized before scoping so a secret
+        # in a key can never become part of a stored fact key.
         self._memory.remember(
-            self._scoped(key),
-            value,
-            aliases=tuple(self._scoped(a) for a in aliases),
+            self._scoped(strip_tags(key)),
+            strip_tags(value),
+            aliases=tuple(self._scoped(strip_tags(a)) for a in aliases),
         )
 
     def recall(self, query: str) -> FactMatch | None:

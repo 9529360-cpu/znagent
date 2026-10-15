@@ -6,6 +6,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .privacy_choke import strip_tags
 from .store import KernelStore
 
 if TYPE_CHECKING:
@@ -244,6 +245,14 @@ class StructuredMemory:
         self.store = store
 
     def remember(self, key: str, value: Any, *, aliases: tuple[str, ...] = ()) -> None:
+        # CM-3 privacy choke: every memory write passes through the
+        # stripTags single point BEFORE supersession/similarity and
+        # BEFORE the M15 put_fact gate, so a secret is redacted (not
+        # rejected) and the write still lands. No capture path may
+        # bypass this -- new write entry points must choke first too.
+        key = strip_tags(key)
+        value = strip_tags(value)
+        aliases = tuple(strip_tags(alias) for alias in aliases)
         target = self._supersession_target(key, value)
         if target is not None and target != str(key or "").strip():
             # Near-duplicate of an existing fact: update it in place (union
@@ -318,6 +327,19 @@ class StructuredMemory:
         """
         parsed = Observation.from_dict(
             observation.to_dict() if isinstance(observation, Observation) else observation
+        )
+        # CM-3 privacy choke: observation writes bypass remember's
+        # supersession, so they choke here -- field by field, after
+        # validation, before the put_fact gate. The stored key uses the
+        # sanitized title.
+        parsed = Observation(
+            kind=strip_tags(parsed.kind),
+            title=strip_tags(parsed.title),
+            facts=tuple(strip_tags(fact) for fact in parsed.facts),
+            narrative=strip_tags(parsed.narrative),
+            concepts=tuple(strip_tags(concept) for concept in parsed.concepts),
+            files_read=tuple(strip_tags(path) for path in parsed.files_read),
+            files_modified=tuple(strip_tags(path) for path in parsed.files_modified),
         )
         key = f"{OBSERVATION_PREFIX}{parsed.title}"
         self.store.put_fact(key, parsed.to_dict())

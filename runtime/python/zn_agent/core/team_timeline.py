@@ -36,6 +36,7 @@ import re
 from dataclasses import replace
 from typing import Any, Mapping, Sequence
 
+from .privacy_choke import strip_tags
 from .team_memory import team_shared_memory
 
 #: Team shared-memory key holding plan-item assignee overrides:
@@ -98,6 +99,11 @@ def record_assignee_override(
     memory: Any, team_id: str, plan_item_id: str, specialist_name: str
 ) -> dict[str, str]:
     """Durably reassign one plan item. Returns the full override map."""
+    # CM-3 privacy choke: timeline capture (assignee overrides are
+    # team memory writes) sanitizes identifiers before storing.
+    # The shared-memory write chokes again at the write boundary.
+    plan_item_id = strip_tags(plan_item_id)
+    specialist_name = strip_tags(specialist_name)
     if not str(plan_item_id or "").strip():
         raise ValueError("plan_item_id must not be empty")
     if not str(specialist_name or "").strip():

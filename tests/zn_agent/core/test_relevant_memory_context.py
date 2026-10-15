@@ -134,7 +134,18 @@ class RelevantMemoryContextTests(unittest.TestCase):
         self.memory.remember("huge", "x" * 100000, aliases=("active project",))
         with self.store._lock, self.store._conn:
             self.store._conn.execute("INSERT INTO facts VALUES(?,?,?,?,?)", ("bad", "{", "[]", "", ""))
-        self.assertEqual(self.memory.relevant_context("active project"), [{"key": "good", "value": "available"}])
+        result = self.memory.relevant_context("active project")
+        # CM-3: the oversized value is replaced whole at capture, so it
+        # now surfaces as a short redaction marker instead of being
+        # skipped as oversized. The property under test still holds:
+        # the good memory is present, not hidden.
+        self.assertIn({"key": "good", "value": "available"}, result)
+        huge = [fact for fact in result if fact["key"] == "huge"]
+        self.assertEqual(len(huge), 1)
+        self.assertTrue(str(huge[0]["value"]).startswith("[redacted: field exceeded"))
+        self.assertNotIn("x" * 100, str(huge[0]["value"]))
+        # 例外审查条件 2：畸形 bad 记录必须被跳过，不在结果中。
+        self.assertNotIn("bad", [fact["key"] for fact in result])
 
 
 if __name__ == "__main__":
