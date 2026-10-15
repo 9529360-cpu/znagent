@@ -9,7 +9,7 @@ import './liquid-performance.css'
 import './chat-shell.css'
 import './desktop-resilience.css'
 import './settings-shell.css'
-import './desk.css'
+import './workbench-v3.css'
 
 document.title = 'ZN'
 

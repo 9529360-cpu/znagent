@@ -11,16 +11,13 @@ import {
   CheckCircle,
   ImageSquare,
   CircleNotch,
-  ClockCounterClockwise,
   Desktop,
   FileText,
   FolderSimple,
-  GearSix,
   MagnifyingGlass,
   Plus,
   Pulse,
   PushPin,
-  SidebarSimple,
   Sparkle,
   Stop,
   X
@@ -33,6 +30,7 @@ import {
   cancelZnWork,
   checkZnUpdate,
   createZnWorkThread,
+  decideZnApproval,
   detachZnWorkspace,
   dismissZnSuggestion,
   loadZnApprovals,
@@ -70,6 +68,9 @@ import {
   loadZnThreadCache,
   newZnThread,
   saveZnThreadCache,
+  type ZnApprovalDecision,
+  type ZnApprovalList,
+  type ZnApprovalRequest,
   type ZnRestorePointCurrentStatus,
   type ZnRestoreProposalStatus,
   type ZnThread
@@ -246,6 +247,24 @@ function suggestionSourceLabel(suggestion: ZnSuggestion, t: TFunction): string {
   return t('suggestions.source.work', { label })
 }
 
+function pendingApprovalKindLabel(kind: ZnApprovalRequest['actionKind'], t: TFunction): string {
+  if (kind === 'send') return t('approval.kind.send')
+  if (kind === 'publish') return t('approval.kind.publish')
+  if (kind === 'purchase') return t('approval.kind.purchase')
+  if (kind === 'delete') return t('approval.kind.delete')
+  return t('approval.kind.productionChange')
+}
+
+function pendingApprovalSourceLabel(source: string, t: TFunction): string {
+  if (source === 'user_chat') return t('approval.source.userChat')
+  if (source === 'routine') return t('approval.source.routine')
+  if (source === 'specialist') return t('approval.source.specialist')
+  if (source === 'other_bot') return t('approval.source.otherBot')
+  if (source === 'trigger') return t('approval.source.trigger')
+  if (source === 'mcp') return t('approval.source.mcp')
+  return t('approval.source.resident')
+}
+
 function threadDisplayTitle(title: string, t: TFunction): string {
   return title === 'New work' ? t('sidebar.newWork') : title
 }
@@ -276,7 +295,12 @@ export function ZnWorkbench() {
   const [selectedArtifactId, setSelectedArtifactId] = useState('')
   const [artifactOpen, setArtifactOpen] = useState(false)
   const [view, setView] = useState<MainView>('work')
-  const [sidebarExpanded, setSidebarExpanded] = useState(false)
+  const [threadsExpanded, setThreadsExpanded] = useState(false)
+  const [ledgerFilter, setLedgerFilter] = useState<'all' | 'user' | 'zn' | 'activity'>('all')
+  const [approvals, setApprovals] = useState<ZnApprovalList | null>(null)
+  const [approvalError, setApprovalError] = useState<string | null>(null)
+  const [approvalBusyId, setApprovalBusyId] = useState<string | null>(null)
+  const [pendingExpanded, setPendingExpanded] = useState(false)
   const [pinnedThreadIds, setPinnedThreadIds] = useState<string[]>(loadPinnedThreadIds)
   const [pinnedExpanded, setPinnedExpanded] = useState(false)
   const [recentExpanded, setRecentExpanded] = useState(true)
@@ -342,6 +366,11 @@ export function ZnWorkbench() {
       .filter(thread => !pinnedThreadIds.includes(thread.id))
       .filter(thread => !normalized || thread.title.toLowerCase().includes(normalized))
   }, [pinnedThreadIds, query, threads])
+  const visibleMessages = useMemo(() => {
+    const messages = activeThread?.messages ?? []
+    if (ledgerFilter === 'all') return messages
+    return messages.filter(message => message.role === ledgerFilter)
+  }, [activeThread, ledgerFilter])
 
   useEffect(() => {
     try {
@@ -515,21 +544,49 @@ export function ZnWorkbench() {
     return () => window.clearInterval(timer)
   }, [refreshProviderSettings, refreshResident])
 
-  const refreshApprovalCount = useCallback(async () => {
+  // The pending-sign column reads the same approval list as the full
+  // approval panel, so a signature on the main screen and a decision in
+  // Settings can never disagree.
+  const refreshApprovals = useCallback(async () => {
     try {
-      const approvals = await loadZnApprovals()
-      setApprovalPendingCount(approvals.pending.length)
+      const list = await loadZnApprovals()
+      setApprovals(list)
+      setApprovalPendingCount(list.pending.length)
+      setApprovalError(null)
     } catch {
       // Approvals stay out of the way when the resident cannot answer;
-      // the panel itself surfaces its own load error.
+      // the column surfaces its own load error.
+      setApprovalError(t('pending.loadFailed'))
     }
-  }, [])
+  }, [t])
 
   useEffect(() => {
-    void refreshApprovalCount()
-    const timer = window.setInterval(() => void refreshApprovalCount(), 30_000)
+    void refreshApprovals()
+    const timer = window.setInterval(() => void refreshApprovals(), 30_000)
     return () => window.clearInterval(timer)
-  }, [refreshApprovalCount])
+  }, [refreshApprovals])
+
+  const decidePending = useCallback(async (request: ZnApprovalRequest, decision: ZnApprovalDecision) => {
+    setApprovalBusyId(request.id)
+    setApprovalError(null)
+    try {
+      await decideZnApproval(request.id, decision)
+      await refreshApprovals()
+    } catch {
+      setApprovalError(t('approval.decideFailed'))
+    } finally {
+      setApprovalBusyId(null)
+    }
+  }, [refreshApprovals, t])
+
+  const focusPendingColumn = useCallback(() => {
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches
+    const column = document.querySelector<HTMLElement>('.zn-pending')
+    column?.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'start' })
+    window.requestAnimationFrame(() => {
+      column?.querySelector<HTMLButtonElement>('.zn-pending-approve')?.focus()
+    })
+  }, [])
 
   useEffect(() => {
     if (view === 'settings') void refreshProviderSettings()
@@ -934,240 +991,108 @@ export function ZnWorkbench() {
   const firstResult = activeArtifacts[0] || null
 
   return (
-    <div className={'zn-app ' + windowMode + (sidebarExpanded ? ' sidebar-expanded' : '') + (view === 'work' && approvalPendingCount > 0 ? ' tray-open' : '') + (contextOpen ? ' details-open' : ' context-closed') + (artifactOpen && selectedWorkstationArtifact && view === 'work' ? ' artifact-open' : '') + (view === 'settings' ? ' settings-open' : '')}>
-      <aside className="zn-sidebar">
-       <div className="zn-sidebar-inner">
-        <div className="zn-brand-row">
-          <div className="zn-mark" aria-hidden="true">ZN</div>
-          <div className="zn-brand-copy">
-            <div className="zn-brand">ZN</div>
-            <div className="zn-muted zn-small">{t('sidebar.alwaysHere')}</div>
-          </div>
+    <div className={'zn-app ' + windowMode + (view === 'work' && approvalPendingCount > 0 ? ' tray-open' : '') + (contextOpen ? ' details-open' : ' context-closed') + (artifactOpen && selectedWorkstationArtifact && view === 'work' ? ' artifact-open' : '') + (view === 'settings' ? ' settings-open' : '')}>
+      <header className="zn-cmdbar" role="banner">
+        <div className="zn-cmdbar-brand">
+          <div className="zn-mark zn-mark-small" aria-hidden="true">ZN</div>
+          <span className="zn-cmdbar-name">ZN</span>
+          <small>{t('cmdbar.desk')}</small>
         </div>
-
-        <button className="zn-primary zn-new-work" type="button" onClick={openNewWork}>
-          <Plus size={16} weight="bold" />
-          <span>{t('sidebar.newWork')}</span>
-        </button>
-
-        <nav className="zn-primary-nav" aria-label={t('sidebar.navigation')}>
-          <button className="zn-nav-link" type="button" onClick={() => {
-            openNewWork()
-            setDraft(t('sidebar.imagePrompt'))
-            window.requestAnimationFrame(focusComposerInput)
-          }}>
-            <ImageSquare size={17} /><span>{t('sidebar.images')}</span>
-          </button>
-        </nav>
-
-        <label className="zn-search-shell">
-          <MagnifyingGlass size={15} />
-          <input
-            className="zn-search"
-            aria-label={t('sidebar.searchRecent')}
-            placeholder={t('sidebar.searchRecent')}
-            value={query}
-            onChange={event => setQuery(event.target.value)}
-          />
-        </label>
-
-        <nav className="zn-nav" aria-label={t('topbar.recentWork')}>
-          <button className="zn-section-toggle" type="button" aria-expanded={pinnedExpanded} onClick={() => setPinnedExpanded(value => !value)}>
-            <CaretDown className={pinnedExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.pinned')}</span>
-          </button>
-          {pinnedExpanded && pinnedThreads.length > 0 ? (
-            <div className="zn-thread-list zn-pinned-thread-list">
-              {pinnedThreads.map(thread => (
-                <div className="zn-thread-row" key={thread.id}>
-                  <button className={'zn-thread-link' + (thread.id === activeThread?.id && view === 'work' ? ' active' : '')} type="button" onClick={() => {
-                    setActiveThreadId(thread.id)
-                    setView('work')
-                    setContextOpen(false)
-                    setArtifactOpen(false)
-                    void refreshRestorePoints(thread.id)
-                  }}>
-                    <span>{threadDisplayTitle(thread.title, t)}</span>
-                    <span className="zn-thread-time">{timeLabel(thread.updatedAt, localeState.resolvedLocale)}</span>
-                  </button>
-                  <button className="zn-thread-pin active" type="button" aria-label={t('sidebar.unpin')} title={t('sidebar.unpin')} onClick={() => togglePinnedThread(thread.id)}><PushPin size={14} weight="fill" /></button>
-                </div>
-              ))}
-            </div>
-          ) : null}
-          {pinnedExpanded && pinnedThreads.length === 0 ? <div className="zn-sidebar-empty">{t('sidebar.noPinned')}</div> : null}
-          <button className="zn-section-toggle zn-section-spaced" type="button" aria-expanded={projectsExpanded} onClick={() => setProjectsExpanded(value => !value)}>
-            <CaretDown className={projectsExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.workspaces')}</span>
-          </button>
-          {projectsExpanded ? (
-          <>
-          <div className="zn-workspace-card">
-            <FolderSimple size={17} />
-            <div className="zn-workspace-copy">
-              <div>{activeWorkspace?.name || t('sidebar.localWork')}</div>
-              <div className="zn-muted zn-small zn-workspace-path" title={activeWorkspace?.path}>
-                {activeWorkspace?.path || t('sidebar.noFolder')}
-              </div>
-            </div>
-          </div>
-          <div className="zn-workspace-actions">
-            <button type="button" disabled={workspaceBusy || workActive || !activeThread} onClick={() => void attachWorkspace()}>
-              {workspaceBusy ? t('common.working') : activeWorkspace ? t('sidebar.changeFolder') : t('sidebar.attachFolder')}
-            </button>
-            {activeWorkspace ? (
-              <button type="button" disabled={workspaceBusy || workActive} onClick={() => void detachWorkspace()}>
-                {t('sidebar.detach')}
-              </button>
-            ) : null}
-          </div>
-          </>
-          ) : null}
-          <button className="zn-section-toggle zn-section-spaced" type="button" aria-expanded={recentExpanded} onClick={() => setRecentExpanded(value => !value)}>
-            <CaretDown className={recentExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.recent')}</span>
-          </button>
-          {recentExpanded ? <div className="zn-thread-list">
-            {recentThreads.map(thread => (
-              <div className="zn-thread-row" key={thread.id}>
-                <button
-                  className={'zn-thread-link' + (thread.id === activeThread?.id && view === 'work' ? ' active' : '')}
-                  type="button"
-                  onClick={() => {
-                    setActiveThreadId(thread.id)
-                    setView('work')
-                    setContextOpen(false)
-                    setArtifactOpen(false)
-                    void refreshRestorePoints(thread.id)
-                  }}
-                >
-                  <span>{threadDisplayTitle(thread.title, t)}</span>
-                  <span className="zn-thread-time">{timeLabel(thread.updatedAt, localeState.resolvedLocale)}</span>
-                </button>
-                <button className="zn-thread-pin" type="button" aria-label={t('sidebar.pin')} title={t('sidebar.pin')} onClick={() => togglePinnedThread(thread.id)}><PushPin size={14} /></button>
-              </div>
-            ))}
-          </div> : null}
-          <button className="zn-section-toggle zn-section-spaced" type="button" aria-expanded={routinesExpanded} onClick={() => setRoutinesExpanded(value => !value)}>
-            <CaretDown className={routinesExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.scheduled')}</span>
-          </button>
-          {routinesExpanded ? <RoutinesPanel /> : null}
-
-
-        </nav>
-
-        <div className="zn-sidebar-footer">
-          <button className="zn-nav-button" type="button" onClick={openSettings}>
-            <GearSix size={16} />
-            <span>{t('settings.title')}</span>
-          </button>
-        </div>
-       </div>
-      </aside>
-
-      <section className="zn-main-column">
         {view === 'work' ? (
-          <form className="zn-commandbar zn-composer-wrap" onSubmit={submit}>
-            <div className="zn-composer">
-              <div className="zn-mark zn-mark-small" aria-hidden="true">ZN</div>
-              <textarea
-                aria-label={t('composer.messageAria')}
-                placeholder={t('composer.placeholder')}
-                rows={2}
-                value={draft}
-                onChange={event => setDraft(event.target.value)}
-                onKeyDown={event => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
-                    event.preventDefault()
-                    event.currentTarget.form?.requestSubmit()
-                  }
+          <form className="zn-composer" onSubmit={submit}>
+            <textarea
+              aria-label={t('composer.messageAria')}
+              placeholder={t('composer.placeholder')}
+              rows={1}
+              value={draft}
+              onChange={event => setDraft(event.target.value)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' && !event.shiftKey) {
+                  event.preventDefault()
+                  event.currentTarget.form?.requestSubmit()
+                }
+              }}
+            />
+            <div className="zn-composer-tools">
+              <button
+                className="zn-composer-tool"
+                type="button"
+                aria-label={activeWorkspace ? t('composer.changeAttachedFolder') : t('composer.attachFolder')}
+                title={activeWorkspace ? t('composer.changeFolder') : t('composer.attachFolder')}
+                disabled={workspaceBusy || workActive || !activeThread}
+                onClick={() => void attachWorkspace()}
+              >
+                <Plus size={18} />
+              </button>
+              <button
+                className="zn-composer-tool"
+                type="button"
+                aria-label={t('sidebar.images')}
+                title={t('sidebar.images')}
+                onClick={() => {
+                  openNewWork()
+                  setDraft(t('sidebar.imagePrompt'))
+                  window.requestAnimationFrame(focusComposerInput)
                 }}
-              />
-              <div className="zn-composer-toolbar">
-                <div className="zn-composer-tools">
-                  <button
-                    className="zn-composer-tool"
-                    type="button"
-                    aria-label={activeWorkspace ? t('composer.changeAttachedFolder') : t('composer.attachFolder')}
-                    title={activeWorkspace ? t('composer.changeFolder') : t('composer.attachFolder')}
-                    disabled={workspaceBusy || workActive || !activeThread}
-                    onClick={() => void attachWorkspace()}
-                  >
-                    <Plus size={18} />
-                  </button>
-                  <span className="zn-context-chip" title={activeWorkspace?.path}>
-                    <FolderSimple size={14} />
-                    {activeWorkspace?.name || t('topbar.thisComputer')}
-                  </span>
-                </div>
-                <div className="zn-composer-tools">
-                  <span className="zn-model-chip" title={localizedProviderReadinessDetail}>
-                    {providerSettings?.model || 'ZN'}
-                  </span>
-                  <button
-                    className="zn-send"
-                    type="submit"
-                    aria-label={t('composer.sendAria')}
-                    disabled={submissionBusy || stoppingWork || !draft.trim()}
-                  >
-                    {submissionBusy
-                      ? <CircleNotch className="zn-spin" size={17} />
-                      : <ArrowUp size={18} weight="bold" />}
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div className="zn-composer-caption">
-              {teamTimeline && teamTimeline.members.length > 0 ? t('team.assignHint') : ''}
-              {workActive ? t('composer.background') : ''}{t('composer.shortcut')}
+              >
+                <ImageSquare size={18} />
+              </button>
+              <span className="zn-context-chip" title={activeWorkspace?.path}>
+                <FolderSimple size={14} />
+                {activeWorkspace?.name || t('topbar.thisComputer')}
+              </span>
+              <span className="zn-model-chip" title={localizedProviderReadinessDetail}>
+                {providerSettings?.model || 'ZN'}
+              </span>
+              <button
+                className="zn-send"
+                type="submit"
+                aria-label={t('composer.sendAria')}
+                disabled={submissionBusy || stoppingWork || !draft.trim()}
+              >
+                {submissionBusy
+                  ? <CircleNotch className="zn-spin" size={17} />
+                  : <ArrowUp size={18} weight="bold" />}
+              </button>
             </div>
           </form>
-        ) : null}
-        <header className="zn-topbar">
-          <div className="zn-topbar-brand">
-            <div className="zn-mark zn-mark-small" aria-hidden="true">ZN</div>
-            <div>
-              <div className="zn-brand">ZN</div>
-              <div className="zn-topbar-presence">
-                <span className={'zn-health-dot ' + residentHealth} />
-                {residentHealth === 'live' ? t('common.ready') : residentHealth === 'connecting' ? t('common.connecting') : t('common.offline')}
-              </div>
-            </div>
+        ) : (
+          <div className="zn-cmdbar-back">
+            <button type="button" onClick={() => setView('work')}>{t('cmdbar.backToWork')}</button>
           </div>
-
-          <div className="zn-topbar-copy">
-            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
-            <div className="zn-muted zn-small">{view === 'settings' ? `ZN · ${t('topbar.thisComputer')}` : activeWorkspace?.name || t('topbar.thisComputer')}</div>
-          </div>
-
-          {view === 'work' ? (
-            <div className="zn-mode-switch" role="tablist" aria-label={t('topbar.workDetails')}>
-              <button className={!contextOpen ? 'active' : ''} role="tab" aria-selected={!contextOpen} type="button" onClick={() => setContextOpen(false)}>
-                {t('topbar.chat')}
-              </button>
-              <button className={contextOpen ? 'active' : ''} role="tab" aria-selected={contextOpen} type="button" onClick={openDetails}>
-                {t('topbar.work')}
-              </button>
-            </div>
-          ) : null}
-
-          <div className="zn-topbar-actions">
-            <button type="button" aria-label={t('topbar.recentWork')} title={t('topbar.recentWork')} onClick={() => requestWindowMode('expanded')}>
-              <ClockCounterClockwise size={17} />
-            </button>
-            <button type="button" aria-label={t('topbar.toggleSidebar')} title={t('topbar.toggleSidebar')} aria-pressed={sidebarExpanded} onClick={() => setSidebarExpanded(value => !value)}>
-              <SidebarSimple size={17} />
-            </button>
-            <button type="button" aria-label={t('topbar.openSettings')} title={t('settings.title')} onClick={openSettings}>
-              <GearSix size={17} />
-            </button>
-            <button
-              type="button"
-              aria-label={windowMode === 'compact' ? t('topbar.expandZn') : t('topbar.compactZn')}
-              title={windowMode === 'compact' ? t('topbar.expand') : t('topbar.compact')}
-              onClick={toggleWindowMode}
-            >
-              {windowMode === 'compact' ? <ArrowsOutSimple size={17} /> : <ArrowsInSimple size={17} />}
-            </button>
-          </div>
-        </header>
+        )}
+        <div className="zn-cmdbar-actions">
+          <button
+            type="button"
+            aria-label={windowMode === 'compact' ? t('topbar.expandZn') : t('topbar.compactZn')}
+            title={windowMode === 'compact' ? t('topbar.expand') : t('topbar.compact')}
+            onClick={toggleWindowMode}
+          >
+            {windowMode === 'compact' ? <ArrowsOutSimple size={17} /> : <ArrowsInSimple size={17} />}
+          </button>
+        </div>
+      </header>
+      {view === 'work' && approvalPendingCount > 0 ? (
+        <div className="zn-tray" role="status" aria-label={t('tray.title')}>
+          <span className="zn-tray-label">{t('tray.title')}</span>
+          <span className="zn-tray-text">{t('approval.banner', { count: approvalPendingCount, countLabel: t(approvalPendingCount === 1 ? 'approval.bannerOne' : 'approval.bannerMany') })}</span>
+          <span className="zn-tray-spacer" />
+          <button className="zn-primary zn-tray-action" type="button" onClick={openApprovals}>{t('approval.review')}</button>
+        </div>
+      ) : null}
+      <div className="zn-main-row">
+        <nav className="zn-rail" aria-label={t('sidebar.navigation')}>
+          <button type="button" className="zn-rail-button" aria-current={view === 'work' && !threadsExpanded && !routinesExpanded ? 'true' : undefined} aria-label={t('rail.desk')} title={t('rail.desk')} onClick={() => { setView('work'); setThreadsExpanded(false); setRoutinesExpanded(false); setContextOpen(false) }}>桌</button>
+          <span className="zn-rail-label">{t('rail.desk')}</span>
+          <button type="button" className="zn-rail-button" aria-current={threadsExpanded ? 'true' : undefined} aria-label={t('drawer.threads')} title={t('drawer.threads')} onClick={() => { setThreadsExpanded(value => !value); setRoutinesExpanded(false) }}>账</button>
+          <span className="zn-rail-label">{t('rail.ledger')}</span>
+          <button type="button" className="zn-rail-button" aria-label={t('rail.pending')} title={t('rail.pending')} onClick={focusPendingColumn}>签</button>
+          <span className="zn-rail-label">{t('rail.pending')}</span>
+          <button type="button" className="zn-rail-button" aria-current={routinesExpanded ? 'true' : undefined} aria-label={t('rail.routines')} title={t('rail.routines')} onClick={() => { setRoutinesExpanded(value => !value); setThreadsExpanded(false) }}>技</button>
+          <span className="zn-rail-label">{t('rail.routines')}</span>
+          <button type="button" className="zn-rail-button" aria-current={view === 'settings' ? 'true' : undefined} aria-label={t('topbar.openSettings')} title={t('settings.title')} onClick={openSettings}>设</button>
+          <span className="zn-rail-label">{t('rail.settings')}</span>
+        </nav>
 
         {view === 'settings' ? (
           <main className="zn-settings">
@@ -1305,7 +1230,27 @@ export function ZnWorkbench() {
           </main>
         ) : (
           <>
-            <main className="zn-thread-surface">
+            <main className="zn-ledger">
+              <div className="zn-ledger-head">
+                <h1>{t('ledger.title')}</h1>
+                <span className="zn-ledger-hint">{activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</span>
+                <span className="zn-ledger-spacer" />
+                <label className="zn-ledger-filter-label" htmlFor="zn-ledger-filter">{t('ledger.filter')}</label>
+                <select id="zn-ledger-filter" className="zn-ledger-filter" value={ledgerFilter} onChange={event => setLedgerFilter(event.target.value as typeof ledgerFilter)}>
+                  <option value="all">{t('ledger.filterAll')}</option>
+                  <option value="user">{t('ledger.filterUser')}</option>
+                  <option value="zn">{t('ledger.filterZn')}</option>
+                  <option value="activity">{t('ledger.filterActivity')}</option>
+                </select>
+                <div className="zn-mode-switch" role="tablist" aria-label={t('topbar.workDetails')}>
+                  <button className={!contextOpen ? 'active' : ''} role="tab" aria-selected={!contextOpen} type="button" onClick={() => setContextOpen(false)}>
+                    {t('topbar.chat')}
+                  </button>
+                  <button className={contextOpen ? 'active' : ''} role="tab" aria-selected={contextOpen} type="button" onClick={openDetails}>
+                    {t('topbar.work')}
+                  </button>
+                </div>
+              </div>
               {residentHealth === 'offline' ? (
                 <div className="zn-connection-recovery" role="alert" aria-live="polite">
                   <div className="zn-connection-recovery-copy">
@@ -1315,14 +1260,33 @@ export function ZnWorkbench() {
                   <button type="button" onClick={() => void refreshResident()}>{t('error.reconnect')}</button>
                 </div>
               ) : null}
+              {residentError ? (
+                <div className="zn-banner zn-banner-error" role="alert">
+                  <span>{residentError}</span>
+                  <span className="zn-banner-spacer" />
+                  <button className="zn-primary" type="button" onClick={() => void refreshResident()}>{t('ledger.retry')}</button>
+                  <button type="button" onClick={() => setResidentError(null)}>{t('ledger.dismiss')}</button>
+                </div>
+              ) : null}
               {deepLinkNotice ? (
                 <div className="zn-notice">
                   <strong>{t('deepLink.received')}</strong> {t('deepLink.safe')}
                   <button type="button" onClick={() => setDeepLinkNotice(null)}>{t('deepLink.dismiss')}</button>
                 </div>
               ) : null}
+              {activeThread && activeThread.messages.length === 0 && !showActiveWork && residentHealth === 'connecting' ? (
+                <div className="zn-ledger-loading" aria-label={t('ledger.loading')} role="status">
+                  {[0, 1, 2, 3].map(index => (
+                    <div className="zn-ledger-row zn-ledger-row-loading" key={index}>
+                      <span className="zn-skeleton zn-skeleton-short" />
+                      <span className="zn-skeleton zn-skeleton-short" />
+                      <span className="zn-skeleton-stack"><span className="zn-skeleton zn-skeleton-mid" /><span className="zn-skeleton zn-skeleton-short" /></span>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
 
-              {activeThread && activeThread.messages.length === 0 && !showActiveWork ? (
+              {activeThread && activeThread.messages.length === 0 && !showActiveWork && residentHealth !== 'connecting' ? (
                 <section className="zn-home">
                   <div className="zn-home-hero">
                     <h1>{t('home.title')}</h1>
@@ -1391,14 +1355,15 @@ export function ZnWorkbench() {
                 </section>
               ) : null}
 
-              {activeThread && activeThread.messages.length > 0 ? (
+              {activeThread && visibleMessages.length > 0 ? (
                 <div className="zn-messages">
-                  {activeThread.messages.map(message => {
+                  {visibleMessages.map(message => {
                     const executionEvidence = message.role === 'activity'
                       ? executionEvidenceFromDetail(message.detail)
                       : null
                     return (
                       <article className={'zn-message ' + message.role} key={message.id}>
+                        <span className="zn-message-time">{timeLabel(message.at, localeState.resolvedLocale)}</span>
                         <div className="zn-message-label">{message.role === 'user' ? t('message.you') : message.role === 'zn' ? 'ZN' : t('message.activity')}</div>
                         <div className="zn-message-body">{message.text}</div>
                         {executionEvidence ? (
@@ -1425,6 +1390,10 @@ export function ZnWorkbench() {
                     </article>
                   ) : null}
                 </div>
+              ) : null}
+
+              {activeThread && activeThread.messages.length > 0 && visibleMessages.length === 0 ? (
+                <p className="zn-ledger-empty">{t('ledger.noMatch')}</p>
               ) : null}
 
               {teamTimeline && teamTimeline.entries.length > 0 ? (
@@ -1570,35 +1539,217 @@ export function ZnWorkbench() {
                   <button type="button" onClick={() => activeWorkstationArtifact ? openArtifact(activeWorkstationArtifact.id) : openDetails()}>{t('result.view')}</button>
                 </section>
               ) : null}
-            </main>
-
             {teamNotice ? (
               <div className="zn-team-notice" role="status" aria-live="polite">
                 <span>{teamNotice}</span>
                 <button type="button" aria-label={t('deepLink.dismiss')} onClick={() => setTeamNotice(null)}>×</button>
               </div>
             ) : null}
-
-            <footer className="zn-statusline" aria-label={t('home.readinessAria')}>
-              <span><i className={'zn-health-dot ' + residentHealth} />{residentHealth === 'live' ? t('home.residentReady') : residentHealth === 'connecting' ? t('home.residentConnecting') : t('home.residentOffline')}</span>
-              <span>{activeWorkspace ? t('home.workspace', { name: activeWorkspace.name }) : t('topbar.thisComputer')}</span>
-              <span title={localizedProviderReadinessDetail}>{providerReadiness.ready ? t('home.cognitionAvailable') : t('home.cognitionSetupNeeded')}</span>
-            </footer>
-
-            {view === 'work' && approvalPendingCount > 0 ? (
-              <aside className="zn-tray" role="alert" aria-label={t('tray.title')}>
-                <div className="zn-tray-head">
-                  <span className="zn-tray-seal" aria-hidden="true" />
-                  <strong>{t('tray.title')}</strong>
-                  <span className="zn-tray-count">{approvalPendingCount}</span>
+            </main>
+            <aside className="zn-pending" aria-label={t('pending.title')}>
+              <div className="zn-pending-head">
+                <h2>{t('pending.title')}</h2>
+                <span className="zn-ledger-hint">{t('pending.hint')}</span>
+                <span className="zn-pending-spacer" />
+                <span className="zn-mono zn-pending-count">{t('pending.count', { count: approvals?.pending.length ?? approvalPendingCount })}</span>
+              </div>
+              {approvalError ? (
+                <div className="zn-pending-error" role="alert">
+                  <span>{approvalError}</span>
+                  <button type="button" onClick={() => void refreshApprovals()}>{t('ledger.retry')}</button>
                 </div>
-                <p>{t('approval.banner', { count: approvalPendingCount, countLabel: t(approvalPendingCount === 1 ? 'approval.bannerOne' : 'approval.bannerMany') })}</p>
-                <button type="button" onClick={openApprovals}>{t('approval.review')}</button>
-              </aside>
-            ) : null}
+              ) : null}
+              {approvals === null && !approvalError ? (
+                <div className="zn-pending-list" aria-live="polite">
+                  {[0, 1].map(index => (
+                    <article className="zn-pending-item zn-pending-item-loading" key={index}>
+                      <span className="zn-skeleton zn-skeleton-mid" />
+                      <span className="zn-skeleton zn-skeleton-short" />
+                    </article>
+                  ))}
+                </div>
+              ) : (approvals?.pending.length ?? 0) === 0 ? (
+                <div className="zn-pending-empty">{t('pending.empty')}</div>
+              ) : (
+                <div className="zn-pending-list">
+                  {(pendingExpanded ? approvals?.pending ?? [] : (approvals?.pending ?? []).slice(0, 5)).map(request => (
+                    <article className="zn-pending-item" key={request.id}>
+                      <h3>{pendingApprovalKindLabel(request.actionKind, t)} · {request.target}</h3>
+                      <p>{request.scope}{request.valueText ? ` · ${request.valueText}` : ''}</p>
+                      <div className="zn-pending-meta">{pendingApprovalSourceLabel(request.source, t)} · {t('approval.expires')} {new Intl.DateTimeFormat(localeState.resolvedLocale, { hour: '2-digit', minute: '2-digit' }).format(new Date(request.expiresAt))}</div>
+                      {request.diffText ? (
+                        <details className="zn-pending-diff-wrap" open>
+                          <summary>{t('pending.diff')}</summary>
+                          <pre className="zn-pending-diff">{request.diffText}</pre>
+                          {request.reviewNote ? <p className="zn-muted zn-small">{t('approval.reviewNote')}: {request.reviewNote}</p> : null}
+                        </details>
+                      ) : null}
+                      <div className="zn-pending-actions">
+                        <button className="zn-pending-approve" type="button" disabled={approvalBusyId === request.id} onClick={() => void decidePending(request, 'allow_once')}>{t('pending.approve')}</button>
+                        <button className="zn-pending-reject" type="button" disabled={approvalBusyId === request.id} onClick={() => void decidePending(request, 'deny')}>{t('pending.deny')}</button>
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              )}
+              {(approvals?.pending.length ?? 0) > 5 ? (
+                <button className="zn-pending-collapsed" type="button" onClick={() => setPendingExpanded(value => !value)}>
+                  {pendingExpanded ? t('pending.collapse') : t('pending.expand', { count: (approvals?.pending.length ?? 0) - 5 })}
+                </button>
+              ) : null}
+              <div className="zn-pending-archive">
+                <h3>{t('pending.archive')}</h3>
+                {(approvals?.applied ?? []).length === 0 ? (
+                  <p className="zn-muted zn-small">{t('pending.noArchive')}</p>
+                ) : (
+                  <ul>
+                    {(approvals?.applied ?? []).slice(0, 5).map(request => (
+                      <li key={request.id}>{pendingApprovalKindLabel(request.actionKind, t)} · {request.target}</li>
+                    ))}
+                  </ul>
+                )}
+                <p className="zn-muted zn-small">{t('pending.archiveNote')}</p>
+              </div>
+              <button className="zn-pending-view-all" type="button" onClick={openApprovals}>{t('pending.viewAll')}</button>
+            </aside>
           </>
         )}
-      </section>
+      </div>
+
+      <footer className="zn-statusline" aria-label={t('home.readinessAria')}>
+        <span><i className={'zn-health-dot ' + residentHealth} />{residentHealth === 'live' ? t('home.residentReady') : residentHealth === 'connecting' ? t('home.residentConnecting') : t('home.residentOffline')}</span>
+        <span>{activeWorkspace ? t('home.workspace', { name: activeWorkspace.name }) : t('topbar.thisComputer')}</span>
+        <span title={localizedProviderReadinessDetail}>{providerReadiness.ready ? t('home.cognitionAvailable') : t('home.cognitionSetupNeeded')}</span>
+        <span className="zn-statusline-caption">{teamTimeline && teamTimeline.members.length > 0 ? t('team.assignHint') : ''}{workActive ? t('composer.background') : ''}{t('composer.shortcut')}</span>
+      </footer>
+
+      {threadsExpanded || routinesExpanded ? (
+        <button className="zn-drawer-backdrop" type="button" aria-label={t('drawer.close')} onClick={() => { setThreadsExpanded(false); setRoutinesExpanded(false) }} />
+      ) : null}
+
+      {threadsExpanded ? (
+        <aside className="zn-drawer" aria-label={t('drawer.threads')}>
+          <div className="zn-drawer-head">
+            <strong>{t('drawer.threads')}</strong>
+            <button type="button" aria-label={t('drawer.close')} onClick={() => setThreadsExpanded(false)}>
+              <X size={18} />
+            </button>
+          </div>
+          <button className="zn-primary zn-new-work" type="button" onClick={() => { openNewWork(); setThreadsExpanded(false) }}>
+            <Plus size={16} weight="bold" />
+            <span>{t('sidebar.newWork')}</span>
+          </button>
+          <nav className="zn-primary-nav" aria-label={t('sidebar.navigation')}>
+            <button className="zn-nav-link" type="button" onClick={() => {
+              openNewWork()
+              setDraft(t('sidebar.imagePrompt'))
+              window.requestAnimationFrame(focusComposerInput)
+              setThreadsExpanded(false)
+            }}>
+              <ImageSquare size={17} /><span>{t('sidebar.images')}</span>
+            </button>
+          </nav>
+          <label className="zn-search-shell">
+            <MagnifyingGlass size={15} />
+            <input
+              className="zn-search"
+              aria-label={t('sidebar.searchRecent')}
+              placeholder={t('sidebar.searchRecent')}
+              value={query}
+              onChange={event => setQuery(event.target.value)}
+            />
+          </label>
+          <nav className="zn-nav" aria-label={t('topbar.recentWork')}>
+            <button className="zn-section-toggle" type="button" aria-expanded={pinnedExpanded} onClick={() => setPinnedExpanded(value => !value)}>
+              <CaretDown className={pinnedExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.pinned')}</span>
+            </button>
+            {pinnedExpanded && pinnedThreads.length > 0 ? (
+              <div className="zn-thread-list zn-pinned-thread-list">
+                {pinnedThreads.map(thread => (
+                  <div className="zn-thread-row" key={thread.id}>
+                    <button className={'zn-thread-link' + (thread.id === activeThread?.id && view === 'work' ? ' active' : '')} type="button" onClick={() => {
+                      setActiveThreadId(thread.id)
+                      setView('work')
+                      setContextOpen(false)
+                      setArtifactOpen(false)
+                      setThreadsExpanded(false)
+                      void refreshRestorePoints(thread.id)
+                    }}>
+                      <span>{threadDisplayTitle(thread.title, t)}</span>
+                      <span className="zn-thread-time">{timeLabel(thread.updatedAt, localeState.resolvedLocale)}</span>
+                    </button>
+                    <button className="zn-thread-pin active" type="button" aria-label={t('sidebar.unpin')} title={t('sidebar.unpin')} onClick={() => togglePinnedThread(thread.id)}><PushPin size={14} weight="fill" /></button>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {pinnedExpanded && pinnedThreads.length === 0 ? <div className="zn-sidebar-empty">{t('sidebar.noPinned')}</div> : null}
+            <button className="zn-section-toggle zn-section-spaced" type="button" aria-expanded={projectsExpanded} onClick={() => setProjectsExpanded(value => !value)}>
+              <CaretDown className={projectsExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.workspaces')}</span>
+            </button>
+            {projectsExpanded ? (
+            <>
+            <div className="zn-workspace-card">
+              <FolderSimple size={17} />
+              <div className="zn-workspace-copy">
+                <div>{activeWorkspace?.name || t('sidebar.localWork')}</div>
+                <div className="zn-muted zn-small zn-workspace-path" title={activeWorkspace?.path}>
+                  {activeWorkspace?.path || t('sidebar.noFolder')}
+                </div>
+              </div>
+            </div>
+            <div className="zn-workspace-actions">
+              <button type="button" disabled={workspaceBusy || workActive || !activeThread} onClick={() => void attachWorkspace()}>
+                {workspaceBusy ? t('common.working') : activeWorkspace ? t('sidebar.changeFolder') : t('sidebar.attachFolder')}
+              </button>
+              {activeWorkspace ? (
+                <button type="button" disabled={workspaceBusy || workActive} onClick={() => void detachWorkspace()}>
+                  {t('sidebar.detach')}
+                </button>
+              ) : null}
+            </div>
+            </>
+            ) : null}
+            <button className="zn-section-toggle zn-section-spaced" type="button" aria-expanded={recentExpanded} onClick={() => setRecentExpanded(value => !value)}>
+              <CaretDown className={recentExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.recent')}</span>
+            </button>
+            {recentExpanded ? <div className="zn-thread-list">
+              {recentThreads.map(thread => (
+                <div className="zn-thread-row" key={thread.id}>
+                  <button
+                    className={'zn-thread-link' + (thread.id === activeThread?.id && view === 'work' ? ' active' : '')}
+                    type="button"
+                    onClick={() => {
+                      setActiveThreadId(thread.id)
+                      setView('work')
+                      setContextOpen(false)
+                      setArtifactOpen(false)
+                      setThreadsExpanded(false)
+                      void refreshRestorePoints(thread.id)
+                    }}
+                  >
+                    <span>{threadDisplayTitle(thread.title, t)}</span>
+                    <span className="zn-thread-time">{timeLabel(thread.updatedAt, localeState.resolvedLocale)}</span>
+                  </button>
+                  <button className="zn-thread-pin" type="button" aria-label={t('sidebar.pin')} title={t('sidebar.pin')} onClick={() => togglePinnedThread(thread.id)}><PushPin size={14} /></button>
+                </div>
+              ))}
+            </div> : null}
+          </nav>
+        </aside>
+      ) : null}
+
+      {routinesExpanded ? (
+        <aside className="zn-drawer" aria-label={t('drawer.routines')}>
+          <div className="zn-drawer-head">
+            <strong>{t('sidebar.scheduled')}</strong>
+            <button type="button" aria-label={t('drawer.close')} onClick={() => setRoutinesExpanded(false)}>
+              <X size={18} />
+            </button>
+          </div>
+          <RoutinesPanel />
+        </aside>
+      ) : null}
 
       {artifactOpen && selectedWorkstationArtifact && view === 'work' ? (
         <aside className="zn-artifact-pane" aria-label={t('artifact.preview')}>
