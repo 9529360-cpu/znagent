@@ -354,6 +354,9 @@ class Spool:
         self._lock = threading.Lock()
         self._file = self.directory / SPOOL_FILENAME
         self._cursor_file = self.directory / CURSOR_FILENAME
+        #: Cursor-persist failures swallowed by :meth:`advance`, counted
+        #: (never logged: this path must stay non-blocking and non-raising).
+        self.advance_failures: int = 0
 
     def append(self, event: Mapping[str, Any]) -> bool:
         """Append one JSON line. Never raises; False means not stored."""
@@ -388,7 +391,11 @@ class Spool:
         return min(value, size)
 
     def advance(self, offset: int) -> None:
-        """Persist the cursor. Never raises; a lost cursor only replays."""
+        """Persist the cursor. Never raises; a lost cursor only replays.
+
+        A persist failure is counted in :attr:`advance_failures` so the
+        loss is observable instead of silently swallowed.
+        """
         try:
             with self._lock:
                 self.directory.mkdir(parents=True, exist_ok=True)
@@ -396,7 +403,7 @@ class Spool:
                 tmp.write_text(str(int(offset)), encoding="utf-8")
                 tmp.replace(self._cursor_file)
         except BaseException:
-            pass
+            self.advance_failures += 1
 
     def pending(self) -> list[tuple[int, dict[str, Any] | None]]:
         """Entries after the cursor as ``(end_offset, parsed_or_None)``."""
@@ -493,6 +500,9 @@ class CaptureWorker:
     def __init__(self, spool: Spool, *, config: CaptureConfig | None = None) -> None:
         self.spool = spool
         self.config = config or CaptureConfig()
+        #: Unexpected errors escaping one :meth:`run_once` drain, counted
+        #: by :meth:`run_forever` instead of silently swallowed.
+        self.loop_errors: int = 0
 
     def run_once(self, sink: Callable[[dict[str, Any]], None]) -> WorkerResult:
         """Drain pending entries once. Never raises."""
@@ -531,13 +541,17 @@ class CaptureWorker:
         interval_seconds: float = 5.0,
         stop_event: threading.Event,
     ) -> None:
-        """Drain in a loop until ``stop_event`` is set. Never raises."""
+        """Drain in a loop until ``stop_event`` is set. Never raises.
+
+        An unexpected error escaping one drain is counted in
+        :attr:`loop_errors` so a repeatedly failing loop is observable.
+        """
         interval = max(0.0, float(interval_seconds))
         while not stop_event.is_set():
             try:
                 self.run_once(sink)
             except BaseException:
-                pass
+                self.loop_errors += 1
             stop_event.wait(interval)
 
     def start_background(

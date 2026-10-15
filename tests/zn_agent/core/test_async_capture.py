@@ -316,5 +316,32 @@ class ConfigOverrideTests(unittest.TestCase):
         )
 
 
+class SuppressedErrorCountingTests(unittest.TestCase):
+    def test_advance_failure_is_counted_not_silently_swallowed(self):
+        # Spool directory is a file: cursor persist fails, advance still
+        # never raises, and the loss is observable via advance_failures.
+        with tempfile.NamedTemporaryFile() as blocker:
+            spool = Spool(blocker.name)
+            self.assertEqual(spool.advance_failures, 0)
+            spool.advance(5)
+            self.assertEqual(spool.advance_failures, 1)
+
+    def test_run_forever_counts_unexpected_loop_errors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            worker = CaptureWorker(Spool(tmp))
+            stop_event = threading.Event()
+            calls: list[int] = []
+
+            def flaky(_sink):
+                calls.append(1)
+                stop_event.set()
+                raise RuntimeError("unexpected drain failure")
+
+            worker.run_once = flaky
+            worker.run_forever(lambda event: None, interval_seconds=0.01, stop_event=stop_event)
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(worker.loop_errors, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
