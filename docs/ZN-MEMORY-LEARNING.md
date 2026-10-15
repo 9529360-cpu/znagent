@@ -801,3 +801,40 @@ on top of the GR-1/GR-2 ledger, not a second supersession mechanism.
   `tests/zn_agent/core/test_memory_linked_ids.py`.
 - Deliberately not in this change: SUPERSEDE events + retrieval
   arbitration (a later decision built on these links).
+
+## 20. Exact dedup + batch pipeline (M0-2)
+
+Same-value rewrites (§19) open no new window; M0-2 makes the dedup
+exact, hash-based, and batched. Mechanism adapted from mem0
+(Apache 2.0); implementation is ZN's own, on top of the GR-1/GR-2
+ledger, not a second supersession mechanism.
+
+- `fact_content_hash(key, value, aliases)` is the dedup identity:
+  md5 over canonical JSON (`sort_keys`, aliases sorted, key
+  stripped), so the same fact always hashes the same. md5 is a dedup
+  fingerprint, not a security hash. `('a',)` and `['a']` hash alike;
+  alias order does not matter.
+- An exact repeat — same key + value + aliases, hash-equal to the
+  live fact — writes nothing at all: no new ledger row, no
+  facts-table rewrite, `updated_at` untouched. Same value with
+  different aliases still refreshes the aliases but opens no new
+  window (dedup, not a new version). A different value still
+  versions (GR-2 + M0-1 links).
+- `remember_many(items)` runs many facts through the same
+  choke → supersession → version/dedup decisions as `remember()`,
+  under ONE transaction, one facts snapshot, one schema ensure, and
+  one shared timestamp — one commit per batch instead of one per
+  fact. A malformed item raises before anything is written; a
+  failure mid-batch rolls the whole batch back. It returns
+  per-item outcomes (`created` | `versioned` | `deduped`, plus
+  whether each wrote) and summary counts.
+- Batch vs sequential equivalence: the same items applied via
+  `remember_many` vs one-by-one `remember()` end with equivalent
+  ledger content (same keys/values/aliases/links/windows) — only
+  the timestamps may differ, because the batch shares one.
+  Tests: `tests/zn_agent/core/test_memory_batch_dedup.py`
+  (hash canonicality, zero-write repeat, batch≡sequential,
+  exactly-1-COMMIT batch, malformed/rollback).
+- Deliberately not in this change: vector store / Qdrant (ZN
+  keyword search stays on SQLite FTS5), SUPERSEDE events +
+  retrieval arbitration.
