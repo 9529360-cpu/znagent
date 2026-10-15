@@ -28,13 +28,17 @@ Fix shape (LangGraph invariant, ZN-owned machinery -- no Pregel runtime):
   checkpoint + the durable ledger, never from a stale checkpoint alone.
 """
 
+import os
 import sqlite3
 import tempfile
+import types
 import unittest
 from contextlib import closing
 from pathlib import Path
+from unittest.mock import patch
 
 from zn_agent.core.action import NativeActionIntent
+from zn_agent.core import atomic_overwrite_resident as _atomic_overwrite_resident_module
 from zn_agent.core.models import WorkingState
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.steerable_work import WorkItem
@@ -468,6 +472,146 @@ class LG1TwoPhasePlainEventTests(_Base):
                 self.assertEqual(target.read_text(encoding="utf-8"), intended)
             finally:
                 restarted.store.close()
+
+
+class LG1RecoveryCompletionCleanupOwnershipTests(_Base):
+    def test_recovery_completion_skips_immediate_atomic_cleanup(self):
+        """#526 red: completing out of recovery must not run immediate cleanup.
+
+        LG-1 routes a verified overwrite-recovery effect through
+        ``_complete_successful_body_action``. The atomic layer used to run
+        its immediate ``_cleanup`` there (delete backup + protocol), which
+        raced ahead of the namespace layer's checkpointed cleanup: the
+        cleanup-authority checkpoint was never persisted, the resumed
+        recovery saw a bare ``complete_without_replay`` decision, and the
+        backup-drift check became unreachable. Recovery completions must
+        leave the artifacts alone so the recovery-step caller (namespace
+        layer) can checkpoint cleanup authority first; fresh completions
+        keep the historical immediate cleanup.
+
+        ``_cleanup`` itself is Windows-gated on ``os.name``, so the test
+        swaps only the ``os`` reference inside the atomic module for a
+        stand-in reporting ``nt`` -- patching the real ``os.name`` would
+        break ``pathlib.Path`` construction on Linux.
+        """
+        windows_os = types.SimpleNamespace(name="nt", path=os.path)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            store_path = root / "kernel.db"
+            target = root / "document.txt"
+            target.write_text("old", encoding="utf-8")
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=store_path
+            )
+            try:
+                event = resident.enqueue(
+                    "replace the file with the requested exact text",
+                    payload={"required_capabilities": ["filesystem"]},
+                )
+                assert resident.store.claim_event(event.event_id) is not None
+                intent = NativeActionIntent(
+                    intent_id=f"intent-{event.event_id}",
+                    event_id=event.event_id,
+                    kind="write_text",
+                    args={
+                        "path": str(target),
+                        "content": "new exact state",
+                        "append": False,
+                        "create_parents": True,
+                    },
+                    source="native_deliberation",
+                )
+                state = WorkingState(
+                    current_event_id=event.event_id,
+                    stage="side_effect_recovery",
+                    next_action="re-observe the exact overwrite postcondition",
+                    data={
+                        "native_action_intent": intent.to_dict(),
+                        "side_effect_recovery": {
+                            "status": "verified_effect",
+                            "decision": "complete_without_replay",
+                            "replay_blocked": False,
+                            "intent_id": intent.intent_id,
+                        },
+                    },
+                )
+                resident.store.save_working_state(state)
+                resident.body.prepare_atomic_protocol(
+                    event_id=event.event_id, intent=intent
+                )
+                _, backup_path = resident.body.atomic_artifact_paths(
+                    event_id=event.event_id,
+                    kind=intent.kind,
+                    args=dict(intent.args),
+                )
+                backup_path.write_text("old", encoding="utf-8")
+                self.assertIsNotNone(
+                    resident.body.atomic_protocol(
+                        event_id=event.event_id,
+                        kind=intent.kind,
+                        args=dict(intent.args),
+                    )
+                )
+
+                # Recovery completion: artifacts must survive for the
+                # namespace layer's checkpointed cleanup.
+                with patch.object(
+                    _atomic_overwrite_resident_module, "os", windows_os
+                ):
+                    result = resident._complete_successful_body_action(
+                        event,
+                        state,
+                        intent,
+                        response=str(target),
+                        reason="verified effect",
+                    )
+                self.assertIsNotNone(result)
+                assert result is not None
+                self.assertTrue(result.success)
+                self.assertTrue(
+                    backup_path.exists(),
+                    "recovery completion deleted the retained backup before "
+                    "the namespace layer could checkpoint cleanup authority",
+                )
+                self.assertIsNotNone(
+                    resident.body.atomic_protocol(
+                        event_id=event.event_id,
+                        kind=intent.kind,
+                        args=dict(intent.args),
+                    )
+                )
+
+                # Fresh completion: immediate cleanup still applies.
+                fresh = WorkingState(
+                    current_event_id=event.event_id,
+                    stage="native_action",
+                    next_action="move body: write_text",
+                    data={"native_action_intent": intent.to_dict()},
+                )
+                resident.store.save_working_state(fresh)
+                with patch.object(
+                    _atomic_overwrite_resident_module, "os", windows_os
+                ):
+                    fresh_result = resident._complete_successful_body_action(
+                        event,
+                        fresh,
+                        intent,
+                        response=str(target),
+                        reason="fresh completion",
+                    )
+                self.assertIsNotNone(fresh_result)
+                assert fresh_result is not None
+                self.assertTrue(fresh_result.success)
+                self.assertFalse(backup_path.exists())
+                self.assertIsNone(
+                    resident.body.atomic_protocol(
+                        event_id=event.event_id,
+                        kind=intent.kind,
+                        args=dict(intent.args),
+                    )
+                )
+            finally:
+                resident.store.close()
 
 
 class LG1CheckpointChainTests(unittest.TestCase):
