@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from .id_mapping import IndexedReferences, resolve_structured_id_refs
 from .structured_proposal import parse_exact_json_payload
 
 _KEY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
@@ -55,6 +56,11 @@ class OutputContract:
     required_keys: tuple[str, ...] = ()
     # field name -> dtype, checked inside the top-level object.
     field_types: dict[str, str] = field(default_factory=dict)
+    # field name -> index mapping, for payload fields that hold references
+    # to prior records (M0-3). The model outputs ordinal indices; the
+    # mapping swaps them for real IDs (see resolve_ids). Empty by default:
+    # contracts without it behave exactly as before.
+    indexed_id_fields: dict[str, IndexedReferences] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not _KEY_RE.match(self.top_level_key):
@@ -75,6 +81,13 @@ class OutputContract:
                 raise ValueError(f"invalid field name: {name!r}")
             if dtype not in _DTYPE_CHECKS:
                 raise ValueError(f"unknown dtype {dtype!r} for field {name!r}")
+        for name, mapping in self.indexed_id_fields.items():
+            if not _KEY_RE.match(name):
+                raise ValueError(f"invalid indexed field name: {name!r}")
+            if not isinstance(mapping, IndexedReferences):
+                raise ValueError(
+                    f"indexed field {name!r} needs an IndexedReferences mapping"
+                )
 
     def instruction(self) -> str:
         """Stable format instruction. Keep it verbatim across calls so
@@ -120,6 +133,17 @@ class OutputContract:
                         return None
                     return inner if isinstance(inner, dict) else None
         return None
+
+    def resolve_ids(self, payload: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+        """Swap index refs in indexed fields for real IDs (M0-3).
+
+        Intended call order: ``extract`` -> ``resolve_ids`` -> ``validate``
+        on the resolved payload. A field that fails to resolve is left
+        unreplaced and reported; the caller must not use it. With no
+        ``indexed_id_fields`` declared this is a no-op returning the
+        payload unchanged.
+        """
+        return resolve_structured_id_refs(payload, field_mappings=self.indexed_id_fields)
 
     def validate(self, payload: dict[str, Any]) -> list[str]:
         """Return human-readable violations; empty means the payload fits."""
