@@ -350,6 +350,40 @@ class ResidentWorkLedger:
         self._save_thread(thread)
         return thread
 
+    def rename_thread(self, thread_id: str, title: str) -> WorkThread:
+        """Rename an existing Work thread without replacing its durable state.
+
+        Threat model: renderer/RPC titles are untrusted. Validate and privacy-
+        choke before the SQLite write boundary; use a bound parameter instead
+        of treating titles as SQL, file paths or agent instructions.
+        """
+        if not isinstance(title, str):
+            raise ValueError("work title must be text")
+        normalized_title = " ".join(strip_tags(title).strip().split())
+        if not normalized_title:
+            raise ValueError("work title must not be empty")
+        if len(normalized_title) > 120:
+            raise ValueError("work title must be 120 characters or fewer")
+
+        normalized_id = self._normalize_thread_id(thread_id)
+        with self._lock, closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM work_threads WHERE thread_id=?", (normalized_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("unknown work thread")
+            if row["title"] == normalized_title:
+                return self._thread_from_row(row)
+            conn.execute(
+                "UPDATE work_threads SET title=?,updated_at=? WHERE thread_id=?",
+                (normalized_title, utc_now(), normalized_id),
+            )
+            conn.commit()
+            updated = conn.execute(
+                "SELECT * FROM work_threads WHERE thread_id=?", (normalized_id,)
+            ).fetchone()
+        return self._thread_from_row(updated)
+
     def _save_thread(self, thread: WorkThread) -> None:
         with self._lock, closing(self._connect()) as conn:
             conn.execute(
