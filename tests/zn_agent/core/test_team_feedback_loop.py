@@ -165,6 +165,30 @@ class TeamFeedbackLoopTests(unittest.TestCase):
             ],
             files=["research/notes.md"],
             unfinished=[],
+            # AS-3: the owner requires both tracks; attest DoD.
+            standing_dod={
+                "no_regression": {
+                    "status": "not_applicable",
+                    "detail": "纯调研任务，无代码变更，无回归面。",
+                },
+                "runtime_verified": {
+                    "status": "not_applicable",
+                    "detail": "纯调研任务，无需运行时验证。",
+                },
+                "docs": {
+                    "status": "satisfied",
+                    "detail": "结论已写入 research/notes.md。",
+                    "evidence_ref": "research/notes.md",
+                },
+                "rollback": {
+                    "status": "satisfied",
+                    "detail": "删除 research/notes.md 即可回退。",
+                },
+                "approval": {
+                    "status": "satisfied",
+                    "detail": "无破坏性/外部动作，无需审批。",
+                },
+            },
         )
         cognition = _ScriptedSpecialist(script=[rejected, valid, claim])
         with tempfile.TemporaryDirectory() as tmp:
@@ -417,6 +441,30 @@ class TeamFeedbackLoopTests(unittest.TestCase):
                 ],
                 files=["research/notes.md"],
                 unfinished=[],
+                # AS-3: the owner requires both tracks; attest DoD.
+                standing_dod={
+                    "no_regression": {
+                        "status": "not_applicable",
+                        "detail": "纯调研任务，无代码变更，无回归面。",
+                    },
+                    "runtime_verified": {
+                        "status": "not_applicable",
+                        "detail": "纯调研任务，无需运行时验证。",
+                    },
+                    "docs": {
+                        "status": "satisfied",
+                        "detail": "结论已写入 research/notes.md。",
+                        "evidence_ref": "research/notes.md",
+                    },
+                    "rollback": {
+                        "status": "satisfied",
+                        "detail": "删除 research/notes.md 即可回退。",
+                    },
+                    "approval": {
+                        "status": "satisfied",
+                        "detail": "无破坏性/外部动作，无需审批。",
+                    },
+                },
             )
         )
         cognition = _ScriptedSpecialist(script=script)
@@ -455,6 +503,30 @@ class TeamFeedbackLoopTests(unittest.TestCase):
             ],
             files=["a/b/c/notes.md"],
             unfinished=[],
+            # AS-3: the owner requires both tracks; attest DoD.
+            standing_dod={
+                "no_regression": {
+                    "status": "not_applicable",
+                    "detail": "纯调研任务，无代码变更，无回归面。",
+                },
+                "runtime_verified": {
+                    "status": "not_applicable",
+                    "detail": "纯调研任务，无需运行时验证。",
+                },
+                "docs": {
+                    "status": "satisfied",
+                    "detail": "结论已写入 a/b/c/notes.md。",
+                    "evidence_ref": "a/b/c/notes.md",
+                },
+                "rollback": {
+                    "status": "satisfied",
+                    "detail": "删除 a/b/c/notes.md 即可回退。",
+                },
+                "approval": {
+                    "status": "satisfied",
+                    "detail": "无破坏性/外部动作，无需审批。",
+                },
+            },
         )
         cognition = _ScriptedSpecialist(script=[valid, claim])
         with tempfile.TemporaryDirectory() as tmp:

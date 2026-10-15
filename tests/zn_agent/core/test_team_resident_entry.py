@@ -47,6 +47,30 @@ class _TeamSpecialistCognition:
             ],
             files=["research-notes.md"],
             unfinished=[],
+            # AS-3: the owner requires both tracks; attest DoD.
+            standing_dod={
+                "no_regression": {
+                    "status": "not_applicable",
+                    "detail": "纯调研任务，无代码变更，无回归面。",
+                },
+                "runtime_verified": {
+                    "status": "not_applicable",
+                    "detail": "纯调研任务，无需运行时验证。",
+                },
+                "docs": {
+                    "status": "satisfied",
+                    "detail": "结论已写入 research-notes.md。",
+                    "evidence_ref": "research-notes.md",
+                },
+                "rollback": {
+                    "status": "satisfied",
+                    "detail": "删除 research-notes.md 即可回退。",
+                },
+                "approval": {
+                    "status": "satisfied",
+                    "detail": "无破坏性/外部动作，无需审批。",
+                },
+            },
         ),
         "开发-02": render_completion_report(
             conclusion="开发完成：功能按验收标准实现，新增代码有测试覆盖。",
@@ -56,6 +80,32 @@ class _TeamSpecialistCognition:
             ],
             files=["implementation.py"],
             unfinished=[],
+            # AS-3: both tracks; the run_python evidence backs the
+            # evidence-anchored DoD items (no_regression, runtime).
+            standing_dod={
+                "no_regression": {
+                    "status": "satisfied",
+                    "detail": "实现后运行测试并通过。",
+                    "evidence_ref": "implementation.py",
+                },
+                "runtime_verified": {
+                    "status": "satisfied",
+                    "detail": "功能已在真实运行时验证过。",
+                    "evidence_ref": "implementation.py",
+                },
+                "docs": {
+                    "status": "satisfied",
+                    "detail": "实现说明已随产物写入。",
+                },
+                "rollback": {
+                    "status": "satisfied",
+                    "detail": "删除 implementation.py 即可回退。",
+                },
+                "approval": {
+                    "status": "satisfied",
+                    "detail": "无破坏性/外部动作，无需审批。",
+                },
+            },
         ),
     }
 

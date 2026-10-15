@@ -180,6 +180,30 @@ class TeamWorkOwnerIntegrationTests(unittest.TestCase):
                 ],
                 files=[],
                 unfinished=[],
+                # AS-3: the owner requires both tracks; attest DoD.
+                standing_dod={
+                    "no_regression": {
+                        "status": "not_applicable",
+                        "detail": "纯调研任务，无代码变更，无回归面。",
+                    },
+                    "runtime_verified": {
+                        "status": "not_applicable",
+                        "detail": "纯调研任务，无需运行时验证。",
+                    },
+                    "docs": {
+                        "status": "satisfied",
+                        "detail": "结论与风险已写入调研产物。",
+                        "evidence_ref": "调研结论：用方案 A",
+                    },
+                    "rollback": {
+                        "status": "satisfied",
+                        "detail": "删除调研产物即可回退。",
+                    },
+                    "approval": {
+                        "status": "satisfied",
+                        "detail": "无破坏性/外部动作，无需审批。",
+                    },
+                },
             ),
         }
 
@@ -223,6 +247,32 @@ class TeamWorkOwnerIntegrationTests(unittest.TestCase):
                 ],
                 files=[],
                 unfinished=[],
+                # AS-3: both tracks; the run_python evidence backs the
+                # evidence-anchored DoD items (no_regression, runtime).
+                standing_dod={
+                    "no_regression": {
+                        "status": "satisfied",
+                        "detail": "实现后运行测试并通过。",
+                        "evidence_ref": "实现完成",
+                    },
+                    "runtime_verified": {
+                        "status": "satisfied",
+                        "detail": "功能已在真实运行时验证过。",
+                        "evidence_ref": "实现完成",
+                    },
+                    "docs": {
+                        "status": "satisfied",
+                        "detail": "实现说明已随产物写入。",
+                    },
+                    "rollback": {
+                        "status": "satisfied",
+                        "detail": "删除实现产物即可回退。",
+                    },
+                    "approval": {
+                        "status": "satisfied",
+                        "detail": "无破坏性/外部动作，无需审批。",
+                    },
+                },
             ),
         }
         self._advance()  # claim applied -> verify

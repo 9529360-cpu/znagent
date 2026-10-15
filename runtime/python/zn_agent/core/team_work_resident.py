@@ -557,9 +557,20 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             '[{"criterion":"<exact acceptance criterion>",'
             '"evidence_ref":"<relative_path or objective of one verified '
             'evidence entry below>"}],'
-            '"files":["<workspace-relative path>"],"unfinished":[]}}. '
+            '"files":["<workspace-relative path>"],"unfinished":[],'
+            '"standing_dod":{"no_regression":{"status":"satisfied|'
+            'not_applicable","detail":"...","evidence_ref":"..."},'
+            '"runtime_verified":{...},"docs":{...},"rollback":{...},'
+            '"approval":{...}}}. '
             "Cite EVERY acceptance criterion once, with an evidence_ref that "
-            "matches one verified evidence entry below. Put anything "
+            "matches one verified evidence entry below. "
+            "standing_dod must attest all five standing Definition-of-Done "
+            "items: no_regression, runtime_verified, docs, rollback, "
+            "approval -- each with status satisfied|not_applicable and a "
+            "concrete detail; no_regression and runtime_verified must cite "
+            "a real verified evidence entry (a test run / a runtime run) "
+            "when satisfied; a missing or unattested item sends the "
+            "report back. Put anything "
             "uncertain or not yet done in \"unfinished\" and do NOT claim "
             "completion for it -- never present a guess as a verified fact. "
             "A report with a missing section, a criterion without evidence, "

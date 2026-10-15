@@ -48,6 +48,39 @@ reason + an actionable fix + the missing list. At most
 rejection escalates to the user. Two consecutive rejections with the
 identical reason + missing set escalate at once -- repeating the same
 rejected claim is spinning, not progress.
+
+AS-3 dual-track Definition of Done: a claim must satisfy BOTH tracks to
+complete an item.
+
+- Track 1 (task acceptance): every ``expected_output`` item cited with
+  matching verified evidence, as above.
+- Track 2 (standing DoD): the report's ``standing_dod`` section attests
+  five standing items -- no_regression (无回归), runtime_verified
+  (运行时验证), docs (文档), rollback (回滚路径), approval (审批).
+  Each item is ``{"status": "satisfied" | "not_applicable", "detail":
+  "<concrete attestation>", "evidence_ref": "<optional>"}``.
+  ``detail`` is always required: a satisfied item says what was done, a
+  not_applicable item says why the item has no surface here. An
+  ``evidence_ref``, when given, must match a real verified evidence
+  entry -- a dangling citation makes the item missing, never verified.
+  ``no_regression`` and ``runtime_verified`` are evidence-anchored: a
+  satisfied claim MUST cite a real evidence entry (a test run / a
+  runtime run), because prose alone cannot prove "no regression" or
+  "verified at runtime". ``docs`` / ``rollback`` / ``approval`` are
+  attestation-anchored: a concrete ``detail`` suffices (e.g. which doc
+  was updated, how to revert, whether approval was needed and obtained),
+  with an optional real ``evidence_ref``.
+
+  Either track missing -> the claim is not accepted (``partial`` with
+  the missing items, DoD items prefixed ``standing_dod:``), with an
+  explicit missing list. A structurally invented DoD item (an unknown
+  key in ``standing_dod``) is ``rejected``, mirroring unknown criteria.
+  When ``require_standing_dod`` is False (the default, for
+  backward-compatible library use) a report WITHOUT a ``standing_dod``
+  section is judged on track 1 alone; a report WITH the section is
+  always judged on both tracks. The team owner passes
+  ``require_standing_dod=True`` at both adjudication points, so in the
+  product path a missing DoD section is itself a missing track.
 """
 
 import json
@@ -66,8 +99,35 @@ REPORT_SHAPE_HINT = (
     '{"completion_report": {"conclusion": "...", "evidence": '
     '[{"criterion": "<exact acceptance criterion>", "evidence_ref": '
     '"<relative_path or objective of one verified evidence entry>"}], '
-    '"files": ["<workspace-relative path>"], "unfinished": []}}'
+    '"files": ["<workspace-relative path>"], "unfinished": [], '
+    '"standing_dod": {"<no_regression|runtime_verified|docs|rollback|approval>": '
+    '{"status": "satisfied|not_applicable", "detail": "...", '
+    '"evidence_ref": "<optional, must match real evidence>"}}}}'
 )
+
+#: Standing Definition of Done (AS-3): (key, Chinese label) pairs.
+#: Every completion claim in the product path must attest all five.
+STANDING_DOD_ITEMS: tuple[tuple[str, str], ...] = (
+    ("no_regression", "无回归"),
+    ("runtime_verified", "运行时验证"),
+    ("docs", "文档"),
+    ("rollback", "回滚路径"),
+    ("approval", "审批"),
+)
+STANDING_DOD_KEYS: tuple[str, ...] = tuple(
+    key for key, _ in STANDING_DOD_ITEMS
+)
+_STANDING_DOD_LABEL: dict[str, str] = dict(STANDING_DOD_ITEMS)
+
+#: DoD items whose "satisfied" must cite a real verified evidence entry.
+#: The other three are attestation-anchored (concrete detail suffices).
+STANDING_DOD_EVIDENCE_ANCHORED: tuple[str, ...] = (
+    "no_regression",
+    "runtime_verified",
+)
+
+#: Accepted per-item DoD statuses. Anything else means "not yet attested".
+STANDING_DOD_STATUSES: tuple[str, ...] = ("satisfied", "not_applicable")
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +140,10 @@ class CompletionVerdict:
     reason: str = ""
     missing_items: tuple[str, ...] = ()
     actionable_fix: str = ""
+    #: Standing-DoD keys (see STANDING_DOD_KEYS) still missing. Empty when
+    #: track 2 passes or was not attested. Mirrored inside missing_items
+    #: as "standing_dod:<key>" entries so feedback lists one missing list.
+    dod_missing: tuple[str, ...] = ()
 
     def feedback_text(self) -> str:
         """One feedback block for the next cognition call."""
@@ -97,12 +161,17 @@ def render_completion_report(
     evidence: list[dict[str, str]] | list[tuple[str, str]],
     files: list[str],
     unfinished: list[str],
+    standing_dod: dict[str, dict[str, str]] | None = None,
 ) -> str:
     """Render a well-formed completion-report claim (JSON string).
 
     ``evidence`` accepts ``(criterion, evidence_ref)`` pairs or dicts with
     those keys. Tests and fixtures build claims through here so a typo in
     the wire shape fails loudly instead of silently becoming a verdict.
+    ``standing_dod``, when given, maps each of the five standing-DoD keys
+    to ``{"status": ..., "detail": ..., "evidence_ref": ...}`` (see the
+    module docstring); it is emitted verbatim as the report's
+    ``standing_dod`` section.
     """
     entries = []
     for entry in evidence:
@@ -116,15 +185,16 @@ def render_completion_report(
         else:
             criterion, ref = entry
             entries.append({"criterion": str(criterion), "evidence_ref": str(ref)})
+    report: dict[str, Any] = {
+        "conclusion": conclusion,
+        "evidence": entries,
+        "files": list(files),
+        "unfinished": list(unfinished),
+    }
+    if standing_dod is not None:
+        report["standing_dod"] = standing_dod
     return json.dumps(
-        {
-            "completion_report": {
-                "conclusion": conclusion,
-                "evidence": entries,
-                "files": list(files),
-                "unfinished": list(unfinished),
-            }
-        },
+        {"completion_report": report},
         ensure_ascii=False,
     )
 
@@ -177,16 +247,80 @@ def _ref_matches(ref: str, entry: dict[str, Any]) -> bool:
     return bool(path) and (needle in path or path in needle)
 
 
+def _validate_standing_dod(
+    section: Any,
+    *,
+    evidence: list[dict[str, Any]],
+) -> tuple[list[str], tuple[str, str] | None]:
+    """Validate track 2 (standing DoD). Returns ``(missing_keys, rejected)``.
+
+    ``missing_keys`` lists the DoD keys not properly attested -- an item
+    that is absent, malformed, unattested, or citing a dangling
+    ``evidence_ref`` is missing, never verified. ``rejected`` is set only
+    for a structurally invented DoD (an unknown key), mirroring the
+    unknown-criterion rejection on track 1.
+    """
+    if not isinstance(section, dict):
+        return [], (
+            "终报 standing_dod 段必须是对象",
+            "standing_dod 按五项逐项填写："
+            + "、".join(STANDING_DOD_KEYS)
+            + f"；完整结构：{REPORT_SHAPE_HINT}",
+        )
+    unknown = [key for key in section if key not in _STANDING_DOD_LABEL]
+    if unknown:
+        return [], (
+            "终报 standing_dod 引用了不存在的 DoD 项：" + "、".join(unknown),
+            "standing_dod 只写五项："
+            + "、".join(STANDING_DOD_KEYS)
+            + "。",
+        )
+    missing: list[str] = []
+    for key in STANDING_DOD_KEYS:
+        entry = section.get(key)
+        if not isinstance(entry, dict):
+            missing.append(key)
+            continue
+        status = str(entry.get("status") or "").strip()
+        detail = str(entry.get("detail") or "").strip()
+        if status not in STANDING_DOD_STATUSES or not detail:
+            missing.append(key)
+            continue
+        ref = str(entry.get("evidence_ref") or "").strip()
+        if ref and not any(_ref_matches(ref, item) for item in evidence):
+            # A cited ref must be real, even on an attestation-anchored
+            # item or a not_applicable item: a dangling citation is
+            # never silently accepted.
+            missing.append(key)
+            continue
+        if (
+            status == "satisfied"
+            and key in STANDING_DOD_EVIDENCE_ANCHORED
+            and not ref
+        ):
+            # Evidence-anchored items cannot be satisfied by prose alone.
+            missing.append(key)
+    return missing, None
+
+
 def adjudicate_completion(
     *,
     expected_output: list[str] | tuple[str, ...],
     evidence: list[dict[str, Any]],
     summary: str,
+    require_standing_dod: bool = False,
 ) -> CompletionVerdict:
     """Judge one completion claim against its expected output.
 
     Pure function: no I/O, no counting. The caller re-reads ``evidence``
     from the ledger (fresh observation) and owns retry counting.
+
+    AS-3 dual track: ``verified`` requires BOTH the task acceptance
+    criteria (track 1) AND the standing DoD (track 2). When
+    ``require_standing_dod`` is True, a missing ``standing_dod`` section
+    is itself a missing track; otherwise a report without the section is
+    judged on track 1 alone, and a report WITH the section is always
+    judged on both tracks.
     """
     expected: tuple[str, ...] = tuple(
         dict.fromkeys(
@@ -325,13 +459,29 @@ def adjudicate_completion(
             if item not in missing:
                 missing.append(item)
 
+    # -- AS-3 track 2: standing Definition of Done -----------------------
+    dod_section = report.get("standing_dod")
+    if dod_section is None:
+        if require_standing_dod:
+            dod_missing = list(STANDING_DOD_KEYS)
+            dod_rejected = None
+        else:
+            dod_missing, dod_rejected = [], None
+    else:
+        dod_missing, dod_rejected = _validate_standing_dod(
+            dod_section, evidence=evidence
+        )
+    if dod_rejected is not None:
+        reason, fix = dod_rejected
+        return rejected(reason, fix)
+
     # -- self-contradiction: "未证实" in the conclusion, yet claiming done --
-    if "未证实" in conclusion and not missing:
+    if "未证实" in conclusion and not missing and not dod_missing:
         return rejected(
             "终报结论称“未证实”却申报全部完成，自相矛盾",
             "把未证实项列入 unfinished 后重提；结论只写已证实的内容。",
         )
-    if missing:
+    if missing or dod_missing:
         actionable = (
             "对缺失项补可验证证据（写文件/跑脚本并通过 Body 验收），"
             "在终报 evidence 中逐项引用后重提。"
@@ -341,19 +491,39 @@ def adjudicate_completion(
                 "测试相关认领还需实际运行证据：先用 run_python 运行测试并通过，"
                 "再重提终报；只写测试不运行的认领不被接受。"
             )
+        if dod_missing:
+            actionable += (
+                "对缺失的 standing DoD 项补举证/说明后重提："
+                "无回归与运行时验证须引用真实证据条目；其余项须写具体 detail；"
+                "无需某项时写 not_applicable 并说明原因。"
+            )
+        reason = ""
+        if missing:
+            reason += "以下验收项缺可验证证据或未完成：" + "、".join(missing)
+        if dod_missing:
+            if reason:
+                reason += "；"
+            reason += (
+                "standing DoD 缺项："
+                + "、".join(_STANDING_DOD_LABEL[key] for key in dod_missing)
+            )
         return CompletionVerdict(
             verdict="partial",
             expected_output=expected,
             evidence_refs=tuple(dict.fromkeys(matched_refs)),
-            reason="以下验收项缺可验证证据或未完成：" + "、".join(missing),
-            missing_items=tuple(missing),
+            reason=reason,
+            missing_items=tuple(
+                list(missing) + [f"standing_dod:{key}" for key in dod_missing]
+            ),
             actionable_fix=actionable,
+            dod_missing=tuple(dod_missing),
         )
     return CompletionVerdict(
         verdict="verified",
         expected_output=expected,
         evidence_refs=tuple(dict.fromkeys(matched_refs)),
-        reason="全部验收项均有可验证证据引用，未完成项为空。",
+        reason="全部验收项均有可验证证据引用，未完成项为空；"
+        "standing DoD 五项均已举证/说明。",
         actionable_fix="",
     )
 
@@ -421,6 +591,10 @@ def _signature_to_list(
 __all__ = [
     "MAX_VERDICT_ATTEMPTS",
     "REPORT_SHAPE_HINT",
+    "STANDING_DOD_EVIDENCE_ANCHORED",
+    "STANDING_DOD_ITEMS",
+    "STANDING_DOD_KEYS",
+    "STANDING_DOD_STATUSES",
     "CompletionVerdict",
     "adjudicate_completion",
     "record_verdict_attempt",
