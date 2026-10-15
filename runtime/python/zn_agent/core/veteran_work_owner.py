@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Mapping
 
+from .conversation_driver import ConversationDriver
 from .home import get_zn_home
 from .router import ModelRouter, NoRouteAvailable
 from .veteran_candidate_projection import (
@@ -60,6 +61,12 @@ class VeteranEngineeringWorkOwner:
     repository-local engineering Mission. Each call advances at most one
     durable Mission transition so Resident pulses remain resumable.
     """
+
+    # W-4: the mission conversation's driver (declarative only). The
+    # external Codex worker owns the mission's turns and executes its
+    # own tools; this owner only plans / advances / polls the mission
+    # from the resident pulse.
+    conversation_driver = ConversationDriver.EXTERNAL_WORKER
 
     def __init__(
         self,

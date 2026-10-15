@@ -111,6 +111,33 @@ Boundary: the natural-language "assemble a team" path never invents a `spec_slug
 
 Evidence: `test_spec_first.py` (24 tests: templates, both gates, gap shape, disk loader incl. hostile slugs, and four resident-loop tests -- missing spec blocks with zero specialist calls and nothing written; approved spec unblocks with the spec summary in the specialist's question; fixing the spec on disk unblocks without resume; spec gate runs before Plan Mode; legacy no-slug flow unaffected).
 
+## ConversationDriver (W-4): one explicit shape for ZN's conversation drivers
+
+`conversation_driver.py` (pure module, zero core imports) borrows only the *mechanism shape* of Warp's ConversationDriver split -- a driver enum plus three predicates -- and contains no Warp code (Warp's client is AGPL-3.0; copying its code would force ZN to be AGPL-licensed). No new runtime: every driver names a shape ZN already has.
+
+| Driver | Turn lifecycle owner | Tools execute locally | Input rebuilt from |
+| --- | --- | --- | --- |
+| `RESIDENT_PULSE` | ZN resident | Yes (Body / Action Fabric) | Durable state (event / ledger / working state) |
+| `MODEL_TOOL_LOOP` | Model | Yes (local tool runner) | In-memory message list, replayed each turn |
+| `EXTERNAL_WORKER` | External worker | No (worker's own sandbox) | External worker's own state; ZN does not rebuild |
+
+Mapping (`driver_for_site`, frozen site set -- an unknown site raises instead of defaulting):
+
+| Site | Driver | Grounding |
+| --- | --- | --- |
+| `ordinary` | `RESIDENT_PULSE` | `ZNResidentRuntime.pulse`; input = durable `AgentEvent` + bounded Work-ledger conversation projection (`work_conversation_context`) |
+| `broad_goal` | `RESIDENT_PULSE` | BroadGoal layers (Root acceptance, research / write / run / verify) run on the same pulse |
+| `generic_action` | `RESIDENT_PULSE` | ZN-led generic action: ZN decides, model proposes one bounded action per impasse, input from durable verified-execution history |
+| `model_led_generic_action` | `RESIDENT_PULSE` | Model-led (`agent_loop=True`): the model chooses the next step, but ZN still owns the event, ledger, authorization, verification and recovery -- proposal source is not lifecycle ownership |
+| `team` | `RESIDENT_PULSE` | `TeamWorkResidentRuntime` + `TeamWorkOwner.advance`, one durable driver step per pulse, specialist steps through the Body, input from durable team state |
+| `delegated_subagent` | `RESIDENT_PULSE` | DSH-7: supervisor messages delivered into the sub-agent's next cognition question exactly once, as quoted context -- one input ingredient, not a message-list replay |
+| `model_tool_loop` | `MODEL_TOOL_LOOP` | `AgenticToolLoop.run`: model decides next tool call or done, ZN executes calls locally |
+| `veteran_mission` | `EXTERNAL_WORKER` | `VeteranEngineeringWorkOwner.advance` -> external Codex worker (MCP stdio subprocess); ZN only plans / advances / polls |
+
+Many-to-one is the finding, not a gap: on these three predicates, ZN's single / broad-goal / generic-action / team / delegated-subagent modes are the same driver; their differences live in dispatch and state shape. Transports and input adapters are not drivers: stdio JSON-RPC (`daemon.ResidentRpcServer`), TCP socket (`resident_server.ResidentSocketService`) and the channel supervisor all feed events into the resident pulse. Wiring is declarative only -- a `conversation_driver` class attribute on `ZNResidentRuntime`, `TeamWorkOwner`, `AgenticToolLoop` and `VeteranEngineeringWorkOwner`; no behavior branches on it, no existing behavior changed.
+
+Evidence: `test_conversation_driver.py` (8 tests: exact predicate triples per driver, no two drivers share a triple, frozen site set, every site resolves, unknown site fails closed, `describe()` round-trips predicates + sites, class attributes match the mapping).
+
 ## Recently retired scenario-owned surfaces
 
 The cleanup removes product code whose primary owner was a narrow representative task rather than a reusable capability contract, including:

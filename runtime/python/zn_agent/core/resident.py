@@ -8,6 +8,7 @@ from typing import Any
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry
 from .completion_observation import CompletionObservationJournal
+from .conversation_driver import ConversationDriver
 from .investigation import InvestigationResult, NativeInvestigator
 from .memory import StructuredMemory
 from .models import (
@@ -35,6 +36,11 @@ class ZNResidentRuntime:
     evidence -> next thought. External cognition is only another later step
     after native investigation can no longer derive a useful local probe.
     """
+
+    # W-4: this runtime's conversation driver (declarative only; no
+    # behavior branches on it). Ordinary / broad-goal / generic-action /
+    # team / delegated-subagent events all run on this pulse.
+    conversation_driver = ConversationDriver.RESIDENT_PULSE
 
     _ACTIVE_THOUGHT_KINDS = {
         "event",
