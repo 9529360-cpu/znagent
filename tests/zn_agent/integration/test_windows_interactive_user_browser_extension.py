@@ -550,7 +550,13 @@ class WindowsInteractiveUserBrowserExtensionContractTests(unittest.TestCase):
 
             fixture.activate()
             _press_extension_action_shortcut()
-            deadline = time.monotonic() + 5.0
+            # Revocation propagation (shortcut -> extension -> native host ->
+            # resident status) exceeded the old 5s budget on a loaded CI
+            # runner (#492, run 38623007736: assertFalse(authorized) failed
+            # after the 5s poll). The assertion itself is unchanged; only the
+            # wait budget is widened so a slow-but-healthy revoke is not
+            # misread as a stuck authorization.
+            deadline = time.monotonic() + 15.0
             while time.monotonic() < deadline:
                 if not resident.user_browser_extension_status().get("authorized"):
                     break

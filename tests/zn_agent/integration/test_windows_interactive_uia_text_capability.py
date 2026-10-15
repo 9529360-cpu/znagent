@@ -120,7 +120,13 @@ $window.Add_ContentRendered({{
         user32.SetForegroundWindow.argtypes = [wintypes.HWND]
         user32.SetForegroundWindow.restype = wintypes.BOOL
 
-        deadline = time.monotonic() + 15.0
+        # 45s readiness budget: on a loaded CI runner the PowerShell +
+        # PresentationFramework startup, JIT, and first render can exceed the
+        # old 15s budget while the fixture process is still healthy (#492
+        # rerun: process stayed alive but published no rendered-window
+        # evidence within 15s). Only the wait budget changes; the evidence
+        # validation below is untouched.
+        deadline = time.monotonic() + 45.0
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 stdout, stderr = self.process.communicate(timeout=1.0)
