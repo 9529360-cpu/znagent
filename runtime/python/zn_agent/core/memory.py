@@ -94,7 +94,7 @@ def _jaccard(left: set[str], right: set[str]) -> float:
 # search "stays on SQLite FTS5"; no such table ever existed, so §21
 # corrects that: BM25-in-Python is the keyword side). An FTS5 table
 # would need a schema migration plus write-path sync on every
-# remember()/put_fact() caller; the facts table is small and the
+# remember() / put_fact caller; the facts table is small and the
 # candidate set is the ranking corpus, so in-Python BM25 gives the
 # same ranking shape without migration or sync risk.
 #
