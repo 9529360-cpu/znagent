@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import unicodedata
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 
 from .models import utc_now
@@ -80,6 +82,177 @@ def _jaccard(left: set[str], right: set[str]) -> float:
     if not left or not right:
         return 0.0
     return len(left & right) / len(left | right)
+
+
+# -- M0-4: hybrid retrieval (BM25 keyword + entity weighting + legacy signals)
+#
+# Fusion shape borrowed from mem0 (Apache 2.0); implementation is ZN's
+# own, deterministic, zero-token. There is NO vector side: ZN has no
+# embedding service, no Qdrant, no network call. The keyword side is
+# BM25 computed in Python over the candidate facts rows -- there is no
+# SQLite FTS5 virtual table in this repo (M0-2's docs said keyword
+# search "stays on SQLite FTS5"; no such table ever existed, so §21
+# corrects that: BM25-in-Python is the keyword side). An FTS5 table
+# would need a schema migration plus write-path sync on every
+# remember() / put_fact caller; the facts table is small and the
+# candidate set is the ranking corpus, so in-Python BM25 gives the
+# same ranking shape without migration or sync risk.
+#
+# The fused score is:
+#   0.45 * keyword (BM25, normalised by the best candidate)
+# + 0.35 * entity  (alias/key mention weighting)
+# + 0.15 * exact   (query == key or alias, the legacy recall signal)
+# + 0.05 * recency (valid_at age decay, ~30-day scale)
+# Recency is only a tie-breaker: a candidate with no keyword, entity,
+# or exact signal scores 0 and is dropped, however fresh it is.
+# Value-text keyword scoring lives ONLY in recall_hybrid(): the
+# cognition-context path (relevant_context / bind_cognition_context)
+# keeps its deliberate key/alias-only conservative lookup, so hybrid
+# retrieval never widens what gets injected into a cognition call.
+
+_HYBRID_WEIGHT_KEYWORD = 0.45
+_HYBRID_WEIGHT_ENTITY = 0.35
+_HYBRID_WEIGHT_EXACT = 0.15
+_HYBRID_WEIGHT_RECENCY = 0.05
+_HYBRID_BM25_K1 = 1.2
+_HYBRID_BM25_B = 0.75
+_HYBRID_RECENCY_SCALE_SECONDS = 30 * 24 * 3600
+_HYBRID_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
+
+def _hybrid_normalize(value: str) -> str:
+    """Same normalisation as StructuredMemory._normalize, for module scorers."""
+    text = str(value or "").strip().lower()
+    text = re.sub(r"[\s\-_:/\\]+", " ", text)
+    text = re.sub(r"[^\w\u4e00-\u9fff ]+", "", text)
+    return " ".join(text.split())
+
+
+def _hybrid_tokens(text: str) -> list[str]:
+    """Query/document tokens: NFKC + casefold words, plus CJK char bigrams.
+
+    Chinese has no word boundaries; single CJK chars alone over-match
+    (e.g. 的), so a CJK word contributes overlapping bigrams as well as
+    the whole word. Latin words stay whole -- no stemming, so retrieval
+    stays deterministic and never conflates distinct keys.
+    """
+    normalized = re.sub(
+        r"[\W_]+", " ",
+        unicodedata.normalize("NFKC", str(text or "")).casefold(),
+    )
+    normalized = " ".join(normalized.split())
+    tokens: list[str] = []
+    for word in normalized.split(" "):
+        if not word:
+            continue
+        tokens.append(word)
+        if _HYBRID_CJK_RE.search(word) and len(word) > 1:
+            tokens.extend(word[i:i + 2] for i in range(len(word) - 1))
+    return tokens
+
+
+def _hybrid_value_text(value: Any) -> str:
+    """Value as searchable text: strings as-is, anything else canonical JSON."""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _hybrid_bm25(
+    query_tokens: list[str], docs_tokens: list[list[str]],
+) -> list[float]:
+    """BM25 (k1=1.2, b=0.75) of one query against each doc's tokens.
+
+    IDF uses the candidate set as the corpus (N = len(docs)): no global
+    statistics to keep in sync, so scores are always computed over the
+    exact set being ranked. Returns one raw score per doc, in order.
+    """
+    if not query_tokens or not docs_tokens:
+        return [0.0] * len(docs_tokens)
+    total = len(docs_tokens)
+    doc_freq: dict[str, int] = {}
+    for tokens in docs_tokens:
+        for token in set(tokens):
+            doc_freq[token] = doc_freq.get(token, 0) + 1
+    avg_len = sum(len(tokens) for tokens in docs_tokens) / total
+    scores: list[float] = []
+    for tokens in docs_tokens:
+        counts: dict[str, int] = {}
+        for token in tokens:
+            counts[token] = counts.get(token, 0) + 1
+        score = 0.0
+        for token in set(query_tokens):
+            freq = counts.get(token, 0)
+            if not freq:
+                continue
+            df = doc_freq.get(token, 0)
+            idf = math.log(1.0 + (total - df + 0.5) / (df + 0.5))
+            denom = freq + _HYBRID_BM25_K1 * (
+                1.0 - _HYBRID_BM25_B
+                + _HYBRID_BM25_B * (len(tokens) / avg_len if avg_len else 0.0)
+            )
+            score += idf * freq * (_HYBRID_BM25_K1 + 1.0) / denom
+        scores.append(score)
+    return scores
+
+
+def _hybrid_entity_score(
+    query_norm: str, query_tokens: list[str], key: str,
+    aliases: tuple[str, ...] | list[str],
+) -> tuple[float, str | None]:
+    """Alias/entity weighting: 1.0 for an exact or mentioned entity.
+
+    Returns (score, matched_alias); matched_alias is None when the hit
+    is the key itself, so the caller reports matched_by "key". Exact
+    key/alias equality is 1.0. A CJK alias/key appearing as a substring
+    of the query is a mention (Chinese has no word boundaries to split
+    on). Otherwise the score is the share of query tokens covered by
+    the entity's tokens -- whole-token equality, so Latin "art" never
+    matches "part".
+    """
+    names = [key, *(str(alias) for alias in aliases)]
+    for name in names:
+        if name and _hybrid_normalize(name) == query_norm:
+            return 1.0, None if name == key else name
+    for name in names:
+        norm = _hybrid_normalize(name)
+        if norm and _HYBRID_CJK_RE.search(norm) and norm in query_norm:
+            return 1.0, None if name == key else name
+    entity_tokens: set[str] = set()
+    for name in names:
+        entity_tokens.update(_hybrid_tokens(name))
+    query_set = set(query_tokens)
+    if query_set and entity_tokens:
+        hit = len(query_set & entity_tokens) / len(query_set)
+        if hit > 0:
+            for alias in aliases:
+                if isinstance(alias, str) and set(_hybrid_tokens(alias)) & query_set:
+                    return hit, alias
+            return hit, None
+    return 0.0, None
+
+
+def _hybrid_recency(valid_at: str | None) -> float:
+    """Recency in (0, 1]: 1.0 = just written, decaying over ~30 days.
+
+    Unparseable/missing timestamps score 0.5 (neutral), never 0:
+    recency is only a tie-breaker among candidates that already matched.
+    """
+    if not valid_at:
+        return 0.5
+    try:
+        stamp = datetime.fromisoformat(str(valid_at).replace("Z", "+00:00"))
+    except ValueError:
+        return 0.5
+    if stamp.tzinfo is None:
+        stamp = stamp.replace(tzinfo=timezone.utc)
+    age = (datetime.now(timezone.utc) - stamp).total_seconds()
+    if age < 0:
+        age = 0.0
+    return 1.0 / (1.0 + age / _HYBRID_RECENCY_SCALE_SECONDS)
 _PREFERENCE_SCOPE_RE = re.compile(
     r"(?:回答|回复|回应|答复|answer|repl(?:y|ies)|respond|responses?)", re.IGNORECASE
 )
@@ -1370,6 +1543,179 @@ class StructuredMemory:
                         linked_memory_ids=window["linked_memory_ids"] if window else (),
                     )
         return None
+
+    def recall_hybrid(
+        self, query: str, *, max_facts: int = 5, as_of: Any = None,
+    ) -> list[dict[str, Any]]:
+        """Ranked hybrid retrieval (M0-4): BM25 keyword + entity + exact + recency.
+
+        Unlike ``recall()`` (single exact match) this returns up to
+        ``max_facts`` ranked candidates, each carrying its fused
+        ``score`` and per-signal breakdown (``signals``: keyword /
+        entity / exact / recency), ``matched_by`` ("key", an alias, or
+        "keyword" for a value-text-only hit), and the GR-1/M0-1
+        provenance (``valid_at`` / ``invalid_at`` / ``id`` /
+        ``linked_memory_ids``). ``score`` is the weighted fusion; a
+        candidate with no keyword, entity, or exact signal scores 0
+        and is dropped, however fresh it is.
+
+        Validity follows GR-1/GR-2, no second supersession mechanism:
+        with ``as_of=None`` only currently-valid facts are candidates
+        (superseded versions never surface); with ``as_of`` set, each
+        key contributes the one version whose window covers that
+        moment (plus legacy rows with no ledger, when their
+        ``created_at`` is at or before ``as_of``). No vector side, no
+        Qdrant, no embedding, no network -- deterministic, zero-token.
+        """
+        count = max(0, min(10, int(max_facts)))
+        query_norm = self._normalize(query)
+        if not count or not query_norm:
+            return []
+        query_tokens = _hybrid_tokens(query)
+        candidates = self._hybrid_candidates(as_of)
+        docs_tokens = [
+            _hybrid_tokens(
+                f"{cand['key']} {' '.join(cand['aliases'])} "
+                f"{_hybrid_value_text(cand['value'])}"
+            )
+            for cand in candidates
+        ]
+        raw_scores = _hybrid_bm25(query_tokens, docs_tokens)
+        top = max(raw_scores) if raw_scores else 0.0
+        scored: list[dict[str, Any]] = []
+        for cand, raw in zip(candidates, raw_scores):
+            keyword = raw / top if top > 0 else 0.0
+            entity, matched_alias = _hybrid_entity_score(
+                query_norm, query_tokens, cand["key"], cand["aliases"]
+            )
+            exact_key = query_norm == self._normalize(cand["key"])
+            exact_alias: str | None = None
+            for alias in cand["aliases"]:
+                if isinstance(alias, str) and query_norm == self._normalize(alias):
+                    exact_alias = alias
+                    break
+            exact = 1.0 if exact_key or exact_alias is not None else 0.0
+            if keyword == 0.0 and entity == 0.0 and exact == 0.0:
+                continue
+            recency = _hybrid_recency(cand["valid_at"])
+            score = (
+                _HYBRID_WEIGHT_KEYWORD * keyword
+                + _HYBRID_WEIGHT_ENTITY * entity
+                + _HYBRID_WEIGHT_EXACT * exact
+                + _HYBRID_WEIGHT_RECENCY * recency
+            )
+            if exact_key:
+                matched_by = "key"
+            elif exact_alias is not None:
+                matched_by = exact_alias
+            elif matched_alias is not None:
+                matched_by = matched_alias
+            elif entity > 0.0:
+                matched_by = "key"
+            else:
+                matched_by = "keyword"
+            scored.append({
+                "key": cand["key"],
+                "value": cand["value"],
+                "score": score,
+                "signals": {
+                    "keyword": keyword,
+                    "entity": entity,
+                    "exact": exact,
+                    "recency": recency,
+                },
+                "matched_by": matched_by,
+                "valid_at": cand["valid_at"],
+                "invalid_at": cand["invalid_at"],
+                "id": cand["id"],
+                "linked_memory_ids": cand["linked_memory_ids"],
+            })
+        # Deterministic order: score desc, then valid_at desc, then key asc
+        # (stable sorts, least-significant key first).
+        scored.sort(key=lambda item: item["key"])
+        scored.sort(key=lambda item: str(item["valid_at"] or ""), reverse=True)
+        scored.sort(key=lambda item: item["score"], reverse=True)
+        return scored[:count]
+
+    def _hybrid_candidates(self, as_of: Any) -> list[dict[str, Any]]:
+        """Candidate versions for hybrid retrieval (one per key).
+
+        Current mode: live facts filtered by GR-1 currency, each with
+        its open window's id/links/valid_at (legacy rows report
+        ``None`` / ``()`` / ``created_at``). As-of mode: the ledger
+        version whose window covers ``as_of``, plus legacy rows whose
+        ``created_at`` is at or before ``as_of``.
+        """
+        if as_of is None:
+            index = self._validity_index()
+            candidates: list[dict[str, Any]] = []
+            for record in self.store.list_facts():
+                if not self._is_current(record["key"], index=index):
+                    continue
+                window = self._open_window_row(record["key"])
+                candidates.append({
+                    "key": record["key"],
+                    "value": record["value"],
+                    "aliases": tuple(record["aliases"]),
+                    "valid_at": window["valid_at"] if window else str(
+                        record.get("created_at") or None
+                    ),
+                    "invalid_at": None,
+                    "id": window["id"] if window else None,
+                    "linked_memory_ids": window["linked_memory_ids"] if window else (),
+                })
+            return candidates
+        moment = _as_of_text(as_of)
+        self._ensure_history_schema()
+        by_key: dict[str, dict[str, Any]] = {}
+        with self.store._lock:
+            rows = self.store._conn.execute(
+                "SELECT id, fact_key, value_json, aliases_json, valid_at,"
+                " invalid_at, linked_memory_ids_json"
+                " FROM memory_history"
+                " WHERE valid_at<=? AND (invalid_at IS NULL OR invalid_at>?)",
+                (moment, moment),
+            ).fetchall()
+        for row in rows:
+            try:
+                value = json.loads(row["value_json"])
+                aliases = json.loads(row["aliases_json"])
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(aliases, list):
+                aliases = []
+            key = str(row["fact_key"])
+            record = {
+                "key": key,
+                "value": value,
+                "aliases": tuple(aliases),
+                "valid_at": str(row["valid_at"]),
+                "invalid_at": row["invalid_at"],
+                "id": int(row["id"]),
+                "linked_memory_ids": _parse_linked_ids(
+                    row["linked_memory_ids_json"]
+                ),
+            }
+            # Windows for one key never overlap; keep the latest if the
+            # ledger ever disagrees.
+            if key not in by_key or record["valid_at"] > str(by_key[key]["valid_at"]):
+                by_key[key] = record
+        _, known = self._validity_index()
+        for record in self.store.list_facts():
+            if record["key"] in known or record["key"] in by_key:
+                continue
+            if str(record.get("created_at") or "") > moment:
+                continue
+            by_key[record["key"]] = {
+                "key": record["key"],
+                "value": record["value"],
+                "aliases": tuple(record["aliases"]),
+                "valid_at": str(record.get("created_at") or None),
+                "invalid_at": None,
+                "id": None,
+                "linked_memory_ids": (),
+            }
+        return list(by_key.values())
 
     def relevant_context(
         self, query: str, *, max_facts: int = 5,
