@@ -65,6 +65,7 @@ import { ZnApprovalPanel } from './approval-panel'
 import { RoutinesPanel } from './routines-panel'
 import { ZnSlidesWorkstation } from './slides-workstation'
 import { ZnDocumentWorkstation } from './document-workstation'
+import { znExportConversation, znExportFilename, type ZnConversationExportFormat } from './conversation-export'
 import {
   addZnThreadMessage,
   loadZnThreadCache,
@@ -350,6 +351,27 @@ export function ZnWorkbench() {
       // Pinning remains available for this session when local storage is unavailable.
     }
   }, [pinnedThreadIds])
+
+  const exportConversation = useCallback((format: ZnConversationExportFormat) => {
+    if (!activeThread) return
+    // Only a deliberate user click can export a transcript. No Resident
+    // action, file writes in the workspace, or automatic network requests.
+    const content = znExportConversation(activeThread, format)
+    const blob = new Blob([content], {
+      type: format === 'json' ? 'application/json;charset=utf-8' : 'text/markdown;charset=utf-8'
+    })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = znExportFilename(activeThread, format)
+    document.body.appendChild(link)
+    try {
+      link.click()
+    } finally {
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    }
+  }, [activeThread])
 
   const togglePinnedThread = useCallback((threadId: string) => {
     setPinnedThreadIds(current => current.includes(threadId)
@@ -1393,6 +1415,10 @@ export function ZnWorkbench() {
 
               {activeThread && activeThread.messages.length > 0 ? (
                 <div className="zn-messages">
+                  <div className="zn-conversation-exports" role="group" aria-label="Export conversation">
+                    <button type="button" onClick={() => exportConversation('markdown')} aria-label="Export conversation as Markdown">Export .md</button>
+                    <button type="button" onClick={() => exportConversation('json')} aria-label="Export conversation as JSON">Export .json</button>
+                  </div>
                   {activeThread.messages.map(message => {
                     const executionEvidence = message.role === 'activity'
                       ? executionEvidenceFromDetail(message.detail)
