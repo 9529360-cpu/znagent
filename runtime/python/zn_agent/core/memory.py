@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import unicodedata
@@ -330,6 +331,18 @@ class Observation:
 # stays in the ledger. SUPERSEDE events / retrieval arbitration are a
 # separate, later decision built on top of these links, not this change.
 #
+# M0-2 (md5 exact dedup + batch pipeline, mem0 mechanism, own
+# implementation): an exact repeat -- same key + value + aliases,
+# compared by ``fact_content_hash`` (md5 over canonical JSON) -- writes
+# nothing at all: no new ledger row, no facts-table rewrite. Same
+# value with different aliases still refreshes the aliases but opens
+# no new window. ``remember_many`` runs many facts through the same
+# per-fact decisions as ``remember()`` under ONE transaction, one
+# facts snapshot, one schema ensure, and one shared timestamp, so a
+# batch commits once instead of once per fact. Batch and sequential
+# runs end with equivalent ledger content (same keys/values/aliases/
+# links/windows); only the timestamps may differ.
+#
 # Rows written by paths that bypass StructuredMemory.remember (legacy rows
 # predating this feature, direct put_fact callers, observation records)
 # have no ledger rows. They are treated as valid from their facts-table
@@ -381,6 +394,75 @@ def _same_value(left: Any, right: Any) -> bool:
         return left == right
 
 
+def fact_content_hash(
+    key: str, value: Any, aliases: tuple[str, ...] = ()
+) -> str:
+    """md5 fingerprint of one fact's content (exact-dedup identity, M0-2).
+
+    Canonical JSON (``sort_keys``, aliases sorted, key stripped) so the
+    same fact always hashes the same: ``('a',)`` and ``['a']`` hash
+    alike, alias order does not matter. md5 is a dedup fingerprint
+    here, not a security hash -- never use it for credentials. Values
+    that are not JSON-canonical (e.g. dicts with mixed-type keys) fall
+    back to ``repr`` of the same payload, still deterministic for the
+    same input object.
+    """
+    payload = {
+        "key": str(key or "").strip(),
+        "value": value,
+        "aliases": sorted(str(alias) for alias in aliases),
+    }
+    try:
+        canonical = json.dumps(
+            payload, ensure_ascii=False, sort_keys=True, default=str
+        )
+    except (TypeError, ValueError):
+        canonical = repr(
+            (payload["key"], payload["value"], payload["aliases"])
+        )
+    return hashlib.md5(canonical.encode("utf-8")).hexdigest()
+
+
+def _normalize_batch_item(item: Any, index: int) -> tuple[Any, Any, tuple[str, ...]]:
+    """One ``remember_many`` item -> ``(key, value, aliases)``.
+
+    Accepts ``(key, value)``, ``(key, value, aliases)``, or a dict with
+    ``key`` / ``value`` / optional ``aliases``. A bare string alias
+    counts as one alias. Malformed items raise ValueError naming the
+    index; callers validate every item before writing anything.
+    """
+    if isinstance(item, dict):
+        if "key" not in item or "value" not in item:
+            raise ValueError(
+                f"remember_many item {index} needs 'key' and 'value'"
+            )
+        key: Any = item["key"]
+        value: Any = item["value"]
+        aliases: Any = item.get("aliases", ())
+    elif isinstance(item, (tuple, list)):
+        if len(item) == 2:
+            key, value, aliases = item[0], item[1], ()
+        elif len(item) == 3:
+            key, value, aliases = item[0], item[1], item[2]
+        else:
+            raise ValueError(
+                f"remember_many item {index} must be (key, value) or "
+                "(key, value, aliases)"
+            )
+    else:
+        raise ValueError(
+            f"remember_many item {index} must be a tuple/list or dict"
+        )
+    if isinstance(aliases, str):
+        return key, value, (aliases,)
+    try:
+        return key, value, tuple(aliases)
+    except TypeError:
+        raise ValueError(
+            f"remember_many item {index} aliases must be a tuple/list/str"
+        ) from None
+
+
 def _as_of_text(as_of: Any) -> str:
     """Normalise an as-of query time to the ISO text stored in the ledger."""
     if hasattr(as_of, "isoformat"):
@@ -407,21 +489,31 @@ class StructuredMemory:
 
     def _ensure_history_schema(self) -> None:
         with self.store._lock, self.store._conn:
-            self.store._conn.execute(_MEMORY_HISTORY_DDL)
-            # M0-1 migration: tables created before linked_memory_ids
-            # existed gain the column in place; existing rows keep
-            # their (empty) default link list.
-            columns = {
-                str(row[1])
-                for row in self.store._conn.execute(
-                    "PRAGMA table_info(memory_history)"
-                ).fetchall()
-            }
-            if "linked_memory_ids_json" not in columns:
-                self.store._conn.execute(
-                    "ALTER TABLE memory_history ADD COLUMN "
-                    "linked_memory_ids_json TEXT NOT NULL DEFAULT '[]'"
-                )
+            self._ensure_history_schema_locked()
+
+    def _ensure_history_schema_locked(self) -> None:
+        """Schema ensure without acquiring lock/transaction (M0-2).
+
+        Caller holds ``store._lock`` and owns the transaction. The
+        ``_locked`` helpers exist so ``remember_many`` can run a whole
+        batch under ONE transaction instead of committing per fact;
+        the public wrappers keep the old one-call-one-commit shape.
+        """
+        self.store._conn.execute(_MEMORY_HISTORY_DDL)
+        # M0-1 migration: tables created before linked_memory_ids
+        # existed gain the column in place; existing rows keep
+        # their (empty) default link list.
+        columns = {
+            str(row[1])
+            for row in self.store._conn.execute(
+                "PRAGMA table_info(memory_history)"
+            ).fetchall()
+        }
+        if "linked_memory_ids_json" not in columns:
+            self.store._conn.execute(
+                "ALTER TABLE memory_history ADD COLUMN "
+                "linked_memory_ids_json TEXT NOT NULL DEFAULT '[]'"
+            )
 
     def _open_window(
         self, key: str, value: Any, aliases: tuple[str, ...], valid_at: str,
@@ -432,23 +524,33 @@ class StructuredMemory:
         ``linked_memory_ids`` are the ledger ids of the versions this
         version supersedes (M0-1). Returns the new ledger row id.
         """
-        self._ensure_history_schema()
-        linked = tuple(int(item) for item in linked_memory_ids)
         with self.store._lock, self.store._conn:
-            cursor = self.store._conn.execute(
-                "INSERT INTO memory_history"
-                "(fact_key, value_json, aliases_json, valid_at, invalid_at,"
-                " linked_memory_ids_json)"
-                " VALUES(?,?,?,?,NULL,?)",
-                (
-                    key,
-                    json.dumps(value, ensure_ascii=False),
-                    json.dumps(list(aliases), ensure_ascii=False),
-                    valid_at,
-                    json.dumps(list(linked), ensure_ascii=False),
-                ),
+            self._ensure_history_schema_locked()
+            return self._open_window_locked(
+                key, value, aliases, valid_at,
+                linked_memory_ids=linked_memory_ids,
             )
-            return int(cursor.lastrowid)
+
+    def _open_window_locked(
+        self, key: str, value: Any, aliases: tuple[str, ...], valid_at: str,
+        *, linked_memory_ids: tuple[int, ...] = (),
+    ) -> int:
+        """``_open_window`` without acquiring lock/transaction (M0-2)."""
+        linked = tuple(int(item) for item in linked_memory_ids)
+        cursor = self.store._conn.execute(
+            "INSERT INTO memory_history"
+            "(fact_key, value_json, aliases_json, valid_at, invalid_at,"
+            " linked_memory_ids_json)"
+            " VALUES(?,?,?,?,NULL,?)",
+            (
+                key,
+                json.dumps(value, ensure_ascii=False),
+                json.dumps(list(aliases), ensure_ascii=False),
+                valid_at,
+                json.dumps(list(linked), ensure_ascii=False),
+            ),
+        )
+        return int(cursor.lastrowid)
 
     def _open_window_row(self, key: str) -> dict[str, Any] | None:
         """The open ledger row of ``key`` (id + window + links), if any."""
@@ -471,25 +573,31 @@ class StructuredMemory:
         self, key: str, value: Any, aliases: tuple[str, ...], valid_at: str,
     ) -> None:
         """Open a window for ``key`` only when it has none (legacy backfill)."""
-        self._ensure_history_schema()
         with self.store._lock, self.store._conn:
-            row = self.store._conn.execute(
-                "SELECT id FROM memory_history"
-                " WHERE fact_key=? AND invalid_at IS NULL LIMIT 1",
-                (key,),
-            ).fetchone()
-            if row is None:
-                self.store._conn.execute(
-                    "INSERT INTO memory_history"
-                    "(fact_key, value_json, aliases_json, valid_at, invalid_at)"
-                    " VALUES(?,?,?,?,NULL)",
-                    (
-                        key,
-                        json.dumps(value, ensure_ascii=False),
-                        json.dumps(list(aliases), ensure_ascii=False),
-                        valid_at,
-                    ),
-                )
+            self._ensure_history_schema_locked()
+            self._ensure_open_window_locked(key, value, aliases, valid_at)
+
+    def _ensure_open_window_locked(
+        self, key: str, value: Any, aliases: tuple[str, ...], valid_at: str,
+    ) -> None:
+        """``_ensure_open_window`` without acquiring lock/transaction (M0-2)."""
+        row = self.store._conn.execute(
+            "SELECT id FROM memory_history"
+            " WHERE fact_key=? AND invalid_at IS NULL LIMIT 1",
+            (key,),
+        ).fetchone()
+        if row is None:
+            self.store._conn.execute(
+                "INSERT INTO memory_history"
+                "(fact_key, value_json, aliases_json, valid_at, invalid_at)"
+                " VALUES(?,?,?,?,NULL)",
+                (
+                    key,
+                    json.dumps(value, ensure_ascii=False),
+                    json.dumps(list(aliases), ensure_ascii=False),
+                    valid_at,
+                ),
+            )
 
     def _close_open_window(
         self, key: str, invalid_at: str, *,
@@ -507,46 +615,89 @@ class StructuredMemory:
         returned, so the replacing version links the preserved old
         version even for legacy rows.
         """
-        self._ensure_history_schema()
         with self.store._lock, self.store._conn:
-            open_rows = self.store._conn.execute(
-                "SELECT id FROM memory_history"
-                " WHERE fact_key=? AND invalid_at IS NULL",
-                (key,),
-            ).fetchall()
-            closed_ids = [int(row["id"]) for row in open_rows]
-            if closed_ids:
-                self.store._conn.execute(
-                    "UPDATE memory_history SET invalid_at=? "
-                    "WHERE fact_key=? AND invalid_at IS NULL",
-                    (invalid_at, key),
-                )
-                return closed_ids
-            if fallback is None:
-                return []
-            last_closed = self.store._conn.execute(
-                "SELECT MAX(invalid_at) AS last_end FROM memory_history"
-                " WHERE fact_key=?",
-                (key,),
-            ).fetchone()
-            valid_at = str(fallback.get("created_at") or invalid_at)
-            if last_closed is not None and last_closed["last_end"]:
-                valid_at = max(valid_at, str(last_closed["last_end"]))
-            if valid_at > invalid_at:
-                valid_at = invalid_at
-            cursor = self.store._conn.execute(
-                "INSERT INTO memory_history"
-                "(fact_key, value_json, aliases_json, valid_at, invalid_at)"
-                " VALUES(?,?,?,?,?)",
-                (
-                    key,
-                    json.dumps(fallback.get("value"), ensure_ascii=False),
-                    json.dumps(list(fallback.get("aliases") or ()), ensure_ascii=False),
-                    valid_at,
-                    invalid_at,
-                ),
+            self._ensure_history_schema_locked()
+            return self._close_open_window_locked(
+                key, invalid_at, fallback=fallback
             )
-            return [int(cursor.lastrowid)]
+
+    def _close_open_window_locked(
+        self, key: str, invalid_at: str, *,
+        fallback: dict[str, Any] | None = None,
+    ) -> list[int]:
+        """``_close_open_window`` without acquiring lock/transaction (M0-2)."""
+        open_rows = self.store._conn.execute(
+            "SELECT id FROM memory_history"
+            " WHERE fact_key=? AND invalid_at IS NULL",
+            (key,),
+        ).fetchall()
+        closed_ids = [int(row["id"]) for row in open_rows]
+        if closed_ids:
+            self.store._conn.execute(
+                "UPDATE memory_history SET invalid_at=? "
+                "WHERE fact_key=? AND invalid_at IS NULL",
+                (invalid_at, key),
+            )
+            return closed_ids
+        if fallback is None:
+            return []
+        last_closed = self.store._conn.execute(
+            "SELECT MAX(invalid_at) AS last_end FROM memory_history"
+            " WHERE fact_key=?",
+            (key,),
+        ).fetchone()
+        valid_at = str(fallback.get("created_at") or invalid_at)
+        if last_closed is not None and last_closed["last_end"]:
+            valid_at = max(valid_at, str(last_closed["last_end"]))
+        if valid_at > invalid_at:
+            valid_at = invalid_at
+        cursor = self.store._conn.execute(
+            "INSERT INTO memory_history"
+            "(fact_key, value_json, aliases_json, valid_at, invalid_at)"
+            " VALUES(?,?,?,?,?)",
+            (
+                key,
+                json.dumps(fallback.get("value"), ensure_ascii=False),
+                json.dumps(list(fallback.get("aliases") or ()), ensure_ascii=False),
+                valid_at,
+                invalid_at,
+            ),
+        )
+        return [int(cursor.lastrowid)]
+
+    def _put_fact_locked(
+        self, key: str, value: Any, aliases: tuple[str, ...], *, now: str,
+    ) -> None:
+        """Same checks + upsert as ``KernelStore.put_fact``, no commit.
+
+        Caller holds the store lock and owns the transaction. The M15
+        credential check runs here too -- no write path may bypass it.
+        ``now`` is the caller's timestamp (the batch shares one).
+        """
+        key = str(key or "").strip()
+        if not key:
+            raise ValueError("fact key must not be empty")
+        from .credential_isolation import check_no_credential_value
+
+        check_no_credential_value(key, where="memory:fact:key")
+        check_no_credential_value(value, where="memory:fact:value")
+        for alias in aliases:
+            check_no_credential_value(alias, where="memory:fact:alias")
+        conn = self.store._conn
+        existing = conn.execute(
+            "SELECT created_at FROM facts WHERE fact_key=?", (key,)
+        ).fetchone()
+        created = existing["created_at"] if existing else now
+        conn.execute(
+            "INSERT OR REPLACE INTO facts VALUES(?,?,?,?,?)",
+            (
+                key,
+                json.dumps(value, ensure_ascii=False),
+                json.dumps(list(aliases), ensure_ascii=False),
+                created,
+                now,
+            ),
+        )
 
     def _validity_index(self) -> tuple[dict[str, str], set[str]]:
         """(open key -> its valid_at, keys with any ledger row).
@@ -582,13 +733,108 @@ class StructuredMemory:
         value = strip_tags(value)
         aliases = tuple(strip_tags(alias) for alias in aliases)
         now = utc_now()
+        with self.store._lock, self.store._conn:
+            self._ensure_history_schema_locked()
+            facts = self.store.list_facts()
+            self._remember_one_locked(key, value, aliases, facts=facts, now=now)
+
+    def remember_many(self, items: Any) -> dict[str, Any]:
+        """Remember many facts in ONE transaction (M0-2 batch pipeline).
+
+        ``items``: iterable of ``(key, value)``, ``(key, value,
+        aliases)``, or ``{"key":..., "value":..., "aliases":...}``
+        dicts. Every item goes through the same choke -> supersession
+        -> version/dedup decisions as ``remember()``, against one
+        shared facts snapshot, one schema ensure, one shared
+        timestamp, and ONE commit -- instead of one commit per fact.
+        Exact repeats (same content hash as the live fact) are a
+        no-op, including repeats within the batch, because the
+        snapshot evolves as the batch writes.
+
+        Returns ``{"results": [...per-item outcomes...], "written": n,
+        "deduped": n, "created": n, "versioned": n}``. Each result is
+        ``{"key", "action", "wrote", "linked_memory_ids"}`` with
+        action ``created`` | ``versioned`` | ``deduped``. Malformed
+        items raise ValueError before anything is written; a failure
+        mid-batch rolls the whole batch back.
+        """
+        normalized = [
+            _normalize_batch_item(item, index)
+            for index, item in enumerate(items)
+        ]
+        if not normalized:
+            return {
+                "results": [], "written": 0, "deduped": 0,
+                "created": 0, "versioned": 0,
+            }
+        choked = [
+            (
+                strip_tags(item_key),
+                strip_tags(item_value),
+                tuple(strip_tags(alias) for alias in item_aliases),
+            )
+            for item_key, item_value, item_aliases in normalized
+        ]
+        now = utc_now()
+        results: list[dict[str, Any]] = []
+        with self.store._lock, self.store._conn:
+            self._ensure_history_schema_locked()
+            facts = self.store.list_facts()
+            for item_key, item_value, item_aliases in choked:
+                results.append(
+                    self._remember_one_locked(
+                        item_key, item_value, item_aliases,
+                        facts=facts, now=now,
+                    )
+                )
+        return {
+            "results": results,
+            "written": sum(1 for r in results if r["wrote"]),
+            "deduped": sum(1 for r in results if r["action"] == "deduped"),
+            "created": sum(1 for r in results if r["action"] == "created"),
+            "versioned": sum(1 for r in results if r["action"] == "versioned"),
+        }
+
+    @staticmethod
+    def _refresh_snapshot(
+        facts: list[dict[str, Any]], key: str, value: Any,
+        aliases: tuple[str, ...], now: str,
+    ) -> None:
+        """Apply one write to the in-memory facts snapshot (M0-2).
+
+        The batch passes its evolving snapshot from item to item, so
+        later items see earlier writes without re-reading the table.
+        """
+        for fact in facts:
+            if fact["key"] == key:
+                fact["value"] = value
+                fact["aliases"] = tuple(aliases)
+                fact["updated_at"] = now
+                return
+        facts.append({
+            "key": key, "value": value, "aliases": tuple(aliases),
+            "created_at": now, "updated_at": now,
+        })
+
+    def _remember_one_locked(
+        self, key: str, value: Any, aliases: tuple[str, ...], *,
+        facts: list[dict[str, Any]], now: str,
+    ) -> dict[str, Any]:
+        """One ``remember()`` step inside the caller's lock + transaction.
+
+        ``facts`` is the live snapshot (``list_facts`` shape), updated
+        in place so later batch items see earlier writes. Returns
+        ``{"key", "action", "wrote", "linked_memory_ids"}``; action is
+        ``created`` | ``versioned`` | ``deduped``. Exact repeats
+        (content hash equal to the live fact) write nothing at all.
+        """
         new_key = str(key or "").strip()
-        target = self._supersession_target(key, value)
+        target = self._supersession_target(key, value, facts=facts)
         if target is not None and target != new_key:
             # Near-duplicate of an existing fact: update it in place (union
             # aliases) instead of stacking a second retrieval path.
             existing = next(
-                (f for f in self.store.list_facts() if f["key"] == target), None
+                (f for f in facts if f["key"] == target), None
             )
             merged_aliases = list(aliases)
             if new_key and new_key not in merged_aliases:
@@ -597,49 +843,100 @@ class StructuredMemory:
                 for alias in existing["aliases"]:
                     if alias not in merged_aliases:
                         merged_aliases.append(alias)
+            merged = tuple(merged_aliases)
+            if existing is not None and fact_content_hash(
+                target, value, merged
+            ) == fact_content_hash(
+                existing["key"], existing["value"], existing["aliases"]
+            ):
+                return {
+                    "key": target, "action": "deduped", "wrote": False,
+                    "linked_memory_ids": (),
+                }
             if existing is not None and not _same_value(existing["value"], value):
                 # Near-identical values merge, but the old version is not
                 # byte-equal: preserve it as a closed window before the
                 # merge overwrites it (GR-2: invalidation never deletes).
                 # M0-1: the new version links the closed version's id.
-                closed_ids = self._close_open_window(target, now, fallback=existing)
-                self.store.put_fact(target, value, aliases=tuple(merged_aliases))
-                self._open_window(
-                    target, value, tuple(merged_aliases), now,
+                closed_ids = self._close_open_window_locked(
+                    target, now, fallback=existing
+                )
+                self._put_fact_locked(target, value, merged, now=now)
+                self._open_window_locked(
+                    target, value, merged, now,
                     linked_memory_ids=tuple(closed_ids),
                 )
+                self._refresh_snapshot(facts, target, value, merged, now)
+                return {
+                    "key": target, "action": "versioned", "wrote": True,
+                    "linked_memory_ids": tuple(closed_ids),
+                }
+            self._put_fact_locked(target, value, merged, now=now)
+            if existing is not None:
+                self._ensure_open_window_locked(
+                    target, value, merged,
+                    str(existing.get("created_at") or now),
+                )
             else:
-                self.store.put_fact(target, value, aliases=tuple(merged_aliases))
-                if existing is not None:
-                    self._ensure_open_window(
-                        target, value, tuple(merged_aliases),
-                        str(existing.get("created_at") or now),
-                    )
-                else:
-                    self._open_window(target, value, tuple(merged_aliases), now)
-            return
+                self._open_window_locked(target, value, merged, now)
+            self._refresh_snapshot(facts, target, value, merged, now)
+            return {
+                "key": target,
+                "action": "deduped" if existing is not None else "created",
+                "wrote": True, "linked_memory_ids": (),
+            }
         existing = next(
-            (f for f in self.store.list_facts() if f["key"] == new_key), None
+            (f for f in facts if f["key"] == new_key), None
         ) if new_key else None
-        if existing is not None and not _same_value(existing["value"], value):
-            # Contradiction (GR-2): same key, different value. Close the
-            # old version's window at the new fact's valid_at; the old
-            # version stays in the ledger for as-of reads. M0-1: the new
-            # version links the closed version's id.
-            closed_ids = self._close_open_window(new_key, now, fallback=existing)
-            self.store.put_fact(new_key, value, aliases=aliases)
-            self._open_window(
-                new_key, value, aliases, now,
-                linked_memory_ids=tuple(closed_ids),
+        if existing is not None:
+            # M0-2 exact dedup: identical content hash -> no write at
+            # all (no new ledger row, no facts-table rewrite).
+            if fact_content_hash(
+                new_key, value, aliases
+            ) == fact_content_hash(
+                existing["key"], existing["value"], existing["aliases"]
+            ):
+                return {
+                    "key": new_key, "action": "deduped", "wrote": False,
+                    "linked_memory_ids": (),
+                }
+            if not _same_value(existing["value"], value):
+                # Contradiction (GR-2): same key, different value. Close the
+                # old version's window at the new fact's valid_at; the old
+                # version stays in the ledger for as-of reads. M0-1: the new
+                # version links the closed version's id.
+                closed_ids = self._close_open_window_locked(
+                    new_key, now, fallback=existing
+                )
+                self._put_fact_locked(new_key, value, aliases, now=now)
+                self._open_window_locked(
+                    new_key, value, aliases, now,
+                    linked_memory_ids=tuple(closed_ids),
+                )
+                self._refresh_snapshot(facts, new_key, value, aliases, now)
+                return {
+                    "key": new_key, "action": "versioned", "wrote": True,
+                    "linked_memory_ids": tuple(closed_ids),
+                }
+            # Same value, different aliases: refresh the aliases, open
+            # no new window (dedup, not a new version).
+            self._put_fact_locked(new_key, value, aliases, now=now)
+            self._ensure_open_window_locked(
+                new_key, value, aliases,
+                str(existing.get("created_at") or now),
             )
-        elif existing is not None:
-            self.store.put_fact(new_key, value, aliases=aliases)
-            self._ensure_open_window(
-                new_key, value, aliases, str(existing.get("created_at") or now),
-            )
-        else:
-            self.store.put_fact(new_key, value, aliases=aliases)
-            self._open_window(new_key, value, aliases, now)
+            self._refresh_snapshot(facts, new_key, value, aliases, now)
+            return {
+                "key": new_key, "action": "deduped", "wrote": True,
+                "linked_memory_ids": (),
+            }
+        self._put_fact_locked(new_key, value, aliases, now=now)
+        self._open_window_locked(new_key, value, aliases, now)
+        self._refresh_snapshot(facts, new_key, value, aliases, now)
+        return {
+            "key": new_key, "action": "created", "wrote": True,
+            "linked_memory_ids": (),
+        }
 
     def recall_as_of(self, query: str, as_of: Any) -> FactMatch | None:
         """What was true at ``as_of`` (ISO-8601, same form as utc_now()).
@@ -772,8 +1069,15 @@ class StructuredMemory:
             })
         return history
 
-    def _supersession_target(self, key: str, value: Any) -> str | None:
-        """Return the existing key a new fact should supersede, if any."""
+    def _supersession_target(
+        self, key: str, value: Any, *,
+        facts: list[dict[str, Any]] | None = None,
+    ) -> str | None:
+        """Return the existing key a new fact should supersede, if any.
+
+        ``facts`` overrides the live table read: the batch passes its
+        evolving snapshot so later items see earlier writes.
+        """
         candidate_full = self._similarity_text(key, value)
         candidate_value = self._similarity_value(value)
         if not candidate_full:
@@ -782,7 +1086,7 @@ class StructuredMemory:
         candidate_value_bigrams = _bigrams(candidate_value)
         best_key: str | None = None
         best_score = 0.0
-        for fact in self.store.list_facts():
+        for fact in facts if facts is not None else self.store.list_facts():
             other_full = self._similarity_text(fact["key"], fact["value"])
             if not other_full:
                 continue
