@@ -97,6 +97,308 @@ class TeamStepResult:
     stop_progress: dict[str, Any] = field(default_factory=dict)
 
 
+# -- workflow edge vocabulary (AF-2) ---------------------------------------
+#
+# A small descriptive vocabulary for team routing. These edges describe --
+# never execute -- how work flows: the runner/coordinator still own the
+# actual dispatch/verify/complete behavior. Descriptions stay honest by
+# construction: ``describe_team_route`` is derived from the team's real
+# plan (dependency edges + verdict switch), not hand-written prose.
+
+
+@dataclass(frozen=True, slots=True)
+class FanOut:
+    """One step fans out to N parallel branches (all start together)."""
+
+    from_step: str
+    to_steps: tuple[str, ...] = ()
+    condition: str = ""
+
+    def validate(self) -> None:
+        if not str(self.from_step or "").strip():
+            raise ValueError("FanOut.from_step must not be empty")
+        if not self.to_steps:
+            raise ValueError("FanOut.to_steps must not be empty")
+        if len(set(self.to_steps)) != len(self.to_steps):
+            raise ValueError(f"FanOut has duplicate targets: {self.to_steps!r}")
+        if self.from_step in self.to_steps:
+            raise ValueError("FanOut.from_step must not fan out to itself")
+        for step in self.to_steps:
+            if not str(step or "").strip():
+                raise ValueError("FanOut.to_steps must not contain empty steps")
+
+
+@dataclass(frozen=True, slots=True)
+class FanIn:
+    """N branches join into one step.
+
+    ``require_all=True`` means every branch must finish first (the team
+    completion join); ``False`` means any one branch continuing is enough
+    (e.g. either roll-forward or investigation leads to the next pulse).
+    """
+
+    from_steps: tuple[str, ...] = ()
+    to_step: str = ""
+    require_all: bool = True
+
+    def validate(self) -> None:
+        if not str(self.to_step or "").strip():
+            raise ValueError("FanIn.to_step must not be empty")
+        if not self.from_steps:
+            raise ValueError("FanIn.from_steps must not be empty")
+        if len(set(self.from_steps)) != len(self.from_steps):
+            raise ValueError(f"FanIn has duplicate sources: {self.from_steps!r}")
+        if self.to_step in self.from_steps:
+            raise ValueError("FanIn.to_step must not join from itself")
+        for step in self.from_steps:
+            if not str(step or "").strip():
+                raise ValueError("FanIn.from_steps must not contain empty steps")
+
+
+@dataclass(frozen=True, slots=True)
+class SwitchCase:
+    """Branch on one key: the first matching label wins, else ``default``."""
+
+    on: str
+    cases: tuple[tuple[str, str], ...] = ()
+    default: str = ""
+
+    def validate(self) -> None:
+        if not str(self.on or "").strip():
+            raise ValueError("SwitchCase.on must not be empty")
+        if not self.cases:
+            raise ValueError("SwitchCase.cases must not be empty")
+        labels = [label for label, _ in self.cases]
+        if len(set(labels)) != len(labels):
+            raise ValueError(f"SwitchCase has duplicate labels: {labels!r}")
+        for label, target in self.cases:
+            if not str(label or "").strip():
+                raise ValueError("SwitchCase.cases must not contain empty labels")
+            if not str(target or "").strip():
+                raise ValueError("SwitchCase.cases must not contain empty targets")
+
+
+WorkflowEdge = FanOut | FanIn | SwitchCase
+
+
+@dataclass(frozen=True, slots=True)
+class WorkflowRoute:
+    """A named, validated list of routing edges describing one workflow."""
+
+    name: str
+    edges: tuple[WorkflowEdge, ...] = ()
+
+    def validate(self) -> None:
+        if not str(self.name or "").strip():
+            raise ValueError("WorkflowRoute.name must not be empty")
+        for edge in self.edges:
+            edge.validate()
+
+    def describe(self) -> str:
+        """Deterministic one-line-per-edge rendering, for logs and PRs."""
+        lines = [f"route {self.name} ({len(self.edges)} edges)"]
+        for edge in self.edges:
+            if isinstance(edge, FanOut):
+                joined = ", ".join(edge.to_steps)
+                cond = f" [{edge.condition}]" if edge.condition else ""
+                lines.append(f"fan_out {edge.from_step} -> {joined}{cond}")
+            elif isinstance(edge, FanIn):
+                joined = ", ".join(edge.from_steps)
+                mode = "require_all" if edge.require_all else "require_any"
+                lines.append(f"fan_in {joined} -> {edge.to_step} [{mode}]")
+            elif isinstance(edge, SwitchCase):
+                joined = "; ".join(f"{label} -> {target}" for label, target in edge.cases)
+                default = f"; default -> {edge.default}" if edge.default else ""
+                lines.append(f"switch {edge.on}: {joined}{default}")
+        return "\n".join(lines)
+
+
+def describe_team_route(team: ProjectTeam) -> WorkflowRoute:
+    """Describe a team's real routing from its plan.
+
+    - FanOut: the plan fans out to every dependency-free item.
+    - FanIn: each item with dependencies joins after all of them.
+    - SwitchCase: the completion verdict routes to complete / retry /
+      escalate (the CP-3 verdict the owner and verifier both apply).
+    - FanIn: all plan items join into team completion.
+    """
+    edges: list[WorkflowEdge] = []
+    ready = tuple(
+        item.item_id for item in team.plan if not item.dependency_ids
+    )
+    if ready:
+        edges.append(FanOut(from_step="plan", to_steps=ready))
+    for item in team.plan:
+        if item.dependency_ids:
+            edges.append(
+                FanIn(
+                    from_steps=tuple(item.dependency_ids),
+                    to_step=item.item_id,
+                    require_all=True,
+                )
+            )
+    edges.append(
+        SwitchCase(
+            on="completion_verdict",
+            cases=(
+                ("verified", "complete"),
+                ("partial", "retry"),
+                ("rejected", "escalate"),
+            ),
+            default="retry",
+        )
+    )
+    if team.plan:
+        edges.append(
+            FanIn(
+                from_steps=tuple(item.item_id for item in team.plan),
+                to_step="team_complete",
+                require_all=True,
+            )
+        )
+    route = WorkflowRoute(name=f"team:{team.team_id}", edges=tuple(edges))
+    route.validate()
+    return route
+
+
+# -- checkpoints (AF-2) ---------------------------------------------------
+#
+# The pulse-boundary resume protocol. A checkpoint is a durable snapshot of
+# which plan steps are done; a runner interrupted mid-team loads the latest
+# checkpoint and resumes from the pending steps instead of re-running the
+# completed ones. This is the *protocol shape only*: correctness invariants
+# (two-phase writes, "checkpoint not older than parent chain") land in LG-1
+# on top of this protocol -- this module deliberately does not change the
+# overwrite-recovery completion semantics.
+
+
+@dataclass(frozen=True, slots=True)
+class Checkpoint:
+    """One durable pulse-boundary snapshot for a team.
+
+    Step ids are plan item ids (stable across restarts, unlike WorkItem
+    ids minted per materialization). ``state`` carries small JSON-safe
+    extras (plan map, stop reason); the completed/pending lists are the
+    resume contract, not ``state``.
+    """
+
+    checkpoint_id: str
+    team_id: str
+    pulse: int
+    completed_step_ids: tuple[str, ...] = ()
+    pending_step_ids: tuple[str, ...] = ()
+    state: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "checkpoint_id": self.checkpoint_id,
+            "team_id": self.team_id,
+            "pulse": int(self.pulse),
+            "completed_step_ids": list(self.completed_step_ids),
+            "pending_step_ids": list(self.pending_step_ids),
+            "state": dict(self.state),
+        }
+
+    @classmethod
+    def from_dict(cls, raw: dict[str, Any]) -> Checkpoint:
+        if not isinstance(raw, dict):
+            raise ValueError("checkpoint must be a dict")
+        checkpoint_id = str(raw.get("checkpoint_id") or "").strip()
+        team_id = str(raw.get("team_id") or "").strip()
+        if not checkpoint_id or not team_id:
+            raise ValueError("checkpoint needs checkpoint_id and team_id")
+        return cls(
+            checkpoint_id=checkpoint_id,
+            team_id=team_id,
+            pulse=max(0, int(raw.get("pulse") or 0)),
+            completed_step_ids=tuple(
+                str(s) for s in (raw.get("completed_step_ids") or ())
+            ),
+            pending_step_ids=tuple(
+                str(s) for s in (raw.get("pending_step_ids") or ())
+            ),
+            state=dict(raw.get("state") or {}),
+        )
+
+
+class CheckpointStorage(Protocol):
+    """Save / load / delete for checkpoints. Implementations own durability."""
+
+    def save(self, checkpoint: Checkpoint) -> None:
+        ...
+
+    def load(
+        self, *, team_id: str, checkpoint_id: str
+    ) -> Checkpoint | None:
+        ...
+
+    def latest(self, *, team_id: str) -> Checkpoint | None:
+        ...
+
+    def delete(self, *, team_id: str, checkpoint_id: str) -> bool:
+        ...
+
+    def list_ids(self, *, team_id: str) -> list[str]:
+        ...
+
+
+class InMemoryCheckpointStorage:
+    """In-memory CheckpointStorage: the protocol reference + test double.
+
+    Keeps every saved checkpoint per team in insertion order; ``latest``
+    is the highest pulse (ties keep the earliest saved). Production
+    durability (SQLite / file) is a later storage backend behind the same
+    protocol, not a change to the callers.
+    """
+
+    def __init__(self) -> None:
+        self._by_team: dict[str, dict[str, Checkpoint]] = {}
+
+    def save(self, checkpoint: Checkpoint) -> None:
+        if not checkpoint.team_id or not checkpoint.checkpoint_id:
+            raise ValueError("checkpoint needs team_id and checkpoint_id")
+        self._by_team.setdefault(checkpoint.team_id, {})[
+            checkpoint.checkpoint_id
+        ] = checkpoint
+
+    def load(
+        self, *, team_id: str, checkpoint_id: str
+    ) -> Checkpoint | None:
+        return self._by_team.get(team_id, {}).get(checkpoint_id)
+
+    def latest(self, *, team_id: str) -> Checkpoint | None:
+        entries = self._by_team.get(team_id, {})
+        if not entries:
+            return None
+        best: Checkpoint | None = None
+        for checkpoint in entries.values():
+            if best is None or checkpoint.pulse > best.pulse:
+                best = checkpoint
+        return best
+
+    def delete(self, *, team_id: str, checkpoint_id: str) -> bool:
+        entries = self._by_team.get(team_id)
+        if entries is None or checkpoint_id not in entries:
+            return False
+        del entries[checkpoint_id]
+        return True
+
+    def list_ids(self, *, team_id: str) -> list[str]:
+        return list(self._by_team.get(team_id, {}).keys())
+
+
+def pending_steps(
+    checkpoint: Checkpoint, step_ids: list[str] | tuple[str, ...]
+) -> list[str]:
+    """Steps not yet completed at the checkpoint, in plan order.
+
+    The resume contract: a restarted runner runs exactly these -- never
+    re-running a completed step, never dropping a pending one.
+    """
+    completed = set(checkpoint.completed_step_ids)
+    return [step for step in step_ids if step not in completed]
+
+
 class TeamRunner:
     """Applies coordinator decisions to the real Work ledger.
 
@@ -121,6 +423,7 @@ class TeamRunner:
         authority_scope: tuple[str, ...] | None = None,
         termination_limits: TerminationLimits | None = None,
         now_fn: Any | None = None,
+        checkpoint_storage: CheckpointStorage | None = None,
     ):
         if not root_work_item_id or not str(root_work_item_id).strip():
             raise ValueError("root_work_item_id must not be empty")
@@ -129,6 +432,7 @@ class TeamRunner:
         self._memory = memory
         self._verifier = verifier
         self._root_id = str(root_work_item_id).strip()
+        self._checkpoint_storage = checkpoint_storage
         self._tool_scope = tuple(tool_scope)
         # CP-4 failure policy. The owner rebuilds this runner every pulse,
         # so rejections + attempt counts are restored from team shared
@@ -151,6 +455,82 @@ class TeamRunner:
     @property
     def team(self) -> ProjectTeam:
         return self._team
+
+    @property
+    def checkpoint_storage(self) -> CheckpointStorage | None:
+        return self._checkpoint_storage
+
+    # -- checkpoints (AF-2) ----------------------------------------------
+
+    def build_checkpoint(self) -> Checkpoint:
+        """Snapshot completed vs pending plan steps from the live ledger."""
+        shared = team_shared_memory(self._memory, self._team.team_id)
+        state = load_termination_state(shared)
+        match = shared.recall(self.PLAN_MAP_KEY)
+        id_map: dict[str, str] = (
+            dict(match.value)
+            if match is not None and isinstance(match.value, dict)
+            else {}
+        )
+        thread_id = self._team.work_thread_id or ""
+        items = {
+            item.work_item_id: item
+            for item in self._ledger.list_work_items(thread_id)
+        }
+        completed: list[str] = []
+        for plan_item in self._team.plan:
+            item = items.get(id_map.get(plan_item.item_id) or "")
+            if item is not None and item.status == "completed":
+                completed.append(plan_item.item_id)
+        pending = [p.item_id for p in self._team.plan if p.item_id not in completed]
+        pulse = max(0, int(state.pulses or 0))
+        return Checkpoint(
+            checkpoint_id=f"{self._team.team_id}:pulse-{pulse}",
+            team_id=self._team.team_id,
+            pulse=pulse,
+            completed_step_ids=tuple(completed),
+            pending_step_ids=tuple(pending),
+            state={
+                "plan_item_map": dict(id_map),
+                "stop_reason": state.stop_reason,
+            },
+        )
+
+    def save_checkpoint(self) -> Checkpoint | None:
+        """Persist the current snapshot. Best-effort: never breaks stepping.
+
+        Returns the saved checkpoint, or None when no storage is wired or
+        the save failed (a checkpoint is a resume aid, not a gate).
+        """
+        if self._checkpoint_storage is None:
+            return None
+        try:
+            checkpoint = self.build_checkpoint()
+            self._checkpoint_storage.save(checkpoint)
+        except Exception:
+            return None
+        return checkpoint
+
+    def latest_checkpoint(self) -> Checkpoint | None:
+        """Latest checkpoint for this team, or None when none exists."""
+        if self._checkpoint_storage is None:
+            return None
+        try:
+            return self._checkpoint_storage.latest(team_id=self._team.team_id)
+        except Exception:
+            return None
+
+    def pending_step_ids(self, checkpoint: Checkpoint | None = None) -> list[str]:
+        """Plan steps still pending at the checkpoint (default: latest).
+
+        A restarted runner resumes exactly these steps -- completed steps
+        are never re-run. No checkpoint yet means every step is pending.
+        """
+        checkpoint = checkpoint if checkpoint is not None else self.latest_checkpoint()
+        step_ids = [item.item_id for item in self._team.plan]
+        if checkpoint is None:
+            return list(step_ids)
+        return pending_steps(checkpoint, step_ids)
 
     # -- hard termination (CP-1) -------------------------------------------
 
@@ -345,6 +725,7 @@ class TeamRunner:
         shared = team_shared_memory(self._memory, self._team.team_id)
         state = load_termination_state(shared)
         if state.stop_reason is not None:
+            self.save_checkpoint()
             return TeamStepResult(
                 stopped=True,
                 stop_reason=state.stop_reason,
@@ -359,7 +740,7 @@ class TeamRunner:
         # An externally requested stop (user_cancel / error) wins over caps:
         # the user asked to stop, so no more work is dispatched this pulse.
         if state.requested_stop is not None:
-            return self._take_stop(
+            stopped = self._take_stop(
                 shared,
                 state,
                 TerminationResult(
@@ -371,9 +752,13 @@ class TeamRunner:
                 ),
                 now=now,
             )
+            self.save_checkpoint()
+            return stopped
         cap = evaluate_termination(state, self._limits, now=now)
         if cap is not None:
-            return self._take_stop(shared, state, cap, now=now)
+            stopped = self._take_stop(shared, state, cap, now=now)
+            self.save_checkpoint()
+            return stopped
 
         thread_id = self._team.work_thread_id or ""
         id_map = self.ensure_plan_items()
@@ -407,6 +792,7 @@ class TeamRunner:
                 if wid and decision.action in ("dispatch", "verify", "complete"):
                     if self._failure_policy.note_success(wid):
                         self._persist_failure_policy_state()
+        self.save_checkpoint()
         return result
 
     # -- CP-4 failure handling ---------------------------------------------
@@ -734,11 +1120,21 @@ class TeamRunner:
 
 
 __all__ = [
+    "Checkpoint",
+    "CheckpointStorage",
     "Escalation",
+    "FanIn",
+    "FanOut",
+    "InMemoryCheckpointStorage",
+    "SwitchCase",
     "TeamRunner",
     "TeamStepResult",
     "TerminationLimits",
     "TerminationState",
     "VerificationOutcome",
     "Verifier",
+    "WorkflowEdge",
+    "WorkflowRoute",
+    "describe_team_route",
+    "pending_steps",
 ]

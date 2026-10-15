@@ -40,7 +40,15 @@ from .specialist_workspace import (
     specialist_prompt_for,
 )
 from .team_memory import team_shared_memory
-from .team_runner import Escalation, TeamRunner, VerificationOutcome
+from .team_runner import (
+    Checkpoint,
+    CheckpointStorage,
+    Escalation,
+    TeamRunner,
+    VerificationOutcome,
+    describe_team_route,
+    WorkflowRoute,
+)
 from .team_timeline import apply_assignee_overrides, assignee_overrides
 
 
@@ -155,9 +163,35 @@ class ResidentTeamVerifier:
 class TeamWorkOwner:
     """Own one team request through durable TeamRunner steps."""
 
-    def __init__(self, *, ledger: Any, memory: Any) -> None:
+    def __init__(
+        self,
+        *,
+        ledger: Any,
+        memory: Any,
+        checkpoint_storage: CheckpointStorage | None = None,
+    ) -> None:
         self.ledger = ledger
         self.memory = memory
+        # AF-2: pulse-boundary checkpoints. None keeps the previous
+        # behavior (no checkpointing); when wired, every runner step
+        # persists a snapshot for interrupt-resume.
+        self.checkpoint_storage = checkpoint_storage
+
+    # -- routing + checkpoints (AF-2) -------------------------------------
+
+    @staticmethod
+    def describe_route(team: ProjectTeam) -> WorkflowRoute:
+        """This team's routing as FanOut / FanIn / SwitchCase edges."""
+        return describe_team_route(team)
+
+    def latest_checkpoint(self, team_id: str) -> Checkpoint | None:
+        """Latest checkpoint for a team, or None when none exists."""
+        if self.checkpoint_storage is None:
+            return None
+        try:
+            return self.checkpoint_storage.latest(team_id=team_id)
+        except Exception:
+            return None
 
     # -- routing ---------------------------------------------------------
 
@@ -487,6 +521,7 @@ class TeamWorkOwner:
             memory=self.memory,
             verifier=ResidentTeamVerifier(self.ledger),
             root_work_item_id=root_work_item_id,
+            checkpoint_storage=self.checkpoint_storage,
         )
         result = runner.step()
         if result.stopped:
@@ -596,8 +631,11 @@ __all__ = [
     "TEAM_COMPLETE_STATE_KEY",
     "TEAM_ID_STATE_KEY",
     "TEAM_VERDICT_STATE_KEY",
+    "Checkpoint",
+    "CheckpointStorage",
     "ResidentTeamVerifier",
     "TeamOwnerStep",
     "TeamWorkOwner",
+    "WorkflowRoute",
     "verified_evidence",
 ]
