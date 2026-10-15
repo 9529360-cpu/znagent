@@ -12,6 +12,25 @@ action, target, scope and value, and the user decides:
   for the same action + scope;
 - ``deny`` -- refuse; the action never executes.
 
+Deny semantics (sticky, with one controlled override):
+
+- Deny is sticky: once a (action kind, scope, target) triple is denied,
+  the gate keeps blocking that triple. Deny outranks auto-allow rules --
+  a rule created afterwards does NOT silently unblock a denied triple,
+  because a rule is for future requests, not a retroactive override.
+- Deny is terminal for its request: the denied record is never mutated
+  back to pending or approved.
+- The only way to re-ask a denied triple is an explicit user
+  reconsideration: ``ApprovalCardStore.reconsider_denied`` (exposed to the
+  workbench as daemon RPC ``approval_reconsider_denied``), which creates a
+  fresh pending request for the same triple and writes an audited
+  ``deny_overridden`` entry linking the denied request to the new one.
+  There is no silent or agent-side path around a deny: the agent's
+  execution path only ever goes through ``ApprovalGate.check``, which
+  never reconsiders a deny on its own.
+- A denied triple that is reconsidered and denied again needs another
+  explicit reconsideration; each override is individually audited.
+
 Rules are narrow by construction: a rule matches exactly one action kind and
 one scope. Broad rules (``*``, ``browser``, ``everything`` ...) are rejected.
 When an ``ask_first`` rule and an ``auto_allow`` rule both match,
@@ -381,6 +400,16 @@ class ApprovalCardStore:
             ).fetchall()
         return [ApprovalRequest.from_dict(dict(row)) for row in rows]
 
+    def denied_requests(self, *, limit: int = 100) -> list[ApprovalRequest]:
+        self.expire_overdue()
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                f"SELECT * FROM {_REQUESTS_TABLE} WHERE status = 'denied' "
+                "ORDER BY created_at DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [ApprovalRequest.from_dict(dict(row)) for row in rows]
+
     def latest_request_for(
         self, *, action_kind: str, scope: str, target: str
     ) -> ApprovalRequest | None:
@@ -481,6 +510,51 @@ class ApprovalCardStore:
         updated = self.get_request(request.request_id)
         assert updated is not None
         return updated
+
+    def reconsider_denied(
+        self,
+        request_id: str,
+        *,
+        note: str = "",
+        now: datetime | None = None,
+    ) -> ApprovalRequest:
+        """Explicitly reconsider a denied request.
+
+        Only the user may call this (via daemon RPC ``approval_reconsider_denied``;
+        the agent's execution path never calls it). It creates a fresh pending
+        request for the same triple and writes an audited ``deny_overridden``
+        entry linking the denied request to the new one. The denied record
+        itself is never mutated, so the deny decision stays in history.
+        """
+        denied = self.get_request(request_id)
+        if denied is None:
+            raise ValueError(f"unknown approval request: {request_id}")
+        if denied.status != "denied":
+            raise ValueError(
+                "only denied approval requests can be reconsidered; "
+                f"request {denied.request_id} is {denied.status}"
+            )
+        fresh = self.request_approval(
+            action_kind=denied.action_kind,
+            target=denied.target,
+            scope=denied.scope,
+            value_text=denied.value_text,
+            source=denied.source,
+            event_id=denied.event_id,
+            now=now,
+        )
+        self._audit(
+            denied.request_id,
+            "deny_overridden",
+            denied.action_kind,
+            denied.scope,
+            note=(
+                f"denied request {denied.request_id} reconsidered; "
+                f"new request {fresh.request_id}"
+                + (f"; {note}" if str(note or '').strip() else "")
+            ),
+        )
+        return fresh
 
     def consume(self, request_id: str) -> bool:
         """Consume one approved_once approval. Returns True only if consumed."""
@@ -663,11 +737,23 @@ class ApprovalGate:
         if not normalized_target:
             raise ValueError("approval target must not be empty")
         self._store.expire_overdue()
-        if self._store.evaluate(action_kind=kind, scope=normalized_scope) == "auto_allow":
-            return ApprovalGateOutcome(True, reason="auto_allow rule matched")
         latest = self._store.latest_request_for(
             action_kind=kind, scope=normalized_scope, target=normalized_target
         )
+        if latest is not None and latest.status == "denied":
+            # Deny is sticky and outranks auto_allow rules for its triple:
+            # a rule is for future requests, never a silent override of a
+            # deny. Only an explicit reconsider_denied re-asks the triple.
+            return ApprovalGateOutcome(
+                False,
+                request_id=latest.request_id,
+                reason=(
+                    "approval denied; action never executes — "
+                    "reconsider explicitly to re-ask"
+                ),
+            )
+        if self._store.evaluate(action_kind=kind, scope=normalized_scope) == "auto_allow":
+            return ApprovalGateOutcome(True, reason="auto_allow rule matched")
         if latest is not None and latest.status == "approved_once":
             if self._store.consume(latest.request_id):
                 return ApprovalGateOutcome(
@@ -681,11 +767,11 @@ class ApprovalGate:
                 request_id=latest.request_id,
                 reason="approval pending",
             )
-        if latest is not None and latest.status in {"denied", "expired"}:
+        if latest is not None and latest.status == "expired":
             return ApprovalGateOutcome(
                 False,
                 request_id=latest.request_id,
-                reason=f"approval {latest.status}; action never executes",
+                reason="approval expired; action never executes",
             )
         request = self._store.request_approval(
             action_kind=kind,
