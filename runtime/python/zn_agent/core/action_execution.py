@@ -184,19 +184,25 @@ class ActionExecutionRuntime:
 
     def _approval_block(
         self, request: ActionRequest, descriptor: ActionDescriptor
-    ) -> str | None:
+    ) -> tuple[str | None, str | None]:
+        """Return (block_message, approved_command).
+
+        ``approved_command`` is the user-edited command approved on the
+        card (W-1); the execution path runs it instead of the original.
+        It is None when the gate did not approve an edited command.
+        """
         if self._approval_gate is None:
-            return None
+            return None, None
         kind = approval_kind_for_tag(descriptor.tags)
         if kind is None:
-            return None
+            return None, None
         args = dict(request.args or {})
         resolver = self._approval_scopes.get(request.action_id)
         if resolver is not None:
             try:
                 scope, target, value_text = resolver(args)
             except ValueError as exc:
-                return f"approval gate rejected the action: {exc}"
+                return f"approval gate rejected the action: {exc}", None
             scope = str(scope or "").strip()
             target = str(target or "").strip()
             value_text = str(value_text or "")
@@ -206,6 +212,8 @@ class ActionExecutionRuntime:
             target = str(args.get("approval_target") or request.action_id)
             value_text = str(args.get("approval_value_text") or "")
             source = str(args.get("approval_source") or "resident")
+        command = args.get("command")
+        session_id = args.get("approval_session_id")
         try:
             outcome = self._approval_gate.check(
                 action_kind=kind,
@@ -214,15 +222,20 @@ class ActionExecutionRuntime:
                 value_text=value_text,
                 source=source,
                 event_id=request.event_id,
+                command=command if isinstance(command, str) else None,
+                session_id=session_id if isinstance(session_id, str) else None,
             )
         except ValueError as exc:
-            return f"approval gate rejected the action: {exc}"
+            return f"approval gate rejected the action: {exc}", None
         if outcome.allowed:
-            return None
+            return None, outcome.approved_command
         return (
-            f"approval_required:{outcome.request_id or ''}:{outcome.reason}"
-            if outcome.request_id
-            else f"approval_required:{outcome.reason}"
+            (
+                f"approval_required:{outcome.request_id or ''}:{outcome.reason}"
+                if outcome.request_id
+                else f"approval_required:{outcome.reason}"
+            ),
+            None,
         )
 
     def execute(self, request: ActionRequest) -> ActionExecution:
@@ -265,7 +278,7 @@ class ActionExecutionRuntime:
         # existing behavior. A blocked action never reaches the Body: the
         # gate records one approval request, and a later retry proceeds
         # once the user allows it (or an auto_allow rule matches).
-        approval_block = self._approval_block(request, descriptor)
+        approval_block, approved_command = self._approval_block(request, descriptor)
         if approval_block is not None:
             return self._failure(request, descriptor, started, approval_block)
 
@@ -280,6 +293,15 @@ class ActionExecutionRuntime:
         binder = self._argument_binders.get(request.action_id)
         if binder is not None:
             body_args = dict(binder(body_args))
+
+        # W-1: the user-edited command approved on the card wins over the
+        # original args. It already passed the policy denylist at decision
+        # and gate-consume time; WorkerRun digest binding still fail-closes
+        # an edited command whose digest no longer matches the admitted
+        # action.
+        if approved_command is not None and isinstance(body_args.get("command"), str):
+            body_args = dict(body_args)
+            body_args["command"] = approved_command
 
         body_result = self.body.act(
             descriptor.body_action_kind,

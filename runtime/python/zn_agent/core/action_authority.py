@@ -71,7 +71,14 @@ class WorkerActionAuthorityEnforcer:
     _GIT_READ_KINDS = {"git_state", "git", "git_diff"}
 
     @classmethod
-    def authorize(cls, kind: str, args: dict[str, Any], context: ActionAuthorityContext) -> None:
+    def authorize(
+        cls,
+        kind: str,
+        args: dict[str, Any],
+        context: ActionAuthorityContext,
+        *,
+        permission_policy=None,
+    ) -> None:
         if not context.worker_run_id or not context.work_item_id or not context.work_thread_id:
             raise WorkerActionAuthorityError("worker action authority identity is incomplete")
         if context.plan_version < 1:
@@ -95,6 +102,16 @@ class WorkerActionAuthorityEnforcer:
 
         if normalized in cls._COMMAND_KINDS:
             command = str(args.get("command") or "")
+            # W-1: the permission denylist is global -- it blocks a
+            # WorkerRun command even when its digest matches the admitted
+            # action. The digest still pins the exact command; the
+            # denylist is an additional, absolute block.
+            if permission_policy is not None and permission_policy.denies(
+                "terminal_command", command
+            ):
+                raise WorkerActionAuthorityError(
+                    "worker command is denied by the permission policy (denylist)"
+                )
             if not command or not context.allowed_command_sha256:
                 raise WorkerActionAuthorityError("worker command is not bound to the admitted action")
             if ActionAuthorityContext.command_digest(command) != context.allowed_command_sha256:
@@ -159,10 +176,11 @@ class WorkerActionAuthorityEnforcer:
 class AuthorityEnforcedBody:
     """Admission gate that delegates to the original bound ``body.act`` method."""
 
-    def __init__(self, body, *, resident=None) -> None:
+    def __init__(self, body, *, resident=None, permission_policy=None) -> None:
         self._body = body
         self._original_act = body.act
         self._resident = resident
+        self._permission_policy = permission_policy
 
     def act(self, kind: str, *, event_id: str | None = None, **args: Any) -> BodyActionResult:
         raw_context = args.pop(_AUTHORITY_ARG, None)
@@ -172,7 +190,9 @@ class AuthorityEnforcedBody:
                     raise WorkerActionAuthorityError("worker action authority context is malformed")
                 context = ActionAuthorityContext.from_dict(raw_context)
                 self._revalidate_durable_authority(context)
-                WorkerActionAuthorityEnforcer.authorize(kind, args, context)
+                WorkerActionAuthorityEnforcer.authorize(
+                    kind, args, context, permission_policy=self._permission_policy
+                )
             except (WorkerActionAuthorityError, TypeError, ValueError) as exc:
                 return self._record_denial(kind, event_id=event_id, args=args, error=exc)
         return self._original_act(kind, event_id=event_id, **args)
@@ -234,13 +254,13 @@ class AuthorityEnforcedBody:
             )
 
 
-def install_worker_authority_gate(body, *, resident) -> AuthorityEnforcedBody:
+def install_worker_authority_gate(body, *, resident, permission_policy=None) -> AuthorityEnforcedBody:
     """Install once without replacing the existing Body object or its class."""
 
     existing = getattr(body, "_zn_worker_authority_gate", None)
     if isinstance(existing, AuthorityEnforcedBody):
         return existing
-    gate = AuthorityEnforcedBody(body, resident=resident)
+    gate = AuthorityEnforcedBody(body, resident=resident, permission_policy=permission_policy)
     body.act = gate.act
     body._zn_worker_authority_gate = gate
     return gate
