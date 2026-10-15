@@ -33,6 +33,7 @@ import {
   cancelZnWork,
   checkZnUpdate,
   createZnWorkThread,
+  renameZnWorkThread,
   detachZnWorkspace,
   dismissZnSuggestion,
   loadZnApprovals,
@@ -285,6 +286,9 @@ export function ZnWorkbench() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('language')
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
+  const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null)
+  const [renamingTitle, setRenamingTitle] = useState('')
+  const [renameBusy, setRenameBusy] = useState(false)
   const [submissionBusy, setBusy] = useState(false)
   const [workProgress, setWorkProgress] = useState<ZnWorkProgress | null>(null)
   const [cancelBusy, setCancelBusy] = useState(false)
@@ -403,6 +407,35 @@ export function ZnWorkbench() {
         .sort((left, right) => right.updatedAt - left.updatedAt)
     )
   }, [])
+
+  const beginThreadRename = useCallback(() => {
+    if (!activeThread || renameBusy) return
+    setRenamingThreadId(activeThread.id)
+    setRenamingTitle(activeThread.title)
+  }, [activeThread, renameBusy])
+
+  const saveThreadRename = useCallback(async () => {
+    if (!activeThread || renameBusy || renamingThreadId !== activeThread.id) return
+    const title = renamingTitle.trim()
+    if (!title || title.length > 120) return
+    const threadId = activeThread.id
+    setRenameBusy(true)
+    try {
+      // Renderer state is a projection. The Resident is the sole durable owner.
+      replaceThread(await renameZnWorkThread(threadId, title))
+      setRenamingThreadId(current => current === threadId ? null : current)
+      setResidentError(null)
+    } catch (error) {
+      setResidentError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRenameBusy(false)
+    }
+  }, [activeThread, renameBusy, renamingThreadId, renamingTitle, replaceThread])
+
+  useEffect(() => {
+    setRenamingThreadId(null)
+    setRenamingTitle('')
+  }, [activeThreadId])
 
   const workActive = useZnWorkReconnection({
     thread: activeThread,
@@ -1133,7 +1166,40 @@ export function ZnWorkbench() {
           </div>
 
           <div className="zn-topbar-copy">
-            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
+            <div className="zn-topbar-title-line">
+              {view === 'work' && activeThread && renamingThreadId === activeThread.id ? (
+                <form className="zn-thread-rename-form" onSubmit={event => {
+                  event.preventDefault()
+                  void saveThreadRename()
+                }}>
+                  <input
+                    autoFocus
+                    aria-label={t('thread.renameInput')}
+                    maxLength={120}
+                    value={renamingTitle}
+                    onChange={event => setRenamingTitle(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        setRenamingThreadId(null)
+                      }
+                    }}
+                  />
+                  <button type="submit" disabled={renameBusy || !renamingTitle.trim()}>{t('thread.save')}</button>
+                  <button type="button" onClick={() => setRenamingThreadId(null)}>{t('thread.cancel')}</button>
+                </form>
+              ) : (
+                <>
+                  <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
+                  {view === 'work' && activeThread ? (
+                    <button type="button" className="zn-thread-rename-trigger" aria-label={t('thread.rename')} title={t('thread.rename')} onClick={beginThreadRename}>
+                      {t('thread.rename')}
+                    </button>
+                  ) : null}
+                </>
+              )}
+            </div>
             <div className="zn-muted zn-small">{view === 'settings' ? `ZN · ${t('topbar.thisComputer')}` : activeWorkspace?.name || t('topbar.thisComputer')}</div>
           </div>
 
