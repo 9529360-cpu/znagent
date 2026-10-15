@@ -9,11 +9,12 @@ return as dispatch evidence until fresh reality verifies the postcondition.
 
 import math
 import uuid
-from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Mapping
+from dataclasses import dataclass, field, replace
+from typing import Any, Callable, Iterable, Literal, Mapping
 
 from .action_authority import (
     ActionAuthorityContext,
+    ApprovalSnapshot,
     bind_worker_authority_arg,
 )
 from .action_fabric import ActionDescriptor, ActionFabricRegistry
@@ -94,6 +95,7 @@ class ActionExecution:
     error: str | None = None
     started_at: str = field(default_factory=utc_now)
     completed_at: str = field(default_factory=utc_now)
+    audit: tuple[str, ...] = ()
 
     @property
     def success(self) -> bool:
@@ -110,6 +112,171 @@ ObservationVerifier = Callable[
 ]
 
 
+@dataclass
+class ExecutionContext:
+    """Mutable per-execution state threaded through the middleware chain."""
+
+    request: ActionRequest
+    descriptor: ActionDescriptor
+    started_at: str
+    dispatch_args: dict[str, Any] = field(default_factory=dict)
+    authority_mode: str = "resident"
+    approved_command: str | None = None
+    snapshot: ApprovalSnapshot | None = None
+    audit: list[str] = field(default_factory=list)
+
+
+ExecutionMiddleware = Callable[
+    [ExecutionContext, Callable[[], ActionExecution]],
+    ActionExecution,
+]
+
+
+class ExecutionMiddlewareChain:
+    """Run middlewares in order, then the terminal dispatch step.
+
+    Each middleware receives the context and a ``next_step`` callable. It
+    may return its own execution (short-circuit, e.g. approval blocked),
+    mutate the context (e.g. apply argument bindings), and then call
+    ``next_step`` to continue down the chain.
+    """
+
+    def __init__(self, middlewares: Iterable[ExecutionMiddleware]) -> None:
+        self._middlewares = tuple(middlewares)
+
+    def run(
+        self,
+        context: ExecutionContext,
+        terminal: Callable[[], ActionExecution],
+    ) -> ActionExecution:
+        def _invoke(index: int) -> ActionExecution:
+            if index >= len(self._middlewares):
+                return terminal()
+            middleware = self._middlewares[index]
+            return middleware(context, lambda: _invoke(index + 1))
+
+        return _invoke(0)
+
+
+class ApprovalMiddleware:
+    """Approval-gate stage of the execution middleware chain.
+
+    Only descriptors that opt in with an ``approval:<kind>`` tag are gated.
+    Untagged actions keep their existing behavior. A blocked action never
+    reaches the Body: the gate records one approval request, and a later
+    retry proceeds once the user allows it (or an auto_allow rule matches).
+    On approval, the exact dispatch args (with a W-1 user-edited command
+    applied) are snapshotted so the revalidation stage can refuse any
+    post-approval parameter swap.
+    """
+
+    def __init__(self, runtime: "ActionExecutionRuntime") -> None:
+        self._runtime = runtime
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        next_step: Callable[[], ActionExecution],
+    ) -> ActionExecution:
+        block, approved_command = self._runtime._approval_block(
+            context.request, context.descriptor
+        )
+        if block is not None:
+            context.audit.append(f"approval blocked: {block}")
+            return self._runtime._failure(
+                context.request, context.descriptor, context.started_at, block
+            )
+        context.approved_command = approved_command
+        if (
+            self._runtime._approval_gate is not None
+            and approval_kind_for_tag(context.descriptor.tags) is not None
+        ):
+            context.snapshot = ApprovalSnapshot.capture(
+                context.request.action_id,
+                context.dispatch_args,
+                context.request.event_id,
+                approved_command=approved_command,
+            )
+            context.audit.append(
+                "approval granted: snapshot "
+                f"{context.snapshot.args_digest[:16]}"
+            )
+        return next_step()
+
+
+class ArgumentBindingMiddleware:
+    """Resident argument-binding stage of the execution middleware chain.
+
+    Applies the registered argument binder (resident-level bindings the
+    model must not supply itself, e.g. the workspace root), then applies
+    the W-1 user-edited command approved on the card, which wins over
+    the original args. It already passed the policy denylist at decision
+    and gate-consume time; WorkerRun digest binding still fail-closes
+    an edited command whose digest no longer matches the admitted action.
+    """
+
+    def __init__(self, runtime: "ActionExecutionRuntime") -> None:
+        self._runtime = runtime
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        next_step: Callable[[], ActionExecution],
+    ) -> ActionExecution:
+        binder = self._runtime._argument_binders.get(context.request.action_id)
+        if binder is not None:
+            context.dispatch_args = dict(binder(context.dispatch_args))
+            context.audit.append(
+                f"argument binder applied for {context.request.action_id}"
+            )
+        if context.approved_command is not None and isinstance(
+            context.dispatch_args.get("command"), str
+        ):
+            context.dispatch_args = dict(context.dispatch_args)
+            context.dispatch_args["command"] = context.approved_command
+        return next_step()
+
+
+class PostApprovalRevalidationMiddleware:
+    """Final guard before dispatch: execution args must match the approval.
+
+    This middleware always runs last in the chain, after every other
+    middleware and binding, so nothing upstream can swap an approved
+    parameter without being caught. Approved keys that changed or
+    disappeared refuse execution and leave an audit entry; keys added
+    after approval (resident bindings) are permitted. Actions without an
+    approval snapshot pass through untouched.
+    """
+
+    def __init__(self, runtime: "ActionExecutionRuntime") -> None:
+        self._runtime = runtime
+
+    def __call__(
+        self,
+        context: ExecutionContext,
+        next_step: Callable[[], ActionExecution],
+    ) -> ActionExecution:
+        snapshot = context.snapshot
+        if snapshot is None:
+            return next_step()
+        mismatches = snapshot.verify(
+            context.request.action_id,
+            context.dispatch_args,
+            context.request.event_id,
+        )
+        if mismatches:
+            reason = (
+                "post-approval revalidation refused execution: "
+                + "; ".join(mismatches)
+            )
+            context.audit.append(reason)
+            return self._runtime._failure(
+                context.request, context.descriptor, context.started_at, reason
+            )
+        context.audit.append("post-approval revalidation passed")
+        return next_step()
+
+
 class ActionExecutionRuntime:
     """Resolve semantic actions through the one existing Body."""
 
@@ -119,10 +286,12 @@ class ActionExecutionRuntime:
         body: Any,
         *,
         approval_gate: ApprovalGate | None = None,
+        middlewares: Iterable[ExecutionMiddleware] | None = None,
     ) -> None:
         self.fabric = fabric
         self.body = body
         self._approval_gate = approval_gate
+        self._custom_middlewares: list[ExecutionMiddleware] = list(middlewares or [])
         self._observers: dict[str, ObservationReader] = {}
         self._verifiers: dict[str, ObservationVerifier] = {}
         self._approval_scopes: dict[
@@ -131,6 +300,17 @@ class ActionExecutionRuntime:
         self._argument_binders: dict[
             str, Callable[[Mapping[str, Any]], Mapping[str, Any]]
         ] = {}
+
+    def register_middleware(self, middleware: ExecutionMiddleware) -> None:
+        """Add a custom middleware run before the approval stage.
+
+        Custom middlewares run first so the built-in chain keeps its
+        order (approval, argument binding, revalidation) and the
+        revalidation guard always runs last before dispatch.
+        """
+        if not callable(middleware):
+            raise TypeError("execution middleware must be callable")
+        self._custom_middlewares.append(middleware)
 
     def register_verification(
         self,
@@ -273,40 +453,42 @@ class ActionExecutionRuntime:
                 "action has no existing Body action binding",
             )
 
-        # Approval gate: only descriptors that opt in with an
-        # ``approval:<kind>`` tag are gated. Untagged actions keep their
-        # existing behavior. A blocked action never reaches the Body: the
-        # gate records one approval request, and a later retry proceeds
-        # once the user allows it (or an auto_allow rule matches).
-        approval_block, approved_command = self._approval_block(request, descriptor)
-        if approval_block is not None:
-            return self._failure(request, descriptor, started, approval_block)
-
-        body_args = dict(request.args)
+        dispatch_args = dict(request.args)
         authority_mode = "resident"
         if request.authority_context is not None:
-            body_args = bind_worker_authority_arg(
-                body_args,
+            dispatch_args = bind_worker_authority_arg(
+                dispatch_args,
                 request.authority_context,
             )
             authority_mode = "worker_run"
-        binder = self._argument_binders.get(request.action_id)
-        if binder is not None:
-            body_args = dict(binder(body_args))
+        context = ExecutionContext(
+            request=request,
+            descriptor=descriptor,
+            started_at=started,
+            dispatch_args=dispatch_args,
+            authority_mode=authority_mode,
+        )
+        chain = ExecutionMiddlewareChain(
+            [
+                *self._custom_middlewares,
+                ApprovalMiddleware(self),
+                ArgumentBindingMiddleware(self),
+                PostApprovalRevalidationMiddleware(self),
+            ]
+        )
+        result = chain.run(context, lambda: self._dispatch(context, started))
+        return replace(result, audit=tuple(context.audit))
 
-        # W-1: the user-edited command approved on the card wins over the
-        # original args. It already passed the policy denylist at decision
-        # and gate-consume time; WorkerRun digest binding still fail-closes
-        # an edited command whose digest no longer matches the admitted
-        # action.
-        if approved_command is not None and isinstance(body_args.get("command"), str):
-            body_args = dict(body_args)
-            body_args["command"] = approved_command
-
+    def _dispatch(
+        self, context: ExecutionContext, started: str
+    ) -> ActionExecution:
+        """Terminal chain step: Body dispatch plus postcondition observation."""
+        request = context.request
+        descriptor = context.descriptor
         body_result = self.body.act(
             descriptor.body_action_kind,
             event_id=request.event_id,
-            **body_args,
+            **context.dispatch_args,
         )
 
         if descriptor.effect_class == "read_only":
@@ -333,7 +515,7 @@ class ActionExecutionRuntime:
                 body_result=body_result,
                 observations=(observation,),
                 verification=verification,
-                authority_mode=authority_mode,
+                authority_mode=context.authority_mode,
                 error=None if body_result.success else body_result.error,
             )
 
@@ -349,7 +531,7 @@ class ActionExecutionRuntime:
                 started,
                 body_result.error or "Body rejected the side-effect before dispatch",
                 body_result=body_result,
-                authority_mode=authority_mode,
+                authority_mode=context.authority_mode,
             )
 
         return self._observe_effect(
@@ -358,9 +540,8 @@ class ActionExecutionRuntime:
             started,
             body_result=body_result,
             observations=(),
-            authority_mode=authority_mode,
+            authority_mode=context.authority_mode,
         )
-
     def verify(self, execution: ActionExecution) -> ActionExecution:
         """Re-observe a prior side effect without redispatching it."""
 
