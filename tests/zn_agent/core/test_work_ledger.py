@@ -72,13 +72,21 @@ class ResidentWorkLedgerTests(unittest.TestCase):
             self.assertTrue(renamed["ok"])
             self.assertEqual(renamed["result"]["id"], "rpc-rename")
             self.assertEqual(renamed["result"]["title"], "Edited")
-            invalid = server.handle({
-                "id": "invalid", "method": "work_rename",
-                "params": {
-                    "thread_id": "rpc-rename", "title": "Untrusted", "metadata": {},
-                },
-            })
+            # Direct in-process RPC dispatch raises validation errors; only
+            # the authenticated socket transport wraps them as {ok: false}.
+            invalid = {"ok": True, "error": ""}
+            try:
+                server.handle({
+                    "id": "invalid", "method": "work_rename",
+                    "params": {
+                        "thread_id": "rpc-rename", "title": "Untrusted", "metadata": {},
+                    },
+                })
+            except ValueError as error:
+                invalid["ok"] = False
+                invalid["error"] = str(error)
             self.assertFalse(invalid["ok"])
+            self.assertIn("work_rename accepts only", invalid["error"])
             current = server.handle({
                 "id": "get", "method": "work_get",
                 "params": {"thread_id": "rpc-rename"},
