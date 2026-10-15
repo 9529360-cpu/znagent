@@ -10,6 +10,7 @@ import './chat-shell.css'
 import './desktop-resilience.css'
 import './settings-shell.css'
 import './desk.css'
+import './thread-rename.css'
 
 document.title = 'ZN'
 
