@@ -59,6 +59,29 @@ be attached to the gate. It is consulted after the sticky-deny check and
 before the rule evaluation: denylist blocks, session auto-approve /
 always_allow lets the action through without a card, ask / agent_decides
 falls through to the existing rules.
+
+Diff-first review (CUR-4): an approval request for a file change may carry
+presentation-only review data, computed at request time by a trusted scope
+resolver (never from model-supplied args):
+
+- ``diff_text`` -- unified diff of the pending change (old content ->
+  proposed content for overwrite; old content -> nothing for delete),
+  shown on the card so the user sees exactly what would land. It is
+  presentation only: it never changes any gate decision.
+- ``previous_content`` + ``previous_captured`` -- a snapshot of the file
+  content as it was at request time. It is the undo record: one-click
+  undo writes this content back. ``previous_captured`` is False when no
+  faithful snapshot exists (binary file, oversized file, file missing),
+  and then ``review_note`` says why and undo is refused. A snapshot is
+  only ever stored when it round-trips exactly (strict UTF-8, capped).
+- ``undone`` -- set once undo has run for this request; undo runs at most
+  once, and the ``undone`` audit entry is the durable record.
+
+Undo scope (CUR-4): only ``consumed`` requests (allow_once approvals that
+were actually spent) with a captured snapshot and a ``workspace:<rel>``
+scope can be undone. ``always_allow`` rule executions have no per-request
+record by design and are not individually undoable (a delete through a
+rule still lands in trash and can be restored from there by hand).
 """
 
 import sqlite3
@@ -67,7 +90,7 @@ from contextlib import closing
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from .models import utc_now
 from .permission_model import PermissionPolicy, PermissionVerdict
@@ -100,6 +123,12 @@ REQUEST_STATUSES = (
 )
 
 DECISIONS = ("allow_once", "always_allow", "deny")
+
+# CUR-4 review/undo caps. A snapshot larger than the cap is never stored:
+# a truncated snapshot would corrupt the file on undo, so the request
+# instead records previous_captured=False and review_note explains why.
+REVIEW_DIFF_MAX_CHARS = 16000
+REVIEW_PREVIOUS_CONTENT_MAX_CHARS = 200000
 
 RULE_EFFECTS = ("ask_first", "auto_allow")
 
@@ -179,6 +208,19 @@ class ApprovalRequest:
     # means "run the original command"; the execution path runs this
     # version when set.
     approved_command: str = ""
+    # CUR-4 diff-first review (presentation only; never changes a decision):
+    # unified diff of the pending change, computed at request time.
+    diff_text: str = ""
+    # Snapshot of the file content at request time (the undo record).
+    # Only meaningful when previous_captured is True.
+    previous_content: str = ""
+    # True iff previous_content is a faithful snapshot (including the
+    # empty-file case). False means no undo snapshot exists.
+    previous_captured: bool = False
+    # Why the review is incomplete, e.g. "binary file: no undo snapshot".
+    review_note: str = ""
+    # True once undo has run for this request. Undo runs at most once.
+    undone: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -199,6 +241,11 @@ class ApprovalRequest:
             decision=str(raw.get("decision") or "") or None,
             event_id=str(raw.get("event_id") or "") or None,
             approved_command=str(raw.get("approved_command") or ""),
+            diff_text=str(raw.get("diff_text") or ""),
+            previous_content=str(raw.get("previous_content") or ""),
+            previous_captured=bool(raw.get("previous_captured", False)),
+            review_note=str(raw.get("review_note") or ""),
+            undone=bool(raw.get("undone", False)),
         )
 
 
@@ -297,7 +344,12 @@ class ApprovalCardStore:
                     decided_at TEXT,
                     decision TEXT,
                     event_id TEXT,
-                    approved_command TEXT NOT NULL DEFAULT ''
+                    approved_command TEXT NOT NULL DEFAULT '',
+                    diff_text TEXT NOT NULL DEFAULT '',
+                    previous_content TEXT NOT NULL DEFAULT '',
+                    previous_captured INTEGER NOT NULL DEFAULT 0,
+                    review_note TEXT NOT NULL DEFAULT '',
+                    undone INTEGER NOT NULL DEFAULT 0
                 );
                 CREATE INDEX IF NOT EXISTS idx_approval_requests_status
                     ON {_REQUESTS_TABLE}(status, created_at DESC);
@@ -329,7 +381,8 @@ class ApprovalCardStore:
                 """
             )
             conn.commit()
-            # Migration: databases created before W-1 lack approved_command.
+            # Migrations: databases created before W-1 lack approved_command;
+            # databases created before CUR-4 lack the review/undo columns.
             columns = {
                 row[1]
                 for row in conn.execute(
@@ -342,6 +395,21 @@ class ApprovalCardStore:
                     "ADD COLUMN approved_command TEXT NOT NULL DEFAULT ''"
                 )
                 conn.commit()
+                columns.add("approved_command")
+            for column, ddl in (
+                ("diff_text", "TEXT NOT NULL DEFAULT ''"),
+                ("previous_content", "TEXT NOT NULL DEFAULT ''"),
+                ("previous_captured", "INTEGER NOT NULL DEFAULT 0"),
+                ("review_note", "TEXT NOT NULL DEFAULT ''"),
+                ("undone", "INTEGER NOT NULL DEFAULT 0"),
+            ):
+                if column not in columns:
+                    conn.execute(
+                        f"ALTER TABLE {_REQUESTS_TABLE} "
+                        f"ADD COLUMN {column} {ddl}"
+                    )
+                    conn.commit()
+                    columns.add(column)
 
     # -- requests -----------------------------------------------------------
 
@@ -355,6 +423,13 @@ class ApprovalCardStore:
         source: str = "resident",
         event_id: str | None = None,
         now: datetime | None = None,
+        # CUR-4 review data (presentation only). previous_content is only
+        # stored when previous_captured is True; a captured snapshot must
+        # fit the cap, otherwise it could not round-trip on undo.
+        diff_text: str = "",
+        previous_content: str = "",
+        previous_captured: bool = False,
+        review_note: str = "",
     ) -> ApprovalRequest:
         kind = validate_approval_kind(action_kind)
         normalized_source = validate_approval_source(source)
@@ -365,6 +440,16 @@ class ApprovalCardStore:
         if len(normalized_target) > 500:
             raise ValueError("approval target is too long")
         normalized_value = " ".join(str(value_text or "").split())[:1000]
+        normalized_diff = str(diff_text or "")[:REVIEW_DIFF_MAX_CHARS]
+        normalized_previous = str(previous_content or "")
+        normalized_captured = bool(previous_captured)
+        if normalized_captured and len(normalized_previous) > REVIEW_PREVIOUS_CONTENT_MAX_CHARS:
+            raise ValueError("captured undo snapshot exceeds the size cap")
+        if not normalized_captured:
+            # Never store an unflagged snapshot: an uncaptured previous
+            # content must not be mistaken for a faithful undo record.
+            normalized_previous = ""
+        normalized_note = " ".join(str(review_note or "").split())[:500]
         current = now or datetime.now(timezone.utc)
         self.expire_overdue(now=current)
         ttl = (
@@ -394,13 +479,18 @@ class ApprovalCardStore:
                 created_at=created_at,
                 expires_at=expires_at,
                 event_id=str(event_id or "").strip() or None,
+                diff_text=normalized_diff,
+                previous_content=normalized_previous,
+                previous_captured=normalized_captured,
+                review_note=normalized_note,
             )
             conn.execute(
                 f"INSERT INTO {_REQUESTS_TABLE} "
                 "(request_id, action_kind, target, scope, value_text, source, "
                 "status, created_at, expires_at, decided_at, decision, event_id, "
-                "approved_command) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "approved_command, diff_text, previous_content, "
+                "previous_captured, review_note, undone) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     request.request_id,
                     request.action_kind,
@@ -415,6 +505,11 @@ class ApprovalCardStore:
                     request.decision,
                     request.event_id,
                     request.approved_command,
+                    request.diff_text,
+                    request.previous_content,
+                    1 if request.previous_captured else 0,
+                    request.review_note,
+                    0,
                 ),
             )
             conn.commit()
@@ -456,6 +551,22 @@ class ApprovalCardStore:
         with closing(self._connect()) as conn:
             rows = conn.execute(
                 f"SELECT * FROM {_REQUESTS_TABLE} WHERE status = 'denied' "
+                "ORDER BY created_at DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        return [ApprovalRequest.from_dict(dict(row)) for row in rows]
+
+    def consumed_requests(self, *, limit: int = 100) -> list[ApprovalRequest]:
+        """Approved-once requests whose approval was spent (CUR-4 undo list).
+
+        Only these have an execution behind them, so only these can be
+        undone. Ordered newest first so the workbench shows the latest
+        applied change on top.
+        """
+        self.expire_overdue()
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                f"SELECT * FROM {_REQUESTS_TABLE} WHERE status = 'consumed' "
                 "ORDER BY created_at DESC LIMIT ?",
                 (max(1, int(limit)),),
             ).fetchall()
@@ -648,6 +759,37 @@ class ApprovalCardStore:
             conn.commit()
             return cursor.rowcount == 1
 
+    def mark_undone(self, request_id: str, *, note: str = "") -> bool:
+        """Mark a consumed request as undone (CUR-4). Returns True if marked.
+
+        Undo runs at most once per request: the flag plus the audited
+        ``undone`` entry make a second undo refuse instead of re-applying.
+        """
+        normalized = str(request_id or "").strip()
+        with closing(self._connect()) as conn:
+            cursor = conn.execute(
+                f"UPDATE {_REQUESTS_TABLE} SET undone = 1 "
+                "WHERE request_id = ? AND status = 'consumed' AND undone = 0",
+                (normalized,),
+            )
+            conn.commit()
+            if cursor.rowcount != 1:
+                return False
+            row = conn.execute(
+                f"SELECT action_kind, scope FROM {_REQUESTS_TABLE} "
+                "WHERE request_id = ?",
+                (normalized,),
+            ).fetchone()
+        if row is not None:
+            self._audit(
+                normalized,
+                "undone",
+                str(row["action_kind"]),
+                str(row["scope"]),
+                note=note or "approved change undone; file restored to its pre-change state",
+            )
+        return True
+
     # -- rules --------------------------------------------------------------
 
     def create_rule(
@@ -820,6 +962,10 @@ class ApprovalGate:
         command: str | None = None,
         session_id: str | None = None,
         action_type: str | None = None,
+        # CUR-4 review data from a trusted scope resolver (presentation
+        # only; never changes this gate's decision). Keys: diff_text,
+        # previous_content, previous_captured, review_note.
+        review: Mapping[str, Any] | None = None,
     ) -> ApprovalGateOutcome:
         kind = validate_approval_kind(action_kind)
         normalized_scope = validate_approval_scope(scope)
@@ -920,6 +1066,10 @@ class ApprovalGate:
             value_text=value_text,
             source=source,
             event_id=event_id,
+            diff_text=str((review or {}).get("diff_text") or ""),
+            previous_content=str((review or {}).get("previous_content") or ""),
+            previous_captured=bool((review or {}).get("previous_captured", False)),
+            review_note=str((review or {}).get("review_note") or ""),
         )
         return ApprovalGateOutcome(
             False,

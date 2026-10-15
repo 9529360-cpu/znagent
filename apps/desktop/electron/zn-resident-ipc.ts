@@ -311,6 +311,13 @@ export function registerZnResidentIpc(): void {
       rule_id: ruleId
     })
   })
+  handleZnDesktopIpc('zn:resident:approval-undo', async (_event, payload) => {
+    const requestId = String(payload?.requestId || payload?.request_id || '').trim()
+    if (!requestId) throw new Error('requestId is required')
+    return getZnResidentProcess().request('approval_undo', {
+      request_id: requestId
+    })
+  })
   handleZnDesktopIpc('zn:resident:team-timeline', async (_event, payload) => {
     const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
     if (!threadId) throw new Error('threadId is required')

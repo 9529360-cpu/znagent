@@ -99,6 +99,15 @@ export type ZnApprovalRequest = {
   decidedAt?: number
   decision?: ZnApprovalDecision
   eventId?: string
+  // CUR-4 diff-first review: unified diff of the pending change,
+  // computed at request time (empty when the request has no file diff).
+  diffText: string
+  // True iff a faithful pre-change snapshot was captured for undo.
+  previousCaptured: boolean
+  // Why the review is incomplete (binary/oversized file), if any.
+  reviewNote: string
+  // True once undo has run for this request.
+  undone: boolean
 }
 
 export type ZnApprovalRule = {
@@ -124,6 +133,9 @@ export type ZnApprovalAuditEntry = {
 export type ZnApprovalList = {
   pending: ZnApprovalRequest[]
   expired: ZnApprovalRequest[]
+  // CUR-4: applied (consumed) requests, newest first; undoable ones
+  // carry previousCaptured=true.
+  applied: ZnApprovalRequest[]
   rules: ZnApprovalRule[]
   audit: ZnApprovalAuditEntry[]
 }

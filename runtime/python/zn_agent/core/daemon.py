@@ -8,7 +8,9 @@ from dataclasses import asdict
 from typing import Any, Callable, Sequence, TextIO
 
 from .approval_cards import ApprovalCardStore
+from .approval_review import undo_approved_change
 from .error_safety import public_exception_text
+from .workspace_file_discipline import default_workspace_root
 from .mcp_read_capability_host import ApprovedMcpReadProvider, McpReadCapabilityHost
 from .stdio_mcp import StdioMcpClient
 from .outcome_aware_work_control import OutcomeAwareRestoreWorkControl
@@ -420,6 +422,9 @@ class ResidentRpcServer:
                 "pending": [item.to_dict() for item in store.pending_requests()],
                 "denied": [item.to_dict() for item in store.denied_requests()],
                 "expired": [item.to_dict() for item in store.expired_requests()],
+                # CUR-4: applied (consumed) requests, newest first, so the
+                # workbench can offer one-click undo for approved changes.
+                "applied": [item.to_dict() for item in store.consumed_requests()],
                 "rules": [rule.to_dict() for rule in store.list_rules()],
                 "audit": [entry.to_dict() for entry in store.list_audit()],
             }
@@ -432,8 +437,22 @@ class ResidentRpcServer:
                 value_text=str(params.get("value_text") or ""),
                 source=str(params.get("source") or "resident"),
                 event_id=str(params.get("event_id") or "") or None,
+                # CUR-4: presentation-only diff text for an explicitly
+                # created request. Snapshots are never set through this
+                # RPC: they only come from trusted scope resolvers.
+                diff_text=str(params.get("diff_text") or ""),
             )
             result = {"request": request.to_dict()}
+        elif method == "approval_undo":
+            # CUR-4: one-click undo of an applied (consumed) approval.
+            # Restores the file to its pre-change snapshot; the replaced
+            # version goes to trash first, so undo never destroys data.
+            store = self._approvals()
+            result = undo_approved_change(
+                store,
+                str(params.get("request_id") or ""),
+                workspace_root=default_workspace_root(),
+            )
         elif method == "approval_decide":
             store = self._approvals()
             request = store.decide(
