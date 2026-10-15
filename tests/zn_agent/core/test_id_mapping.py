@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from zn_agent.core.id_mapping import (
     IndexedReferences,
@@ -184,10 +185,11 @@ class TestOutputContractIndexedIds(unittest.TestCase):
                 indexed_id_fields={"bad-name!": _mapping()},
             )
         with self.assertRaises(ValueError):
+            not_a_mapping: Any = "not-a-mapping"
             OutputContract(
                 top_level_key="selection",
                 shape_example='{"selection": {}}',
-                indexed_id_fields={"memory_ref": "not-a-mapping"},  # type: ignore[dict-item]
+                indexed_id_fields={"memory_ref": not_a_mapping},
             )
 
 
