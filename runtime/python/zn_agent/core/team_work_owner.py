@@ -23,7 +23,7 @@ existing ``DisbandPlan`` -- never automatic.
 
 import json
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -69,6 +69,12 @@ TEAM_CLAIM_STATE_KEY = "team_completion_claim"
 TEAM_VERDICT_STATE_KEY = "team_completion_verdict"
 #: Working-state key: the team already finished (fall through to normal loop).
 TEAM_COMPLETE_STATE_KEY = "team_complete"
+#: Team shared-memory key for the LG-2 interrupt record (pending decision).
+TEAM_INTERRUPT_KEY = "team_interrupt"
+#: Interrupt kind for a specialist-reported design/scope gap (P2b).
+INTERRUPT_KIND_GAP = "gap"
+#: Cap on a stored resume value: decisions stay small and bounded.
+MAX_RESUME_VALUE_CHARS = 4000
 
 
 @dataclass(slots=True)
@@ -416,6 +422,176 @@ class TeamWorkOwner:
             return self.checkpoint_storage.latest(team_id=team_id)
         except Exception:
             return None
+
+    # -- interrupt + resume (LG-2) --------------------------------------
+    #
+    # LangGraph's interrupt + Command(resume) shape, not its exception
+    # mechanism: a specialist-reported gap (P2b) interrupts the team --
+    # the pending decision is persisted into team shared memory (durable
+    # across crash/restart) and into the AF-2 checkpoint
+    # (``checkpoint.state["pending_interrupt"]``) -- and the event stays
+    # alive + blocked until a caller supplies the decision value with
+    # :meth:`resume_interrupt`. The interrupted node then re-runs with
+    # that value; completed steps are never replayed.
+    #
+    # One pending interrupt per team: a second gap while one is pending
+    # is refused, so a pending decision can never be silently dropped.
+
+    def pending_interrupt(self, *, team_id: str) -> dict[str, Any] | None:
+        """The team's interrupt record, or None when nothing is interrupted."""
+        if not str(team_id or "").strip():
+            return None
+        try:
+            match = self._shared(str(team_id).strip()).recall(TEAM_INTERRUPT_KEY)
+        except (
+            AttributeError,
+            KeyError,
+            LookupError,
+            OSError,
+            RuntimeError,
+            ValueError,
+        ):
+            return None
+        if match is None or not isinstance(match.value, dict):
+            return None
+        return dict(match.value)
+
+    def record_interrupt(
+        self,
+        *,
+        team_id: str,
+        run_id: str,
+        work_item_id: str,
+        kind: str = INTERRUPT_KIND_GAP,
+        missing: str,
+        needed: str = "",
+        impact: str = "",
+    ) -> dict[str, Any]:
+        """Persist a pending decision for an interrupted team.
+
+        Idempotent for the same node (same run + work item): a
+        crash-replayed integration re-recording the same gap returns
+        the existing record instead of duplicating it. A gap for a
+        different node while one is pending raises -- resolve the
+        pending decision first.
+        """
+        team_id = str(team_id or "").strip()
+        if not team_id:
+            raise ValueError("record_interrupt needs a non-empty team_id")
+        missing = str(missing or "").strip()
+        if not missing:
+            raise ValueError("interrupt needs a non-empty missing description")
+        existing = self.pending_interrupt(team_id=team_id)
+        if existing is not None:
+            if str(existing.get("status") or "") == "resumed":
+                raise ValueError(
+                    "team already has a resumed interrupt awaiting "
+                    "consumption; resume a new decision only after it lands"
+                )
+            if str(existing.get("run_id") or "") == str(run_id or "").strip() and (
+                str(existing.get("work_item_id") or "")
+                == str(work_item_id or "").strip()
+            ):
+                return existing
+            raise ValueError(
+                "team already has a pending interrupt for another node; "
+                "resolve it first"
+            )
+        record = {
+            "interrupt_id": f"interrupt-{uuid.uuid4().hex[:12]}",
+            "team_id": team_id,
+            "status": "pending",
+            "kind": str(kind or INTERRUPT_KIND_GAP),
+            "run_id": str(run_id or "").strip(),
+            "work_item_id": str(work_item_id or "").strip(),
+            "missing": missing[:600],
+            "needed": str(needed or "")[:600],
+            "impact": str(impact or "")[:600],
+            "created_at": self._now_iso(None),
+            "resume_value": None,
+            "resumed_at": None,
+        }
+        self._shared(team_id).remember(TEAM_INTERRUPT_KEY, record)
+        return dict(record)
+
+    def resume_interrupt(self, *, team_id: str, resume_value: str) -> dict[str, Any]:
+        """``Command(resume)``: supply the decision value for the pending interrupt.
+
+        Raises when nothing is pending or the value is empty. Replaying
+        the *same* resume value after a crash (resume recorded, crash
+        before consumption) returns the existing record; a *different*
+        value while resumed is ambiguous and raises.
+        """
+        team_id = str(team_id or "").strip()
+        value = str(resume_value or "").strip()
+        existing = self.pending_interrupt(team_id=team_id)
+        if existing is None:
+            raise ValueError(
+                f"team {team_id!r} has no pending interrupt to resume"
+            )
+        if str(existing.get("status") or "") == "resumed":
+            if str(existing.get("resume_value") or "") == value:
+                return existing
+            raise ValueError(
+                "interrupt already resumed with a different value; "
+                "the resumed decision must be consumed before a new one"
+            )
+        if not value:
+            raise ValueError("resume needs a non-empty resume_value")
+        record = {
+            **existing,
+            "status": "resumed",
+            "resume_value": value[:MAX_RESUME_VALUE_CHARS],
+            "resumed_at": self._now_iso(None),
+        }
+        self._shared(team_id).remember(TEAM_INTERRUPT_KEY, record)
+        return dict(record)
+
+    def clear_interrupt(self, *, team_id: str) -> None:
+        """Consume the interrupt record exactly once. A repeat clear is a no-op.
+
+        Storage failures propagate: a failed consume must be loud, not
+        silently retried into a duplicate resume-value delivery.
+        """
+        if not str(team_id or "").strip():
+            return
+        self._shared(str(team_id).strip()).forget(TEAM_INTERRUPT_KEY)
+
+    def save_interrupt_checkpoint(
+        self, *, team: ProjectTeam, root_work_item_id: str
+    ) -> Checkpoint | None:
+        """Persist an AF-2 checkpoint carrying the pending decision.
+
+        The checkpoint is the runner's snapshot (completed vs pending
+        steps, LG-1 parent chain) with ``pending_interrupt`` merged into
+        ``state``. Returns None when no storage is wired or the save
+        fails -- a checkpoint is a resume aid, never a gate.
+        """
+        if self.checkpoint_storage is None:
+            return None
+        try:
+            runner = TeamRunner(
+                team=team,
+                ledger=self.ledger,
+                memory=self.memory,
+                verifier=ResidentTeamVerifier(self.ledger),
+                root_work_item_id=root_work_item_id,
+                checkpoint_storage=self.checkpoint_storage,
+            )
+            base = runner.build_checkpoint()
+            checkpoint = replace(
+                base,
+                state={
+                    **base.state,
+                    "pending_interrupt": self.pending_interrupt(
+                        team_id=team.team_id
+                    ),
+                },
+            )
+            self.checkpoint_storage.save(checkpoint)
+        except Exception:
+            return None
+        return checkpoint
 
     # -- routing ---------------------------------------------------------
 
@@ -1350,6 +1526,7 @@ __all__ = [
     "TEAM_CLAIM_STATE_KEY",
     "TEAM_COMPLETE_STATE_KEY",
     "TEAM_ID_STATE_KEY",
+    "TEAM_INTERRUPT_KEY",
     "TEAM_VERDICT_STATE_KEY",
     "AutoHandoffResult",
     "Checkpoint",

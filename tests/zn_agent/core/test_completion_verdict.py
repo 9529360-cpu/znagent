@@ -39,6 +39,7 @@ from zn_agent.core.store import KernelStore
 from zn_agent.core.team_work_owner import (
     EVIDENCE_KEY,
     TEAM_CLAIM_STATE_KEY,
+    TEAM_ID_STATE_KEY,
     TeamWorkOwner,
     verified_evidence,
 )
@@ -856,11 +857,15 @@ class ResidentVerdictTests(unittest.TestCase):
 
 
 class ResidentGapReportTests(ResidentVerdictTests):
-    """P2: a specialist gap report stops the team -- it must not be
-    executed as a step, and the next deliberation fails closed with
-    the gap instead of re-asking cognition to invent the scope."""
+    """P2 + LG-2: a specialist gap report interrupts the team -- it must
+    not be executed as a step, and the team blocks alive on the pending
+    decision instead of failing terminally (LG-2 supersedes the old
+    fail-closed-terminal behavior: the gap can now be resumed with a
+    value -- see test_lg2_interrupt_resume.py for the resume half).
+    例外申请（CONSTRAINTS §3）：本改动删除旧终端失败断言，见 PR 正文；
+    需非作者审查批准后方可合并。"""
 
-    def test_gap_report_fails_closed_without_inventing_scope(self):
+    def test_gap_report_interrupts_without_inventing_scope(self):
         gap = json.dumps(
             {
                 "gap_report": {
@@ -875,16 +880,20 @@ class ResidentGapReportTests(ResidentVerdictTests):
         with tempfile.TemporaryDirectory() as tmp:
             resident, ledger, event, workspace = self._start(Path(tmp), cognition)
             try:
-                terminal = None
-                for _ in range(120):
+                for _ in range(60):
                     terminal = resident.live_once()
-                    if terminal is not None:
+                    self.assertIsNone(
+                        terminal, "gap must interrupt, not fail terminally"
+                    )
+                    if cognition.specialist_calls >= 1:
                         break
-                self.assertIsNotNone(terminal, "gap report did not fail closed")
-                assert terminal is not None
-                self.assertFalse(terminal.success)
-                self.assertIn("缺口", str(terminal.reason or ""))
-                self.assertIn("没有设计文档", str(terminal.reason or ""))
+                self.assertEqual(cognition.specialist_calls, 1)
+                # Blocked, not dead: more pulses ask nothing and fail
+                # nothing.
+                for _ in range(5):
+                    terminal = resident.live_once()
+                    self.assertIsNone(terminal)
+                self.assertEqual(cognition.specialist_calls, 1)
                 # Nothing was invented: the only workspace content is the
                 # persona scaffolding materialized on dispatch, no
                 # specialist-invented scope files.
@@ -892,6 +901,16 @@ class ResidentGapReportTests(ResidentVerdictTests):
                     sorted(p.name for p in workspace.iterdir()),
                     ["agents"],
                 )
+                # The pending decision is durable in team shared memory.
+                state = resident.store.get_working_state()
+                team_id = str((state.data or {}).get(TEAM_ID_STATE_KEY) or "")
+                self.assertTrue(team_id)
+                owner = TeamWorkOwner(ledger=ledger, memory=resident.memory)
+                pending = owner.pending_interrupt(team_id=team_id)
+                self.assertIsNotNone(pending)
+                assert pending is not None
+                self.assertEqual(pending["status"], "pending")
+                self.assertEqual(pending["missing"], "没有设计文档")
             finally:
                 resident.store.close()
 
