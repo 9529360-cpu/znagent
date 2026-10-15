@@ -78,6 +78,23 @@ export function ZnApprovalPanel() {
     }
   }, [refresh, t])
 
+  // Keyboard: with focus inside the approval panel, A approves the first
+  // pending request and D denies it. Typing in a field never triggers this.
+  const handlePanelKeyDown = useCallback((event: React.KeyboardEvent) => {
+    if (event.repeat || event.ctrlKey || event.metaKey || event.altKey) return
+    const target = event.target as HTMLElement | null
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) return
+    const first = approvals?.pending[0]
+    if (!first || busyId) return
+    if (event.key === 'a' || event.key === 'A') {
+      event.preventDefault()
+      void decide(first, 'allow_once')
+    } else if (event.key === 'd' || event.key === 'D') {
+      event.preventDefault()
+      void decide(first, 'deny')
+    }
+  }, [approvals?.pending, busyId, decide])
+
   const addRule = useCallback(async () => {
     const scope = newScope.trim()
     if (!scope) return
@@ -122,7 +139,7 @@ export function ZnApprovalPanel() {
   const audit = approvals?.audit ?? []
 
   return (
-    <div className="zn-approval-panel">
+    <div className="zn-approval-panel" onKeyDown={handlePanelKeyDown}>
       <section className="zn-card" aria-label={t('approval.pending')}>
         <h2>{t('approval.title')}</h2>
         <p>{t('approval.description')}</p>
@@ -142,9 +159,9 @@ export function ZnApprovalPanel() {
                   <div><span>{t('approval.expires')}</span><strong>{new Intl.DateTimeFormat(undefined, { hour: '2-digit', minute: '2-digit' }).format(new Date(request.expiresAt))}</strong></div>
                 </div>
                 <div className="zn-inline-actions">
-                  <button className="zn-primary" type="button" disabled={busyId === request.id} onClick={() => void decide(request, 'allow_once')}>{t('approval.allowOnce')}</button>
+                  <button className="zn-primary" type="button" disabled={busyId === request.id} aria-keyshortcuts="a" onClick={() => void decide(request, 'allow_once')}>{t('approval.allowOnce')}</button>
                   <button type="button" disabled={busyId === request.id} onClick={() => void decide(request, 'always_allow')}>{t('approval.alwaysAllow')}</button>
-                  <button type="button" disabled={busyId === request.id} onClick={() => void decide(request, 'deny')}>{t('approval.deny')}</button>
+                  <button type="button" disabled={busyId === request.id} aria-keyshortcuts="d" onClick={() => void decide(request, 'deny')}>{t('approval.deny')}</button>
                 </div>
               </article>
             ))}

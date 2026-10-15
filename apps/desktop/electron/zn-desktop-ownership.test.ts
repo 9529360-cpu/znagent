@@ -213,7 +213,7 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.match(workbench, /describeZnProviderReadiness/)
   assert.match(workbench, /topbar\.openSettings/)
   assert.match(workbench, /settings\.models\.description/)
-  assert.match(localization, /Clear computer actions stay local when a deterministic path exists/)
+  assert.match(localization, /It asks before anything it can't undo/)
   assert.match(workbench, /className="zn-stop-button"/)
   assert.doesNotMatch(workbench, /zn-send-stop/)
   assert.match(workbench, /className="zn-send"/)
