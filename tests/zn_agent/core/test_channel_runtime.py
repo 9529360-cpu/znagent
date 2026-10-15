@@ -193,7 +193,20 @@ class ResidentChannelSupervisorTests(unittest.TestCase):
                 )
                 second_supervisor.start()
                 self.assertTrue(second.delivered.wait(1.0))
-                time.sleep(0.05)
+                # Do not assert on the background duplicate count after a
+                # fixed sleep: `delivered` is set during _deliver_ready,
+                # which runs BEFORE the replay poll/ingest in the same
+                # worker iteration, so a fixed 0.05s sleep can land
+                # stop() between delivery and ingest and lose the count
+                # (#492 shard 5: duplicate_percepts was 0, expected >= 1).
+                # Poll for the counted condition instead; the assertion
+                # itself is unchanged.
+                deadline = time.monotonic() + 5.0
+                while (
+                    second_supervisor.status()[0]["duplicate_percepts"] < 1
+                    and time.monotonic() < deadline
+                ):
+                    time.sleep(0.01)
                 second_supervisor.stop()
 
                 self.assertEqual(second.restored[0], {"offset": 43})

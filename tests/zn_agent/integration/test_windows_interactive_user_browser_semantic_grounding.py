@@ -401,7 +401,12 @@ class WindowsInteractiveUserBrowserSemanticGroundingContractTests(unittest.TestC
         event_id: str,
         *,
         hook=None,
-        timeout: float = 90.0,
+        # 180s hard budget: on main the grounding run hit the old 90s hard
+        # timeout while still making progress (the 20s idle timeout, which
+        # is the real stall detector, never fired). A hard timeout firing
+        # mid-progress means the budget was too small, not that the work
+        # stalled, so only the backstop is widened; idle_timeout is unchanged.
+        timeout: float = 180.0,
         idle_timeout: float = 20.0,
     ):
         resident = env["resident"]
