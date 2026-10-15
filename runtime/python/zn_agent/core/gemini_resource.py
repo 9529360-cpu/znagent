@@ -9,7 +9,10 @@ normalizes only the bounded cognitive increment the resident asked for.
 """
 
 import base64
+import copy
+import hashlib
 import json
+import logging
 import os
 import re
 from typing import Any, Mapping
@@ -19,6 +22,55 @@ from .cognitive_resource import CognitiveIncrement
 from .models import ModelRoute
 from .privacy_choke import redact_for_egress
 from .proxy_env import build_httpx_client
+from .session_log import SessionEventSink, new_request_id
+
+_LOG = logging.getLogger(__name__)
+
+
+def _emit_session_event(
+    sink: SessionEventSink | None,
+    kind: str,
+    *,
+    request_id: str,
+    payload: dict[str, Any],
+) -> None:
+    # DSH-1: session logging must never break cognition.
+    if sink is None:
+        return
+    try:
+        sink.emit(kind, request_id=request_id, payload=payload)
+    except Exception as exc:
+        _LOG.warning("Session log emit failed (%s)", type(exc).__name__)
+
+
+def _loggable_parts(parts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Copy request parts for the log, replacing image bytes with identity.
+
+    DSH-1: the log proves *which* image the model saw (hash + mime + size)
+    without duplicating screenshot bytes into the store.
+    """
+    logged: list[dict[str, Any]] = []
+    for part in parts:
+        if not isinstance(part, dict):
+            logged.append(copy.deepcopy(part))
+            continue
+        inline = part.get("inlineData")
+        if not isinstance(inline, dict) or "data" not in inline:
+            logged.append(copy.deepcopy(part))
+            continue
+        try:
+            raw = base64.b64decode(str(inline.get("data") or ""))
+            digest = hashlib.sha256(raw).hexdigest()
+            size = len(raw)
+        except Exception:
+            digest = ""
+            size = 0
+        replacement = {
+            key: value for key, value in inline.items() if key != "data"
+        }
+        replacement["data"] = {"sha256": digest, "bytes": size, "logged": "by-hash"}
+        logged.append({**copy.deepcopy(part), "inlineData": replacement})
+    return logged
 
 
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -147,12 +199,14 @@ class GeminiCognitiveResource:
         route: ModelRoute,
         *,
         client: Any | None = None,
+        session_sink: SessionEventSink | None = None,
     ):
         self.route = resolve_gemini_route(route)
         # Malformed proxy env must never take cognition offline: fall back to
         # a direct connection instead of crashing at construction.
         self._client = client or build_httpx_client()
         self._owns_client = client is None
+        self._session_sink = session_sink
 
     def close(self) -> None:
         if self._owns_client:
@@ -160,7 +214,13 @@ class GeminiCognitiveResource:
             if callable(close):
                 close()
 
-    def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
+    def invoke(
+        self,
+        *,
+        question: str,
+        context: str,
+        request_id: str | None = None,
+    ) -> CognitiveIncrement:
         text = str(question or "").strip()
         if not text:
             raise ValueError("bounded cognition question must not be empty")
@@ -168,6 +228,7 @@ class GeminiCognitiveResource:
             parts=[{"text": text}],
             context=context,
             generation=self._generation_config(),
+            request_id=request_id,
         )
 
     def invoke_image(
@@ -178,6 +239,7 @@ class GeminiCognitiveResource:
         image_bytes: bytes | bytearray | memoryview,
         mime_type: str = "image/png",
         response_schema: Mapping[str, Any] | None = None,
+        request_id: str | None = None,
     ) -> CognitiveIncrement:
         """Ask one bounded visual question about one inline image.
 
@@ -216,6 +278,7 @@ class GeminiCognitiveResource:
             ],
             context=context,
             generation=self._generation_config(response_schema=response_schema),
+            request_id=request_id,
         )
         increment.metadata.update(
             {
@@ -275,6 +338,7 @@ class GeminiCognitiveResource:
         parts: list[dict[str, Any]],
         context: str,
         generation: Mapping[str, Any],
+        request_id: str | None = None,
     ) -> CognitiveIncrement:
         if not parts:
             raise ValueError("Gemini request parts must not be empty")
@@ -298,6 +362,43 @@ class GeminiCognitiveResource:
         if bounded_context:
             payload["systemInstruction"] = {"parts": [{"text": bounded_context}]}
 
+        rid = str(request_id or "").strip() or new_request_id()
+
+        def _fail(error_type: str) -> None:
+            _emit_session_event(
+                self._session_sink,
+                "model_request_failed",
+                request_id=rid,
+                payload={"error_type": error_type},
+            )
+
+        # DSH-1: log the exact post-redaction request BEFORE sending. The
+        # logged copy replaces image bytes with their identity (hash +
+        # mime + size) and never includes the api key, which travels as a
+        # URL param, not in this body.
+        has_image = any(
+            isinstance(part, dict) and isinstance(part.get("inlineData"), dict)
+            for part in scrubbed_parts
+        )
+        log_payload: dict[str, Any] = {
+            "contents": [{"role": "user", "parts": _loggable_parts(scrubbed_parts)}],
+            "generationConfig": dict(generation),
+        }
+        if bounded_context:
+            log_payload["systemInstruction"] = {"parts": [{"text": bounded_context}]}
+        _emit_session_event(
+            self._session_sink,
+            "model_request_sent",
+            request_id=rid,
+            payload={
+                "provider": "gemini",
+                "model": self.route.model,
+                "api_mode": "gemini_native",
+                "has_image": has_image,
+                "request": log_payload,
+            },
+        )
+
         model = quote(self.route.model, safe="-._")
         url = f"{self.route.metadata['base_url']}/models/{model}:generateContent"
         timeout = float(self.route.metadata.get("timeout") or 120.0)
@@ -313,17 +414,20 @@ class GeminiCognitiveResource:
                 },
             )
         except Exception as exc:
+            _fail(type(exc).__name__)
             raise GeminiResourceError(f"Gemini request failed: {exc}") from exc
 
         status = int(getattr(response, "status_code", 0) or 0)
         try:
             data = response.json()
         except Exception as exc:
+            _fail("GeminiResourceError")
             raise GeminiResourceError(
                 f"Gemini returned invalid JSON (HTTP {status})",
                 status_code=status,
             ) from exc
         if not isinstance(data, dict):
+            _fail("GeminiResourceError")
             raise GeminiResourceError("Gemini returned an invalid response", status_code=status)
         if status < 200 or status >= 300:
             error = data.get("error") or {}
@@ -331,6 +435,7 @@ class GeminiCognitiveResource:
                 message = str(error.get("message") or f"HTTP {status}")
             else:
                 message = str(error or f"HTTP {status}")
+            _fail("GeminiResourceError")
             raise GeminiResourceError(
                 f"Gemini request failed: {message[:1500]}",
                 status_code=status,
@@ -339,11 +444,13 @@ class GeminiCognitiveResource:
         candidates = data.get("candidates") or []
         if not isinstance(candidates, list) or not candidates:
             prompt_feedback = data.get("promptFeedback")
+            _fail("GeminiResourceError")
             raise GeminiResourceError(
                 f"Gemini returned no candidates: {prompt_feedback!r}"
             )
         candidate = candidates[0]
         if not isinstance(candidate, dict):
+            _fail("GeminiResourceError")
             raise GeminiResourceError("Gemini returned an invalid candidate")
         content = candidate.get("content") or {}
         candidate_parts = content.get("parts") if isinstance(content, dict) else None
@@ -379,6 +486,7 @@ class GeminiCognitiveResource:
             "PROHIBITED_CONTENT",
             "SPII",
         }:
+            _fail("GeminiResourceError")
             raise GeminiResourceError("Gemini returned no usable text content")
 
         metadata: dict[str, Any] = {
@@ -394,7 +502,7 @@ class GeminiCognitiveResource:
         if isinstance(safety, list):
             metadata["safety_ratings"] = safety
 
-        return CognitiveIncrement(
+        increment = CognitiveIncrement(
             text=result_text,
             provider="gemini",
             model=self.route.model,
@@ -402,3 +510,15 @@ class GeminiCognitiveResource:
             usage=_usage_dict(data.get("usageMetadata")),
             metadata=metadata,
         )
+        # DSH-1: log the returned text (never reasoning/thought content).
+        _emit_session_event(
+            self._session_sink,
+            "model_response",
+            request_id=rid,
+            payload={
+                "text": increment.text,
+                "finish_reason": increment.finish_reason,
+                "usage": dict(increment.usage or {}),
+            },
+        )
+        return increment

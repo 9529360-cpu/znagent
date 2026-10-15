@@ -8,6 +8,7 @@ normalization, stop reasons and cache-aware usage -- without importing the old
 agent orchestration or constructing the legacy AIAgent.
 """
 
+import logging
 import os
 from typing import Any, Callable, Mapping
 
@@ -15,6 +16,25 @@ from .cognitive_resource import CognitiveIncrement, _owned_cognitive_client
 from .models import ModelRoute
 from .privacy_choke import redact_for_egress
 from .proxy_env import build_sdk_client
+from .session_log import SessionEventSink, new_request_id
+
+_LOG = logging.getLogger(__name__)
+
+
+def _emit_session_event(
+    sink: SessionEventSink | None,
+    kind: str,
+    *,
+    request_id: str,
+    payload: dict[str, Any],
+) -> None:
+    # DSH-1: session logging must never break cognition.
+    if sink is None:
+        return
+    try:
+        sink.emit(kind, request_id=request_id, payload=payload)
+    except Exception as exc:
+        _LOG.warning("Session log emit failed (%s)", type(exc).__name__)
 
 
 ClientBuilder = Callable[..., Any]
@@ -132,14 +152,22 @@ class AnthropicCognitiveResource:
         route: ModelRoute,
         *,
         client_builder: ClientBuilder | None = None,
+        session_sink: SessionEventSink | None = None,
     ):
         self.route = resolve_anthropic_route(route)
         self._client_builder = client_builder
+        self._session_sink = session_sink
 
     def _client(self):
         return _build_anthropic_client(self.route, self._client_builder)
 
-    def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
+    def invoke(
+        self,
+        *,
+        question: str,
+        context: str,
+        request_id: str | None = None,
+    ) -> CognitiveIncrement:
         # W-2 egress redaction: see OpenAICompatibleCognitiveResource.invoke.
         text = redact_for_egress(str(question or "").strip())
         if not text:
@@ -166,10 +194,38 @@ class AnthropicCognitiveResource:
         if isinstance(thinking, dict) and thinking:
             request["thinking"] = dict(thinking)
 
-        with _owned_cognitive_client(self._client()) as client:
-            response = client.messages.create(**request)
+        rid = str(request_id or "").strip() or new_request_id()
+        # DSH-1: log the exact post-redaction request BEFORE sending.
+        _emit_session_event(
+            self._session_sink,
+            "model_request_sent",
+            request_id=rid,
+            payload={
+                "provider": "anthropic",
+                "model": self.route.model,
+                "api_mode": "anthropic_messages",
+                "request": request,
+            },
+        )
+        try:
+            with _owned_cognitive_client(self._client()) as client:
+                response = client.messages.create(**request)
+        except Exception as exc:
+            _emit_session_event(
+                self._session_sink,
+                "model_request_failed",
+                request_id=rid,
+                payload={"error_type": type(exc).__name__},
+            )
+            raise
         blocks = getattr(response, "content", None)
         if not isinstance(blocks, list):
+            _emit_session_event(
+                self._session_sink,
+                "model_request_failed",
+                request_id=rid,
+                payload={"error_type": "RuntimeError"},
+            )
             raise RuntimeError("Anthropic resource returned invalid content blocks")
 
         text_parts: list[str] = []
@@ -197,8 +253,20 @@ class AnthropicCognitiveResource:
         # critic can still decide an empty increment is unusable; the resource
         # itself must not misclassify it as malformed and retry forever.
         if not result_text and blocks and stop_reason not in {"end_turn", "refusal"}:
+            _emit_session_event(
+                self._session_sink,
+                "model_request_failed",
+                request_id=rid,
+                payload={"error_type": "RuntimeError"},
+            )
             raise RuntimeError("Anthropic resource returned no text content")
         if not blocks and stop_reason not in {"end_turn", "refusal"}:
+            _emit_session_event(
+                self._session_sink,
+                "model_request_failed",
+                request_id=rid,
+                payload={"error_type": "RuntimeError"},
+            )
             raise RuntimeError("Anthropic resource returned empty content")
 
         metadata: dict[str, Any] = {
@@ -212,7 +280,7 @@ class AnthropicCognitiveResource:
         if stop_reason == "refusal":
             metadata["refused"] = True
 
-        return CognitiveIncrement(
+        increment = CognitiveIncrement(
             text=result_text,
             provider="anthropic",
             model=self.route.model,
@@ -220,6 +288,18 @@ class AnthropicCognitiveResource:
             usage=_usage_dict(getattr(response, "usage", None)),
             metadata=metadata,
         )
+        # DSH-1: log the returned text (never the model's thinking blocks).
+        _emit_session_event(
+            self._session_sink,
+            "model_response",
+            request_id=rid,
+            payload={
+                "text": increment.text,
+                "finish_reason": increment.finish_reason,
+                "usage": dict(increment.usage or {}),
+            },
+        )
+        return increment
 
 
 class AnthropicToolLoopClient:
@@ -239,10 +319,12 @@ class AnthropicToolLoopClient:
         *,
         client_builder: ClientBuilder | None = None,
         max_tokens: int | None = None,
+        session_sink: SessionEventSink | None = None,
     ) -> None:
         self.route = resolve_anthropic_route(route)
         self._client_builder = client_builder
         self._max_tokens = max_tokens
+        self._session_sink = session_sink
 
     def _client(self):
         return _build_anthropic_client(self.route, self._client_builder)
@@ -253,6 +335,7 @@ class AnthropicToolLoopClient:
         messages: list[Mapping[str, Any]],
         system: str,
         tools: tuple[Mapping[str, Any], ...],
+        request_id: str | None = None,
     ) -> dict[str, Any]:
         anthropic_tools = [
             {
@@ -286,11 +369,41 @@ class AnthropicToolLoopClient:
         if self.route.metadata.get("temperature") is not None:
             request["temperature"] = float(self.route.metadata["temperature"])
 
-        with _owned_cognitive_client(self._client()) as client:
-            response = client.messages.create(**request)
+        rid = str(request_id or "").strip() or new_request_id()
+        # DSH-1: log the exact post-redaction turn BEFORE sending: messages
+        # carry tool results the model sees, and tool schemas are part of
+        # the model-visible request.
+        _emit_session_event(
+            self._session_sink,
+            "model_request_sent",
+            request_id=rid,
+            payload={
+                "provider": "anthropic",
+                "model": self.route.model,
+                "api_mode": "anthropic_messages_tool_loop",
+                "request": request,
+            },
+        )
+        try:
+            with _owned_cognitive_client(self._client()) as client:
+                response = client.messages.create(**request)
+        except Exception as exc:
+            _emit_session_event(
+                self._session_sink,
+                "model_request_failed",
+                request_id=rid,
+                payload={"error_type": type(exc).__name__},
+            )
+            raise
 
         blocks = getattr(response, "content", None)
         if not isinstance(blocks, list):
+            _emit_session_event(
+                self._session_sink,
+                "model_request_failed",
+                request_id=rid,
+                payload={"error_type": "RuntimeError"},
+            )
             raise RuntimeError("Anthropic resource returned invalid content blocks")
 
         text_parts: list[str] = []
@@ -326,10 +439,24 @@ class AnthropicToolLoopClient:
 
         stop_reason = str(getattr(response, "stop_reason", "") or "") or None
 
-        return {
+        result = {
             "text": "\n".join(text_parts).strip(),
             "tool_calls": tool_calls,
             "stop_reason": stop_reason,
             "raw_content": raw_content or (text_parts[0] if text_parts else ""),
             "usage": _usage_dict(getattr(response, "usage", None)),
         }
+        # DSH-1: log the returned text + tool calls (never thinking blocks,
+        # which live in raw_content for the caller, not in the log).
+        _emit_session_event(
+            self._session_sink,
+            "model_response",
+            request_id=rid,
+            payload={
+                "text": result["text"],
+                "tool_calls": [dict(call) for call in tool_calls],
+                "stop_reason": stop_reason,
+                "usage": dict(result["usage"] or {}),
+            },
+        )
+        return result

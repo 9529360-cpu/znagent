@@ -45,6 +45,12 @@ The projection selects at most five facts, preserves whole values rather than ge
 
 Narrow executed evidence in `test_memory_conversation_product.py` exercises the real Product Resident, Work/RPC, Kernel, SQLite and cognitive adapter, including authenticated TCP disconnect/reconnect, two resident lifetimes, follow-up reference retrieval, update/forget, policy/isolation and pre-dispatch continuation without duplicated messages/calls. Provider responses are controlled test boundaries, not live-model quality evidence. Full installed daily-use acceptance and unified knowledge-graph/semantic retrieval remain open.
 
+## Session log is the source of truth for model-visible context (DSH-1)
+
+Every model request ZN sends is rebuildable from the append-only session event log alone (`session_log.py`, durable `session_events` table in `KernelStore`; inserts only, no update/delete path). Each resource logs the exact post-egress-redaction provider request body *before* sending (`model_request_sent`), then the response (`model_response`) or failure (`model_request_failed`, exception type only). The kernel worker additionally logs `model_request_planned` with correlation ids plus only lengths and hashes of the pre-redaction question/context. `rebuild_model_request(log, request_id)` returns the exact sent request plus its paired response/failure; it raises `KeyError` for an unlogged request instead of guessing from live state.
+
+Never logged: pre-redaction text, credentials (API keys travel outside the logged body), image bytes (images are referenced by SHA-256 + MIME + size), and model thinking/reasoning blocks. Logging failures never break cognition. Covered send paths: OpenAI-compatible, Anthropic single-turn, Gemini text + image, Anthropic tool-loop turns, and direct `invoke` callers (e.g. specialist debug) via the same resource-level sink. Evidence: `test_session_log_source_of_truth.py` (14 tests), including a kernel end-to-end rebuild of the assembled kernel context.
+
 ## Recently retired scenario-owned surfaces
 
 The cleanup removes product code whose primary owner was a narrow representative task rather than a reusable capability contract, including:

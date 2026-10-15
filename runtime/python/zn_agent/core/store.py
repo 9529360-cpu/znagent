@@ -48,6 +48,9 @@ class KernelStore:
             CREATE INDEX IF NOT EXISTS idx_events_queue ON events(status, priority DESC, created_at ASC);
             CREATE TABLE IF NOT EXISTS event_outcomes(event_id TEXT PRIMARY KEY, created_at TEXT NOT NULL, data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS event_cancellation_requests(event_id TEXT PRIMARY KEY, requested_at TEXT NOT NULL, reason TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS session_events(seq INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, data TEXT NOT NULL);
+            CREATE INDEX IF NOT EXISTS idx_session_events_request ON session_events(request_id, seq);
+            CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id, seq);
             CREATE TABLE IF NOT EXISTS working_state(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS facts(fact_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, aliases_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS skills(skill_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -105,6 +108,65 @@ class KernelStore:
         d["required_capabilities"] = tuple(d.get("required_capabilities") or ("general",))
         d["status"] = GoalStatus(d["status"])
         return Goal(**d)
+
+    def append_session_event(self, event: dict[str, Any]) -> int:
+        """Append one session-log event. Inserts only: the log is append-only.
+
+        DSH-1: the session event log is the source of truth for what the
+        model saw. There is deliberately no update/delete path.
+        """
+        data = {
+            "seq": int(event.get("seq") or 0),
+            "event_id": str(event.get("event_id") or ""),
+            "session_id": str(event.get("session_id") or ""),
+            "request_id": str(event.get("request_id") or ""),
+            "kind": str(event.get("kind") or ""),
+            "created_at": str(event.get("created_at") or ""),
+            "payload": dict(event.get("payload") or {}),
+        }
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "INSERT INTO session_events(request_id, session_id, kind, data) VALUES(?,?,?,?)",
+                (data["request_id"], data["session_id"], data["kind"], self._dump(data)),
+            )
+            return int(cursor.lastrowid)
+
+    def session_events_for_request(self, request_id: str) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT seq, data FROM session_events WHERE request_id=? ORDER BY seq ASC",
+                (str(request_id),),
+            ).fetchall()
+        # The seq column is authoritative; the stored blob carries the rest.
+        events = []
+        for row in rows:
+            event = json.loads(row["data"])
+            event["seq"] = int(row["seq"])
+            events.append(event)
+        return events
+
+    def session_planned_request_ids(self, session_id: str) -> list[str]:
+        """Request ids planned under one session, in log order."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT DISTINCT request_id FROM session_events"
+                " WHERE session_id=? AND kind='model_request_planned' ORDER BY seq ASC",
+                (str(session_id),),
+            ).fetchall()
+        return [str(row["request_id"]) for row in rows]
+
+    def session_events(self, *, limit: int = 200) -> list[dict[str, Any]]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT seq, data FROM session_events ORDER BY seq DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        events = []
+        for row in rows:
+            event = json.loads(row["data"])
+            event["seq"] = int(row["seq"])
+            events.append(event)
+        return events
 
     def add_experience(self, exp: Experience) -> None:
         data = {
