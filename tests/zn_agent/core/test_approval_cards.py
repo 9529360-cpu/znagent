@@ -131,6 +131,87 @@ class ApprovalCardStoreTests(unittest.TestCase):
         self.assertFalse(second.allowed)
         self.assertIn("denied", second.reason)
 
+    def test_deny_outranks_auto_allow_rule(self) -> None:
+        # A rule created after a deny must NOT silently unblock the denied
+        # triple: rules are for future requests, not retroactive overrides.
+        gate = ApprovalGate(self.store)
+        first = gate.check(action_kind="delete", target="x", scope="files:x")
+        self.store.decide(first.request_id, "deny")
+        self.store.create_rule(
+            action_kind="delete", scope="files:x", effect="auto_allow"
+        )
+        blocked = gate.check(action_kind="delete", target="x", scope="files:x")
+        self.assertFalse(blocked.allowed)
+        self.assertIn("denied", blocked.reason)
+
+    def test_reconsider_denied_creates_fresh_pending_request(self) -> None:
+        gate = ApprovalGate(self.store)
+        first = gate.check(action_kind="delete", target="x", scope="files:x")
+        self.store.decide(first.request_id, "deny")
+        fresh = self.store.reconsider_denied(first.request_id)
+        # The denied record is never mutated; the fresh request is a new id.
+        self.assertNotEqual(fresh.request_id, first.request_id)
+        self.assertEqual(fresh.status, "pending")
+        self.assertEqual(fresh.action_kind, "delete")
+        self.assertEqual(fresh.target, "x")
+        self.assertEqual(fresh.scope, "files:x")
+        denied = self.store.get_request(first.request_id)
+        assert denied is not None
+        self.assertEqual(denied.status, "denied")
+        self.assertEqual(denied.decision, "deny")
+        # The gate now sees the fresh pending request, not the deny.
+        pending = gate.check(action_kind="delete", target="x", scope="files:x")
+        self.assertFalse(pending.allowed)
+        self.assertEqual(pending.request_id, fresh.request_id)
+        self.assertIn("pending", pending.reason)
+        # The fresh request can be decided normally.
+        self.store.decide(fresh.request_id, "allow_once")
+        allowed = gate.check(action_kind="delete", target="x", scope="files:x")
+        self.assertTrue(allowed.allowed)
+
+    def test_reconsider_denied_rejects_non_denied_requests(self) -> None:
+        pending = self.store.request_approval(
+            action_kind="send", target="team", scope="chat:team"
+        )
+        with self.assertRaises(ValueError):
+            self.store.reconsider_denied(pending.request_id)
+        approved = self.store.request_approval(
+            action_kind="send", target="other", scope="chat:team"
+        )
+        self.store.decide(approved.request_id, "allow_once")
+        with self.assertRaises(ValueError):
+            self.store.reconsider_denied(approved.request_id)
+        with self.assertRaises(ValueError):
+            self.store.reconsider_denied("approval-does-not-exist")
+
+    def test_reconsider_denied_is_audited(self) -> None:
+        gate = ApprovalGate(self.store)
+        first = gate.check(action_kind="delete", target="x", scope="files:x")
+        self.store.decide(first.request_id, "deny")
+        fresh = self.store.reconsider_denied(first.request_id, note="user changed mind")
+        audit = self.store.list_audit()
+        overridden = [entry for entry in audit if entry.decision == "deny_overridden"]
+        self.assertEqual(len(overridden), 1)
+        self.assertEqual(overridden[0].request_id, first.request_id)
+        self.assertIn(fresh.request_id, overridden[0].note)
+        self.assertIn("user changed mind", overridden[0].note)
+
+    def test_reconsider_denied_can_be_denied_again(self) -> None:
+        gate = ApprovalGate(self.store)
+        first = gate.check(action_kind="delete", target="x", scope="files:x")
+        self.store.decide(first.request_id, "deny")
+        fresh = self.store.reconsider_denied(first.request_id)
+        self.store.decide(fresh.request_id, "deny")
+        blocked = gate.check(action_kind="delete", target="x", scope="files:x")
+        self.assertFalse(blocked.allowed)
+        self.assertIn("denied", blocked.reason)
+        # A second explicit reconsideration works; each override is audited.
+        second_fresh = self.store.reconsider_denied(fresh.request_id)
+        self.assertEqual(second_fresh.status, "pending")
+        audit = self.store.list_audit()
+        overridden = [entry for entry in audit if entry.decision == "deny_overridden"]
+        self.assertEqual(len(overridden), 2)
+
     def test_ask_first_beats_auto_allow_on_conflict(self) -> None:
         self.store.create_rule(action_kind="send", scope="chat:team", effect="auto_allow")
         self.store.create_rule(action_kind="send", scope="chat:team", effect="ask_first")
@@ -423,6 +504,105 @@ class ApprovalDaemonRpcTests(unittest.TestCase):
                                     "scope": "browser",
                                     "effect": "auto_allow",
                                 },
+                            }
+                        )
+                finally:
+                    resident.store.close()
+
+    def test_approval_reconsider_denied_rpc_round_trip(self) -> None:
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from zn_agent.core.daemon import ResidentRpcServer
+        from zn_agent.core.provider_bridge import (
+            build_resident_runtime_from_existing_stack,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "zn_agent.core.life.shutil.disk_usage",
+                return_value=SimpleNamespace(total=100, used=50, free=50),
+            ):
+                resident = build_resident_runtime_from_existing_stack(
+                    config={"model": {}},
+                    store_path=Path(tmp) / "kernel.db",
+                )
+                try:
+                    server = ResidentRpcServer(
+                        resident=resident,
+                        input_stream=io.StringIO(),
+                        output_stream=io.StringIO(),
+                    )
+                    created = server.handle(
+                        {
+                            "id": "1",
+                            "method": "approval_request",
+                            "params": {
+                                "action_kind": "delete",
+                                "target": "old-report.pdf",
+                                "scope": "files:reports",
+                                "source": "resident",
+                            },
+                        }
+                    )
+                    self.assertTrue(created["ok"], created)
+                    denied_id = created["result"]["request"]["request_id"]
+
+                    decided = server.handle(
+                        {
+                            "id": "2",
+                            "method": "approval_decide",
+                            "params": {"request_id": denied_id, "decision": "deny"},
+                        }
+                    )
+                    self.assertTrue(decided["ok"], decided)
+                    self.assertEqual(decided["result"]["request"]["status"], "denied")
+
+                    listed = server.handle(
+                        {"id": "3", "method": "approval_list", "params": {}}
+                    )
+                    self.assertTrue(listed["ok"], listed)
+                    self.assertEqual(len(listed["result"]["denied"]), 1)
+                    self.assertEqual(
+                        listed["result"]["denied"][0]["request_id"], denied_id
+                    )
+
+                    reconsidered = server.handle(
+                        {
+                            "id": "4",
+                            "method": "approval_reconsider_denied",
+                            "params": {"request_id": denied_id, "note": "misclick"},
+                        }
+                    )
+                    self.assertTrue(reconsidered["ok"], reconsidered)
+                    fresh = reconsidered["result"]["request"]
+                    self.assertEqual(fresh["status"], "pending")
+                    self.assertNotEqual(fresh["request_id"], denied_id)
+
+                    # The denied record itself is untouched by the override.
+                    after = server.handle(
+                        {"id": "5", "method": "approval_list", "params": {}}
+                    )
+                    self.assertEqual(len(after["result"]["pending"]), 1)
+                    self.assertEqual(len(after["result"]["denied"]), 1)
+                    audit = after["result"]["audit"]
+                    self.assertTrue(
+                        any(
+                            entry["decision"] == "deny_overridden"
+                            and entry["request_id"] == denied_id
+                            for entry in audit
+                        ),
+                        audit,
+                    )
+
+                    # Reconsidering a non-denied request is rejected.
+                    with self.assertRaises(ValueError):
+                        server.handle(
+                            {
+                                "id": "6",
+                                "method": "approval_reconsider_denied",
+                                "params": {"request_id": fresh["request_id"]},
                             }
                         )
                 finally:

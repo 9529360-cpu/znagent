@@ -418,6 +418,7 @@ class ResidentRpcServer:
             store = self._approvals()
             result = {
                 "pending": [item.to_dict() for item in store.pending_requests()],
+                "denied": [item.to_dict() for item in store.denied_requests()],
                 "expired": [item.to_dict() for item in store.expired_requests()],
                 "rules": [rule.to_dict() for rule in store.list_rules()],
                 "audit": [entry.to_dict() for entry in store.list_audit()],
@@ -438,6 +439,16 @@ class ResidentRpcServer:
             request = store.decide(
                 str(params.get("request_id") or ""),
                 str(params.get("decision") or ""),
+            )
+            result = {"request": request.to_dict()}
+        elif method == "approval_reconsider_denied":
+            # Explicit user reconsideration of a denied triple. Creates a
+            # fresh pending request and audits the override; the denied
+            # record itself is never mutated.
+            store = self._approvals()
+            request = store.reconsider_denied(
+                str(params.get("request_id") or ""),
+                note=str(params.get("note") or ""),
             )
             result = {"request": request.to_dict()}
         elif method == "approval_rule_create":
