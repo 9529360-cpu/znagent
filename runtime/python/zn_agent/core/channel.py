@@ -8,6 +8,7 @@ specific events into ChannelEvent and translate ChannelMessage back to the
 platform; resident cognition and continuity remain in the kernel.
 """
 
+import hashlib
 import uuid
 from dataclasses import asdict, dataclass, field
 from typing import Any, Protocol, TYPE_CHECKING
@@ -72,6 +73,31 @@ class ChannelEvent:
     # Appended rather than inserted so the original positional constructor
     # signature stays compatible during source migration.
     attachments: tuple[ChannelAttachment, ...] = ()
+
+
+def channel_work_thread_id(
+    channel: str,
+    conversation_id: str,
+    thread_id: str | None = None,
+) -> str:
+    """Map a transport conversation onto one opaque Resident Work thread id.
+
+    Platform chat/topic identifiers remain delivery addresses. Work owns the
+    durable conversation identity consumed by Desktop, RPC and cognition. The
+    opaque digest avoids copying provider-specific account/chat ids into the
+    user-facing Work id while remaining stable across process restarts.
+    """
+    normalized_channel = str(channel or "").strip().lower()
+    normalized_conversation = str(conversation_id or "").strip()
+    normalized_transport_thread = str(thread_id or "").strip()
+    if not normalized_channel or not normalized_conversation:
+        raise ValueError("channel conversation requires channel and conversation_id")
+    digest = hashlib.sha256(
+        f"{normalized_channel}\0{normalized_conversation}\0{normalized_transport_thread}".encode(
+            "utf-8", errors="replace"
+        )
+    ).hexdigest()[:24]
+    return f"work-channel-{digest}"
 
 
 @dataclass(frozen=True, slots=True)
