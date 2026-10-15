@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import threading
 import unittest
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -68,6 +69,28 @@ VALID_PROXY_ENV = {
     "socks proxy": {"ALL_PROXY": "socks5://proxy.example.com:1080"},
     "proxy auth": {"HTTPS_PROXY": "http://user:pass@proxy.example.com:8080"},
 }
+
+
+def _patched_proxy_env(env):
+    """Patch os.environ to a clean proxy env WITHOUT clear=True.
+
+    clear=True is unsafe on Windows: it removes SYSTEMROOT (ssl.SSLContext
+    then fails with SSLError) and, if any value exceeds the 32,767-char
+    Windows env-var limit, patch.dict.__enter__ raises before __exit__ can
+    restore, leaving environ permanently empty for the rest of the process
+    (cascading home-dir/SSL failures in every later test). This helper keeps
+    every non-proxy variable and only swaps the proxy keys.
+    """
+    clean = {
+        k: v for k, v in os.environ.items() if k not in proxy_env.PROXY_ENV_KEYS
+    }
+    clean.update(env)
+    return mock.patch.dict(os.environ, clean)
+
+
+def _over_long_unsettable_on_windows(label):
+    """Over-long NO_PROXY cannot even be placed in environ on Windows."""
+    return label == "over-long" and sys.platform == "win32"
 
 
 def _gemini_route(**overrides):
@@ -185,7 +208,12 @@ class BuildClientToleranceTests(unittest.TestCase):
     def test_build_httpx_client_survives_every_malformed_shape(self):
         for _label, env in ALL_MALFORMED.items():
             with self.subTest(label=_label):
-                with mock.patch.dict(os.environ, env, clear=True):
+                if _over_long_unsettable_on_windows(_label):
+                    self.skipTest(
+                        "Windows caps env-var values at 32767 chars; "
+                        "the OS itself rejects this setup"
+                    )
+                with _patched_proxy_env(env):
                     client = proxy_env.build_httpx_client()
                     self.addCleanup(client.close)
                     self.assertIsInstance(client, httpx.Client)
@@ -193,7 +221,7 @@ class BuildClientToleranceTests(unittest.TestCase):
     def test_build_httpx_client_keeps_working_with_valid_env(self):
         for _label, env in VALID_PROXY_ENV.items():
             with self.subTest(label=_label):
-                with mock.patch.dict(os.environ, env, clear=True):
+                with _patched_proxy_env(env):
                     client = proxy_env.build_httpx_client()
                     self.addCleanup(client.close)
                     self.assertIsInstance(client, httpx.Client)
@@ -213,7 +241,7 @@ class BuildClientToleranceTests(unittest.TestCase):
                 raise ValueError("Unknown scheme for proxy URL")
             return ("built", kwargs["http_client"])
 
-        with mock.patch.dict(os.environ, {"NO_PROXY": "::::"}, clear=True):
+        with _patched_proxy_env({"NO_PROXY": "::::"}):
             result = proxy_env.build_sdk_client(flaky_builder, api_key="k")
         self.assertEqual(result[0], "built")
         self.assertIsInstance(result[1], httpx.Client)
@@ -223,7 +251,7 @@ class BuildClientToleranceTests(unittest.TestCase):
         def always_bad(**kwargs):
             raise ValueError("not a proxy problem")
 
-        with mock.patch.dict(os.environ, {}, clear=True):
+        with _patched_proxy_env({}):
             with self.assertRaises(ValueError):
                 proxy_env.build_sdk_client(always_bad)
 
@@ -233,7 +261,12 @@ class OpenAIClientToleranceTests(unittest.TestCase):
     def test_openai_client_construction_survives_malformed_env(self):
         for _label, env in ALL_MALFORMED.items():
             with self.subTest(label=_label):
-                with mock.patch.dict(os.environ, env, clear=True):
+                if _over_long_unsettable_on_windows(_label):
+                    self.skipTest(
+                        "Windows caps env-var values at 32767 chars; "
+                        "the OS itself rejects this setup"
+                    )
+                with _patched_proxy_env(env):
                     resource = OpenAICompatibleCognitiveResource(
                         _openai_route(),
                     )
@@ -247,7 +280,12 @@ class AnthropicClientToleranceTests(unittest.TestCase):
     def test_anthropic_client_construction_survives_malformed_env(self):
         for _label, env in ALL_MALFORMED.items():
             with self.subTest(label=_label):
-                with mock.patch.dict(os.environ, env, clear=True):
+                if _over_long_unsettable_on_windows(_label):
+                    self.skipTest(
+                        "Windows caps env-var values at 32767 chars; "
+                        "the OS itself rejects this setup"
+                    )
+                with _patched_proxy_env(env):
                     resource = AnthropicCognitiveResource(_anthropic_route())
                     client = resource._client()
                     self.addCleanup(client.close)
@@ -258,7 +296,12 @@ class GeminiToleranceTests(unittest.TestCase):
     def test_gemini_construction_survives_malformed_env(self):
         for _label, env in ALL_MALFORMED.items():
             with self.subTest(label=_label):
-                with mock.patch.dict(os.environ, env, clear=True):
+                if _over_long_unsettable_on_windows(_label):
+                    self.skipTest(
+                        "Windows caps env-var values at 32767 chars; "
+                        "the OS itself rejects this setup"
+                    )
+                with _patched_proxy_env(env):
                     resource = GeminiCognitiveResource(_gemini_route())
                     self.addCleanup(resource.close)
                     self.assertIsNotNone(resource._client)
@@ -277,7 +320,7 @@ class GeminiToleranceTests(unittest.TestCase):
                 "base_url": f"http://127.0.0.1:{port}",
             }
         )
-        with mock.patch.dict(os.environ, {"NO_PROXY": "::::"}, clear=True):
+        with _patched_proxy_env({"NO_PROXY": "::::"}):
             resource = GeminiCognitiveResource(route)
             self.addCleanup(resource.close)
             increment = resource.invoke(question="hello?", context="")
