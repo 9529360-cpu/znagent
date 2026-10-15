@@ -276,7 +276,7 @@ export function ZnWorkbench() {
   const [selectedArtifactId, setSelectedArtifactId] = useState('')
   const [artifactOpen, setArtifactOpen] = useState(false)
   const [view, setView] = useState<MainView>('work')
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [sidebarExpanded, setSidebarExpanded] = useState(false)
   const [pinnedThreadIds, setPinnedThreadIds] = useState<string[]>(loadPinnedThreadIds)
   const [pinnedExpanded, setPinnedExpanded] = useState(false)
   const [recentExpanded, setRecentExpanded] = useState(true)
@@ -934,8 +934,9 @@ export function ZnWorkbench() {
   const firstResult = activeArtifacts[0] || null
 
   return (
-    <div className={'zn-app ' + windowMode + (sidebarCollapsed ? ' sidebar-collapsed' : '') + (contextOpen ? ' details-open' : ' context-closed') + (artifactOpen && selectedWorkstationArtifact && view === 'work' ? ' artifact-open' : '') + (view === 'settings' ? ' settings-open' : '')}>
+    <div className={'zn-app ' + windowMode + (sidebarExpanded ? ' sidebar-expanded' : '') + (view === 'work' && approvalPendingCount > 0 ? ' tray-open' : '') + (contextOpen ? ' details-open' : ' context-closed') + (artifactOpen && selectedWorkstationArtifact && view === 'work' ? ' artifact-open' : '') + (view === 'settings' ? ' settings-open' : '')}>
       <aside className="zn-sidebar">
+       <div className="zn-sidebar-inner">
         <div className="zn-brand-row">
           <div className="zn-mark" aria-hidden="true">ZN</div>
           <div className="zn-brand-copy">
@@ -1058,9 +1059,67 @@ export function ZnWorkbench() {
             <span>{t('settings.title')}</span>
           </button>
         </div>
+       </div>
       </aside>
 
       <section className="zn-main-column">
+        {view === 'work' ? (
+          <form className="zn-commandbar zn-composer-wrap" onSubmit={submit}>
+            <div className="zn-composer">
+              <div className="zn-mark zn-mark-small" aria-hidden="true">ZN</div>
+              <textarea
+                aria-label={t('composer.messageAria')}
+                placeholder={t('composer.placeholder')}
+                rows={2}
+                value={draft}
+                onChange={event => setDraft(event.target.value)}
+                onKeyDown={event => {
+                  if (event.key === 'Enter' && !event.shiftKey) {
+                    event.preventDefault()
+                    event.currentTarget.form?.requestSubmit()
+                  }
+                }}
+              />
+              <div className="zn-composer-toolbar">
+                <div className="zn-composer-tools">
+                  <button
+                    className="zn-composer-tool"
+                    type="button"
+                    aria-label={activeWorkspace ? t('composer.changeAttachedFolder') : t('composer.attachFolder')}
+                    title={activeWorkspace ? t('composer.changeFolder') : t('composer.attachFolder')}
+                    disabled={workspaceBusy || workActive || !activeThread}
+                    onClick={() => void attachWorkspace()}
+                  >
+                    <Plus size={18} />
+                  </button>
+                  <span className="zn-context-chip" title={activeWorkspace?.path}>
+                    <FolderSimple size={14} />
+                    {activeWorkspace?.name || t('topbar.thisComputer')}
+                  </span>
+                </div>
+                <div className="zn-composer-tools">
+                  <span className="zn-model-chip" title={localizedProviderReadinessDetail}>
+                    {providerSettings?.model || 'ZN'}
+                  </span>
+                  <button
+                    className="zn-send"
+                    type="submit"
+                    aria-label={t('composer.sendAria')}
+                    disabled={submissionBusy || stoppingWork || !draft.trim()}
+                  >
+                    {submissionBusy
+                      ? <CircleNotch className="zn-spin" size={17} />
+                      : <ArrowUp size={18} weight="bold" />}
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div className="zn-composer-caption">
+              {teamTimeline && teamTimeline.members.length > 0 ? t('team.assignHint') : ''}
+              {workActive ? t('composer.background') : ''}{t('composer.shortcut')}
+            </div>
+          </form>
+        ) : null}
         <header className="zn-topbar">
           <div className="zn-topbar-brand">
             <div className="zn-mark zn-mark-small" aria-hidden="true">ZN</div>
@@ -1093,7 +1152,7 @@ export function ZnWorkbench() {
             <button type="button" aria-label={t('topbar.recentWork')} title={t('topbar.recentWork')} onClick={() => requestWindowMode('expanded')}>
               <ClockCounterClockwise size={17} />
             </button>
-            <button type="button" aria-label={t('topbar.toggleSidebar')} title={t('topbar.toggleSidebar')} aria-pressed={sidebarCollapsed} onClick={() => setSidebarCollapsed(value => !value)}>
+            <button type="button" aria-label={t('topbar.toggleSidebar')} title={t('topbar.toggleSidebar')} aria-pressed={sidebarExpanded} onClick={() => setSidebarExpanded(value => !value)}>
               <SidebarSimple size={17} />
             </button>
             <button type="button" aria-label={t('topbar.openSettings')} title={t('settings.title')} onClick={openSettings}>
@@ -1247,12 +1306,6 @@ export function ZnWorkbench() {
         ) : (
           <>
             <main className="zn-thread-surface">
-              {approvalPendingCount > 0 ? (
-                <div className="zn-approval-banner" role="alert">
-                  <span>{t('approval.banner', { count: approvalPendingCount, countLabel: t(approvalPendingCount === 1 ? 'approval.bannerOne' : 'approval.bannerMany') })}</span>
-                  <button type="button" onClick={openApprovals}>{t('approval.review')}</button>
-                </div>
-              ) : null}
               {residentHealth === 'offline' ? (
                 <div className="zn-connection-recovery" role="alert" aria-live="polite">
                   <div className="zn-connection-recovery-copy">
@@ -1272,8 +1325,6 @@ export function ZnWorkbench() {
               {activeThread && activeThread.messages.length === 0 && !showActiveWork ? (
                 <section className="zn-home">
                   <div className="zn-home-hero">
-                    <span className="zn-home-orbit"><Sparkle size={18} weight="fill" /></span>
-                    <span className="zn-eyebrow">{t('home.eyebrow')}</span>
                     <h1>{t('home.title')}</h1>
                     <p>{t('home.description')}</p>
                   </div>
@@ -1337,11 +1388,6 @@ export function ZnWorkbench() {
                     )}
                   </section>
 
-                  <div className="zn-home-status" aria-label={t('home.readinessAria')}>
-                    <span><i className={'zn-health-dot ' + residentHealth} />{residentHealth === 'live' ? t('home.residentReady') : residentHealth === 'connecting' ? t('home.residentConnecting') : t('home.residentOffline')}</span>
-                    <span>{activeWorkspace ? t('home.workspace', { name: activeWorkspace.name }) : t('topbar.thisComputer')}</span>
-                    <span title={localizedProviderReadinessDetail}>{providerReadiness.ready ? t('home.cognitionAvailable') : t('home.cognitionSetupNeeded')}</span>
-                  </div>
                 </section>
               ) : null}
 
@@ -1533,60 +1579,23 @@ export function ZnWorkbench() {
               </div>
             ) : null}
 
-            <form className="zn-composer-wrap" onSubmit={submit}>
-              <div className="zn-composer">
-                <textarea
-                  aria-label={t('composer.messageAria')}
-                  placeholder={t('composer.placeholder')}
-                  rows={2}
-                  value={draft}
-                  onChange={event => setDraft(event.target.value)}
-                  onKeyDown={event => {
-                    if (event.key === 'Enter' && !event.shiftKey) {
-                      event.preventDefault()
-                      event.currentTarget.form?.requestSubmit()
-                    }
-                  }}
-                />
-                <div className="zn-composer-toolbar">
-                  <div className="zn-composer-tools">
-                    <button
-                      className="zn-composer-tool"
-                      type="button"
-                      aria-label={activeWorkspace ? t('composer.changeAttachedFolder') : t('composer.attachFolder')}
-                      title={activeWorkspace ? t('composer.changeFolder') : t('composer.attachFolder')}
-                      disabled={workspaceBusy || workActive || !activeThread}
-                      onClick={() => void attachWorkspace()}
-                    >
-                      <Plus size={18} />
-                    </button>
-                    <span className="zn-context-chip" title={activeWorkspace?.path}>
-                      <FolderSimple size={14} />
-                      {activeWorkspace?.name || t('topbar.thisComputer')}
-                    </span>
-                  </div>
-                  <div className="zn-composer-tools">
-                    <span className="zn-model-chip" title={localizedProviderReadinessDetail}>
-                      {providerSettings?.model || 'ZN'}
-                    </span>
-                    <button
-                      className="zn-send"
-                      type="submit"
-                      aria-label={t('composer.sendAria')}
-                      disabled={submissionBusy || stoppingWork || !draft.trim()}
-                    >
-                      {submissionBusy
-                        ? <CircleNotch className="zn-spin" size={17} />
-                        : <ArrowUp size={18} weight="bold" />}
-                    </button>
-                  </div>
+            <footer className="zn-statusline" aria-label={t('home.readinessAria')}>
+              <span><i className={'zn-health-dot ' + residentHealth} />{residentHealth === 'live' ? t('home.residentReady') : residentHealth === 'connecting' ? t('home.residentConnecting') : t('home.residentOffline')}</span>
+              <span>{activeWorkspace ? t('home.workspace', { name: activeWorkspace.name }) : t('topbar.thisComputer')}</span>
+              <span title={localizedProviderReadinessDetail}>{providerReadiness.ready ? t('home.cognitionAvailable') : t('home.cognitionSetupNeeded')}</span>
+            </footer>
+
+            {view === 'work' && approvalPendingCount > 0 ? (
+              <aside className="zn-tray" role="alert" aria-label={t('tray.title')}>
+                <div className="zn-tray-head">
+                  <span className="zn-tray-seal" aria-hidden="true" />
+                  <strong>{t('tray.title')}</strong>
+                  <span className="zn-tray-count">{approvalPendingCount}</span>
                 </div>
-              </div>
-              <div className="zn-composer-caption">
-                {teamTimeline && teamTimeline.members.length > 0 ? t('team.assignHint') : ''}
-                {workActive ? t('composer.background') : ''}{t('composer.shortcut')}
-              </div>
-            </form>
+                <p>{t('approval.banner', { count: approvalPendingCount, countLabel: t(approvalPendingCount === 1 ? 'approval.bannerOne' : 'approval.bannerMany') })}</p>
+                <button type="button" onClick={openApprovals}>{t('approval.review')}</button>
+              </aside>
+            ) : null}
           </>
         )}
       </section>
