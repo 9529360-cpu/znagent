@@ -744,3 +744,33 @@ Rules:
 - This fixes only the record format. Lifecycle is KWP-2
   (`two_level_memory.py`); validity windows are GR-1/GR-2. No vector
   store, embedding pipeline, or hosted service is involved.
+
+## 18. Validity windows (GR-1/GR-2)
+
+Memory is no longer "latest value wins": every fact remembered through
+`StructuredMemory` carries a validity window `[valid_at, invalid_at)`.
+Implementation: `memory.py` (sidecar ledger table `memory_history`,
+owned by that module; the facts table stays the live store, one row per
+key). Tests: `tests/zn_agent/core/test_memory_time_windows.py`.
+
+Rules:
+
+- `recall()` / `relevant_context()` / cognition context return only
+  currently valid facts (open window, `invalid_at IS NULL`). Legacy rows
+  with no ledger rows count as valid from their facts-table `created_at`.
+- `recall_as_of(query, as_of)` answers "what was true then" from the
+  window snapshots, matching key/aliases as of that time.
+  `fact_history(key)` lists every version of a key, oldest first.
+- A contradicting new fact (same key, different value) closes the old
+  version's window at the new fact's `valid_at` (`old.invalid_at ==
+  new.valid_at`). The old version stays in the ledger and remains
+  queryable via as-of reads. Invalidation never deletes history.
+- Contradiction is deliberately narrow: same key + different value.
+  Near-duplicate keys with different values still create a second row
+  (topical similarity alone is too loose to invalidate).
+- `forget()` closes the window and deletes the live row; ledger rows
+  stay, so as-of reads before the forget still return the old value.
+  If the product ever wants forget to purge history too, that is a
+  separate, explicit decision.
+- Observations never enter the ledger: like supersession, they are
+  evidence records, not contradictable facts.

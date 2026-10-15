@@ -6,6 +6,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
+from .models import utc_now
 from .privacy_choke import strip_tags
 from .store import KernelStore
 
@@ -72,6 +73,8 @@ class FactMatch:
     key: str
     value: Any
     matched_by: str
+    valid_at: str | None = None
+    invalid_at: str | None = None
 
 
 # -- CM-1: structured observation records ---------------------------------
@@ -80,7 +83,7 @@ class FactMatch:
 # was merely said. It lives in the facts table like any other fact (the
 # facts table remains the sole owner); the ``record_kind`` marker tells
 # read paths apart from plain dict facts. KWP-2 (lifecycle) and GR-1/GR-2
-# (validity windows) are orthogonal: this only fixes the record format.
+# (validity windows, see below) are orthogonal: this only fixes the record format.
 
 #: Facts-table key prefix for structured observation records.
 OBSERVATION_PREFIX = "observation:"
@@ -232,6 +235,69 @@ class Observation:
         )
 
 
+# -- GR-1/GR-2: validity windows (time-windowed memory) ------------------
+#
+# Every fact remembered through StructuredMemory carries a validity window
+# [valid_at, invalid_at): it was true from valid_at until invalid_at, and
+# a NULL invalid_at means it is still current. When a new fact contradicts
+# an old one (same key, different value), the old version is NOT deleted:
+# its window closes (invalid_at = the new fact's valid_at) and the old
+# version stays queryable through as-of reads. This upgrades memory from
+# "latest value wins" to "history with time windows".
+#
+# Storage: the facts table stays the live store (one row per key, current
+# value). The window ledger is a sidecar table owned by this module,
+# created lazily via the store connection (the store itself is untouched,
+# so no migration of the facts schema is needed). Each ledger row is one
+# version of one key: its value/aliases snapshot plus its window.
+#
+# Rows written by paths that bypass StructuredMemory.remember (legacy rows
+# predating this feature, direct put_fact callers, observation records)
+# have no ledger rows. They are treated as valid from their facts-table
+# created_at with no end. The first remember()/forget()/consolidate() that
+# touches such a key backfills a ledger row from the facts row, so history
+# is preserved instead of silently starting at the touch time.
+#
+# Contradiction is deliberately narrow: same key + different value. A
+# near-duplicate key with a different value still creates a second row
+# (existing behaviour) -- topical similarity alone is too loose to
+# invalidate (e.g. "favorite color" vs "favorite food" share bigrams but
+# do not contradict). Observations never enter the ledger: like
+# supersession, they are evidence records, not contradictable facts.
+# forget() closes the window and deletes the live row; the ledger rows
+# stay, so as-of reads before the forget still return the old value.
+# If the product ever wants forget() to purge history too, that is a
+# separate, explicit decision -- invalidation alone never deletes.
+
+_MEMORY_HISTORY_DDL = (
+    "CREATE TABLE IF NOT EXISTS memory_history("
+    "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+    "fact_key TEXT NOT NULL, value_json TEXT NOT NULL, "
+    "aliases_json TEXT NOT NULL, valid_at TEXT NOT NULL, "
+    "invalid_at TEXT)"
+)
+
+
+def _same_value(left: Any, right: Any) -> bool:
+    """JSON-canonical equality: ('a',) and ['a'] are the same stored value."""
+    try:
+        return json.dumps(left, ensure_ascii=False, sort_keys=True) == json.dumps(
+            right, ensure_ascii=False, sort_keys=True
+        )
+    except (TypeError, ValueError):
+        return left == right
+
+
+def _as_of_text(as_of: Any) -> str:
+    """Normalise an as-of query time to the ISO text stored in the ledger."""
+    if hasattr(as_of, "isoformat"):
+        return str(as_of.isoformat())
+    text = str(as_of or "").strip()
+    if not text:
+        raise ValueError("as_of must be a non-empty ISO-8601 timestamp")
+    return text
+
+
 class StructuredMemory:
     """Token-free durable facts and bounded, read-only cognition projections.
 
@@ -244,6 +310,124 @@ class StructuredMemory:
     def __init__(self, store: KernelStore):
         self.store = store
 
+    # -- GR-1/GR-2: validity-window ledger ------------------------------
+
+    def _ensure_history_schema(self) -> None:
+        with self.store._lock, self.store._conn:
+            self.store._conn.execute(_MEMORY_HISTORY_DDL)
+
+    def _open_window(
+        self, key: str, value: Any, aliases: tuple[str, ...], valid_at: str,
+    ) -> None:
+        """Record a new current version of ``key`` starting at ``valid_at``."""
+        self._ensure_history_schema()
+        with self.store._lock, self.store._conn:
+            self.store._conn.execute(
+                "INSERT INTO memory_history"
+                "(fact_key, value_json, aliases_json, valid_at, invalid_at)"
+                " VALUES(?,?,?,?,NULL)",
+                (
+                    key,
+                    json.dumps(value, ensure_ascii=False),
+                    json.dumps(list(aliases), ensure_ascii=False),
+                    valid_at,
+                ),
+            )
+
+    def _ensure_open_window(
+        self, key: str, value: Any, aliases: tuple[str, ...], valid_at: str,
+    ) -> None:
+        """Open a window for ``key`` only when it has none (legacy backfill)."""
+        self._ensure_history_schema()
+        with self.store._lock, self.store._conn:
+            row = self.store._conn.execute(
+                "SELECT id FROM memory_history"
+                " WHERE fact_key=? AND invalid_at IS NULL LIMIT 1",
+                (key,),
+            ).fetchone()
+            if row is None:
+                self.store._conn.execute(
+                    "INSERT INTO memory_history"
+                    "(fact_key, value_json, aliases_json, valid_at, invalid_at)"
+                    " VALUES(?,?,?,?,NULL)",
+                    (
+                        key,
+                        json.dumps(value, ensure_ascii=False),
+                        json.dumps(list(aliases), ensure_ascii=False),
+                        valid_at,
+                    ),
+                )
+
+    def _close_open_window(
+        self, key: str, invalid_at: str, *,
+        fallback: dict[str, Any] | None = None,
+    ) -> None:
+        """Close ``key``'s open window at ``invalid_at``.
+
+        When no open window exists (legacy / bypass-written row) and a
+        ``fallback`` facts-row is given, insert a closed snapshot for the
+        pre-existing version instead of losing it: its valid_at is the
+        facts row's created_at, floored at the last recorded invalid_at
+        for the key so windows for one key never overlap.
+        """
+        self._ensure_history_schema()
+        with self.store._lock, self.store._conn:
+            cursor = self.store._conn.execute(
+                "UPDATE memory_history SET invalid_at=? "
+                "WHERE fact_key=? AND invalid_at IS NULL",
+                (invalid_at, key),
+            )
+            if cursor.rowcount:
+                return
+            if fallback is None:
+                return
+            last_closed = self.store._conn.execute(
+                "SELECT MAX(invalid_at) AS last_end FROM memory_history"
+                " WHERE fact_key=?",
+                (key,),
+            ).fetchone()
+            valid_at = str(fallback.get("created_at") or invalid_at)
+            if last_closed is not None and last_closed["last_end"]:
+                valid_at = max(valid_at, str(last_closed["last_end"]))
+            if valid_at > invalid_at:
+                valid_at = invalid_at
+            self.store._conn.execute(
+                "INSERT INTO memory_history"
+                "(fact_key, value_json, aliases_json, valid_at, invalid_at)"
+                " VALUES(?,?,?,?,?)",
+                (
+                    key,
+                    json.dumps(fallback.get("value"), ensure_ascii=False),
+                    json.dumps(list(fallback.get("aliases") or ()), ensure_ascii=False),
+                    valid_at,
+                    invalid_at,
+                ),
+            )
+
+    def _validity_index(self) -> tuple[dict[str, str], set[str]]:
+        """(open key -> its valid_at, keys with any ledger row).
+
+        Keys with no ledger row are legacy/bypass rows: treated as valid
+        from their facts-table created_at. Keys with ledger rows but no
+        open window are superseded and must not surface in current reads.
+        """
+        self._ensure_history_schema()
+        open_windows: dict[str, str] = {}
+        known: set[str] = set()
+        with self.store._lock:
+            rows = self.store._conn.execute(
+                "SELECT fact_key, valid_at, invalid_at FROM memory_history"
+            ).fetchall()
+        for row in rows:
+            known.add(str(row["fact_key"]))
+            if row["invalid_at"] is None:
+                open_windows[str(row["fact_key"])] = str(row["valid_at"])
+        return open_windows, known
+
+    def _is_current(self, key: str, *, index: tuple[dict[str, str], set[str]] | None = None) -> bool:
+        open_windows, known = index if index is not None else self._validity_index()
+        return key not in known or key in open_windows
+
     def remember(self, key: str, value: Any, *, aliases: tuple[str, ...] = ()) -> None:
         # CM-3 privacy choke: every memory write passes through the
         # stripTags single point BEFORE supersession/similarity and
@@ -253,24 +437,169 @@ class StructuredMemory:
         key = strip_tags(key)
         value = strip_tags(value)
         aliases = tuple(strip_tags(alias) for alias in aliases)
+        now = utc_now()
+        new_key = str(key or "").strip()
         target = self._supersession_target(key, value)
-        if target is not None and target != str(key or "").strip():
+        if target is not None and target != new_key:
             # Near-duplicate of an existing fact: update it in place (union
             # aliases) instead of stacking a second retrieval path.
             existing = next(
                 (f for f in self.store.list_facts() if f["key"] == target), None
             )
             merged_aliases = list(aliases)
-            new_key = str(key or "").strip()
             if new_key and new_key not in merged_aliases:
                 merged_aliases.append(new_key)
             if existing is not None:
                 for alias in existing["aliases"]:
                     if alias not in merged_aliases:
                         merged_aliases.append(alias)
-            self.store.put_fact(target, value, aliases=tuple(merged_aliases))
+            if existing is not None and not _same_value(existing["value"], value):
+                # Near-identical values merge, but the old version is not
+                # byte-equal: preserve it as a closed window before the
+                # merge overwrites it (GR-2: invalidation never deletes).
+                self._close_open_window(target, now, fallback=existing)
+                self.store.put_fact(target, value, aliases=tuple(merged_aliases))
+                self._open_window(target, value, tuple(merged_aliases), now)
+            else:
+                self.store.put_fact(target, value, aliases=tuple(merged_aliases))
+                if existing is not None:
+                    self._ensure_open_window(
+                        target, value, tuple(merged_aliases),
+                        str(existing.get("created_at") or now),
+                    )
+                else:
+                    self._open_window(target, value, tuple(merged_aliases), now)
             return
-        self.store.put_fact(key, value, aliases=aliases)
+        existing = next(
+            (f for f in self.store.list_facts() if f["key"] == new_key), None
+        ) if new_key else None
+        if existing is not None and not _same_value(existing["value"], value):
+            # Contradiction (GR-2): same key, different value. Close the
+            # old version's window at the new fact's valid_at; the old
+            # version stays in the ledger for as-of reads.
+            self._close_open_window(new_key, now, fallback=existing)
+            self.store.put_fact(new_key, value, aliases=aliases)
+            self._open_window(new_key, value, aliases, now)
+        elif existing is not None:
+            self.store.put_fact(new_key, value, aliases=aliases)
+            self._ensure_open_window(
+                new_key, value, aliases, str(existing.get("created_at") or now),
+            )
+        else:
+            self.store.put_fact(new_key, value, aliases=aliases)
+            self._open_window(new_key, value, aliases, now)
+
+    def recall_as_of(self, query: str, as_of: Any) -> FactMatch | None:
+        """What was true at ``as_of`` (ISO-8601, same form as utc_now()).
+
+        Matches the query against the key/aliases snapshot of each
+        version whose window covers ``as_of``. Keys with no ledger rows
+        fall back to their live facts row when its created_at is at or
+        before ``as_of``. Returns None when nothing was true then.
+        """
+        moment = _as_of_text(as_of)
+        normalized = self._normalize(query)
+        if not normalized:
+            return None
+        self._ensure_history_schema()
+        candidates: list[tuple[str, str, dict[str, Any]]] = []
+        with self.store._lock:
+            rows = self.store._conn.execute(
+                "SELECT fact_key, value_json, aliases_json, valid_at, invalid_at"
+                " FROM memory_history"
+                " WHERE valid_at<=? AND (invalid_at IS NULL OR invalid_at>?)",
+                (moment, moment),
+            ).fetchall()
+        for row in rows:
+            try:
+                value = json.loads(row["value_json"])
+                aliases = json.loads(row["aliases_json"])
+            except (TypeError, ValueError):
+                continue
+            if not isinstance(aliases, list):
+                aliases = []
+            candidates.append((
+                str(row["valid_at"]),
+                str(row["fact_key"]),
+                {
+                    "key": str(row["fact_key"]),
+                    "value": value,
+                    "aliases": aliases,
+                    "valid_at": str(row["valid_at"]),
+                    "invalid_at": row["invalid_at"],
+                },
+            ))
+        if not candidates:
+            return self._recall_legacy_as_of(normalized, moment)
+        # Latest window wins; key order breaks ties, so repeated
+        # identical queries are deterministic (stable sorts: key first,
+        # then valid_at descending on top).
+        candidates.sort(key=lambda item: item[1])
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        for _, _, record in candidates:
+            if normalized == self._normalize(record["key"]):
+                return FactMatch(
+                    record["key"], record["value"], "key",
+                    valid_at=record["valid_at"], invalid_at=record["invalid_at"],
+                )
+            for alias in record["aliases"]:
+                if isinstance(alias, str) and normalized == self._normalize(alias):
+                    return FactMatch(
+                        record["key"], record["value"], alias,
+                        valid_at=record["valid_at"], invalid_at=record["invalid_at"],
+                    )
+        return self._recall_legacy_as_of(normalized, moment)
+
+    def _recall_legacy_as_of(self, normalized: str, moment: str) -> FactMatch | None:
+        """As-of fallback for keys with no ledger rows (legacy/bypass)."""
+        _, known = self._validity_index()
+        for record in self.store.list_facts():
+            if record["key"] in known:
+                continue
+            if str(record.get("created_at") or "") > moment:
+                continue
+            if normalized == self._normalize(record["key"]):
+                return FactMatch(
+                    record["key"], record["value"], "key",
+                    valid_at=str(record.get("created_at") or None),
+                )
+            for alias in record["aliases"]:
+                if isinstance(alias, str) and normalized == self._normalize(alias):
+                    return FactMatch(
+                        record["key"], record["value"], alias,
+                        valid_at=str(record.get("created_at") or None),
+                    )
+        return None
+
+    def fact_history(self, key: str) -> list[dict[str, Any]]:
+        """All versions of ``key``, oldest first, with their windows.
+
+        Returns [] for unknown keys and for legacy rows that have never
+        been touched by remember()/forget()/consolidate() (those have no
+        ledger rows yet; their current version is the live facts row).
+        """
+        self._ensure_history_schema()
+        with self.store._lock:
+            rows = self.store._conn.execute(
+                "SELECT value_json, aliases_json, valid_at, invalid_at"
+                " FROM memory_history WHERE fact_key=? ORDER BY valid_at, id",
+                (str(key or "").strip(),),
+            ).fetchall()
+        history: list[dict[str, Any]] = []
+        for row in rows:
+            try:
+                value = json.loads(row["value_json"])
+                aliases = json.loads(row["aliases_json"])
+            except (TypeError, ValueError):
+                continue
+            history.append({
+                "key": str(key or "").strip(),
+                "value": value,
+                "aliases": tuple(aliases) if isinstance(aliases, list) else (),
+                "valid_at": str(row["valid_at"]),
+                "invalid_at": row["invalid_at"],
+            })
+        return history
 
     def _supersession_target(self, key: str, value: Any) -> str | None:
         """Return the existing key a new fact should supersede, if any."""
@@ -311,6 +640,15 @@ class StructuredMemory:
         return self._normalize(value_text)
 
     def forget(self, key: str) -> None:
+        # GR-2: forgetting closes the window and deletes the live row,
+        # but the ledger rows stay -- as-of reads before the forget still
+        # return the old value. Invalidation never deletes history.
+        stripped = str(key or "").strip()
+        existing = next(
+            (f for f in self.store.list_facts() if f["key"] == stripped), None
+        ) if stripped else None
+        if existing is not None:
+            self._close_open_window(stripped, utc_now(), fallback=existing)
         self.store.delete_fact(key)
 
     # -- CM-1: structured observation records ---------------------------
@@ -410,6 +748,7 @@ class StructuredMemory:
         by_key = {fact["key"]: fact for fact in facts}
         merged: list[dict[str, Any]] = []
         removed: set[str] = set()
+        now = utc_now()
         for alias, keys in sorted(claimants.items()):
             live = [key for key in keys if key not in removed]
             if len(live) < 2:
@@ -427,26 +766,48 @@ class StructuredMemory:
             union = [a for a in union if a != kept]
             winner = by_key[kept]
             self.store.put_fact(kept, winner["value"], aliases=tuple(union))
+            # GR-2: the winner stays current (backfill its window when it
+            # has none); each loser is invalidated at ``now`` with its
+            # pre-consolidation version preserved in the ledger.
+            self._ensure_open_window(
+                kept, winner["value"], tuple(union),
+                str(winner.get("created_at") or now),
+            )
             for loser in losers:
+                self._close_open_window(loser, now, fallback=by_key[loser])
                 self.store.delete_fact(loser)
                 removed.add(loser)
             merged.append({"kept": kept, "removed": losers, "alias": alias})
         return {"merged": merged, "fact_count": len(facts) - len(removed)}
 
     def recall(self, query: str) -> FactMatch | None:
+        """Current-valid exact match only (GR-1): superseded versions
+        (ledger rows, no open window) never surface here. Use
+        recall_as_of() for historical values."""
         normalized = self._normalize(query)
         if not normalized:
             return None
+        index = self._validity_index()
+        open_windows, _ = index
         for record in self.store.list_facts():
+            if not self._is_current(record["key"], index=index):
+                continue
             key_norm = self._normalize(record["key"])
+            valid_at = open_windows.get(
+                record["key"], str(record.get("created_at") or None)
+            )
             if normalized == key_norm:
-                return FactMatch(record["key"], record["value"], "key")
+                return FactMatch(
+                    record["key"], record["value"], "key", valid_at=valid_at,
+                )
             for alias in record["aliases"]:
                 alias_norm = self._normalize(alias)
                 if not alias_norm:
                     continue
                 if normalized == alias_norm:
-                    return FactMatch(record["key"], record["value"], alias)
+                    return FactMatch(
+                        record["key"], record["value"], alias, valid_at=valid_at,
+                    )
         return None
 
     def relevant_context(
@@ -607,7 +968,17 @@ class StructuredMemory:
         # Bound retained candidates and each row, not just the final prompt.
         matches: list[tuple[int, int, str, dict[str, Any]]] = []
         preferences: dict[str, tuple[str, str, dict[str, Any]]] = {}
+        # GR-1: superseded facts (ledger rows, no open window) never enter
+        # cognition context; legacy rows without ledger rows stay valid.
+        self._ensure_history_schema()
         with self.store._lock:
+            open_windows, known_keys = set(), set()
+            for window in self.store._conn.execute(
+                "SELECT fact_key, invalid_at FROM memory_history"
+            ).fetchall():
+                known_keys.add(str(window["fact_key"]))
+                if window["invalid_at"] is None:
+                    open_windows.add(str(window["fact_key"]))
             rows = self.store._conn.execute(
                 "SELECT fact_key, value_json, substr(aliases_json, 1, 4097) AS aliases_json, updated_at "
                 "FROM facts WHERE length(value_json)<=? AND length(fact_key)<=256",
@@ -616,6 +987,8 @@ class StructuredMemory:
             try:
                 for row in rows:
                     key = str(row["fact_key"])
+                    if key in known_keys and key not in open_windows:
+                        continue
                     try:
                         value = json.loads(row["value_json"])
                         aliases = json.loads(row["aliases_json"])
