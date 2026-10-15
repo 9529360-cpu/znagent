@@ -22,6 +22,7 @@ from urllib.parse import urlsplit
 import httpx
 
 from .credential_isolation import CredentialRedactingFilter
+from .proxy_env import normalize_proxy_url
 
 logger = logging.getLogger(__name__)
 logger.addFilter(CredentialRedactingFilter())
@@ -76,12 +77,16 @@ def _split_host_port(value: str) -> tuple[str, int | None]:
     if not raw:
         return "", None
     if "://" in raw:
-        parsed = urlsplit(raw)
         try:
-            port = parsed.port
+            parsed = urlsplit(raw)
+            try:
+                port = parsed.port
+            except ValueError:
+                port = None
+            return (parsed.hostname or "").lower().rstrip("."), port
         except ValueError:
-            port = None
-        return (parsed.hostname or "").lower().rstrip("."), port
+            # Malformed URL (e.g. unclosed IPv6 bracket): never match, never crash.
+            return "", None
     if raw.startswith("[") and "]" in raw:
         host, _, rest = raw[1:].partition("]")
         port = int(rest[1:]) if rest.startswith(":") and rest[1:].isdigit() else None
@@ -209,10 +214,13 @@ def resolve_proxy_url(
         env.get("http_proxy"),
     )
     for candidate in candidates:
-        value = str(candidate or "").strip()
-        if value:
-            return value
-    return _detect_macos_system_proxy()
+        # Explicit `proxy=` requires a scheme and a parseable URL; malformed
+        # candidates are skipped (fall through to the next) instead of
+        # crashing the client construction downstream.
+        normalized = normalize_proxy_url(candidate)
+        if normalized is not None:
+            return normalized
+    return normalize_proxy_url(_detect_macos_system_proxy())
 
 
 def _response_json(response: Any) -> dict[str, Any]:

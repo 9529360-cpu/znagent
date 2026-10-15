@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping
 
 from .cognitive_resource import CognitiveIncrement, _owned_cognitive_client
 from .models import ModelRoute
+from .proxy_env import build_sdk_client
 
 
 ClientBuilder = Callable[..., Any]
@@ -117,7 +118,9 @@ def _build_anthropic_client(route: ModelRoute, client_builder: "ClientBuilder | 
         kwargs["base_url"] = route.metadata["base_url"]
     if route.metadata.get("timeout") is not None:
         kwargs["timeout"] = route.metadata["timeout"]
-    return builder(**kwargs)
+    # Malformed proxy env must never take cognition offline: fall back to a
+    # direct-connection http_client instead of crashing at construction.
+    return build_sdk_client(builder, **kwargs)
 
 
 class AnthropicCognitiveResource:

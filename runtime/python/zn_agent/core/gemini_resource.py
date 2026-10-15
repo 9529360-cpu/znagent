@@ -15,10 +15,9 @@ import re
 from typing import Any, Mapping
 from urllib.parse import quote
 
-import httpx
-
 from .cognitive_resource import CognitiveIncrement
 from .models import ModelRoute
+from .proxy_env import build_httpx_client
 
 
 DEFAULT_GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
@@ -149,7 +148,9 @@ class GeminiCognitiveResource:
         client: Any | None = None,
     ):
         self.route = resolve_gemini_route(route)
-        self._client = client or httpx.Client()
+        # Malformed proxy env must never take cognition offline: fall back to
+        # a direct connection instead of crashing at construction.
+        self._client = client or build_httpx_client()
         self._owns_client = client is None
 
     def close(self) -> None:
