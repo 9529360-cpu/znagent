@@ -26,6 +26,7 @@ import yaml
 
 from .home import get_zn_home
 from .models import AgentEvent, CognitionRequest
+from .skill_lock import SkillLock, content_sha256
 from .skill_routing import SkillRouter
 
 MAX_SKILL_CONTEXT_BYTES = 8192
@@ -108,6 +109,46 @@ class SkillStore:
         if len(body) > MAX_SKILL_BODY_CHARS:
             body = body[:MAX_SKILL_BODY_CHARS]
         return Skill(name=name, description=description, version=version, path=path, body=body)
+
+    def skill_lock(self) -> SkillLock:
+        """The version lockfile for this skills root (created on save)."""
+        return SkillLock(self.root)
+
+    def install_skill(self, name: str, text: str, *, source: str = "local") -> Path:
+        """Install/update one file-based skill bundle, lockfile-enforced.
+
+        This is the sanctioned write path for ``skill.md`` bundles: a
+        pinned skill refuses any overwriting change (``SkillLockedError``,
+        file untouched); an unpinned skill is written and its lockfile
+        entry refreshed. Byte-identical rewrites of a pinned skill are
+        allowed (idempotent, not a change).
+        """
+        clean_name = _clean(name)
+        if not _NAME_RE.match(clean_name):
+            raise ValueError(f"invalid skill name: {name!r}")
+        meta, body = _split_frontmatter(text)
+        version = _clean(meta.get("version") or "0.1.0")
+        if not body.strip():
+            raise ValueError(f"skill {clean_name!r} has an empty body")
+        lock = self.skill_lock()
+        lock.check_write(clean_name, new_text=text, new_version=version)
+        directory = self.root / clean_name
+        directory.mkdir(parents=True, exist_ok=True)
+        skill_file = directory / "skill.md"
+        skill_file.write_text(text, encoding="utf-8")
+        if lock.is_pinned(clean_name):
+            # Identical rewrite of a pinned skill: allowed, and the
+            # lockfile entry stays exactly as pinned (no record update).
+            return skill_file
+        lock.record(
+            clean_name,
+            version=version,
+            content_sha256=content_sha256(text),
+            kind="local",
+            source=_clean(source),
+        )
+        lock.save()
+        return skill_file
 
     def relevant_skills(
         self,
