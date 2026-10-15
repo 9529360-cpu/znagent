@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('znDesktop', {
     workList: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-list', payload || {}),
     workCreate: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-create', payload || {}),
     workGet: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-get', payload || {}),
+    workRename: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-rename', payload || {}),
     workStart: (payload?: ZnDesktopPayload) => ipcRenderer.invoke('zn:resident:work-start', payload || {}),
     workProgress: (payload?: ZnDesktopPayload) =>
       ipcRenderer.invoke('zn:resident:work-progress', payload || {}),
