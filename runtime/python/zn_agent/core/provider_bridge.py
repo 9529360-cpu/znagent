@@ -23,6 +23,7 @@ from .credentials import (
 from .home import get_zn_home
 from .models import ModelRoute
 from .runtime import ZNKernelRuntime
+from .session_log import SessionEventSink, SessionLog
 from .store import KernelStore
 from .worker import UnavailableModelWorkerFactory, WorkerFactory
 
@@ -173,6 +174,7 @@ def build_zn_cognitive_resource_plan(
     config: dict[str, Any],
     *,
     credential_store: CredentialStore | None = None,
+    session_sink: SessionEventSink | None = None,
 ) -> ZNCognitiveResourcePlan:
     """Resolve external cognition without making its failure a resident failure."""
 
@@ -207,7 +209,7 @@ def build_zn_cognitive_resource_plan(
 
     return ZNCognitiveResourcePlan(
         routes=routes,
-        worker_factory=ZNCognitiveResourceWorkerFactory(),
+        worker_factory=ZNCognitiveResourceWorkerFactory(session_sink=session_sink),
         max_attempts=max_attempts,
         available=True,
     )
@@ -221,7 +223,13 @@ def apply_zn_cognitive_config(
 ) -> ZNCognitiveResourcePlan:
     """Hot-apply provider resources while preserving the same kernel identity/store."""
 
-    plan = build_zn_cognitive_resource_plan(config, credential_store=credential_store)
+    # DSH-1: the replacement factory must carry the same session sink, or
+    # model requests would silently stop being logged after a hot-apply.
+    store = getattr(runtime, "store", None)
+    sink = SessionLog(store) if store is not None else None
+    plan = build_zn_cognitive_resource_plan(
+        config, credential_store=credential_store, session_sink=sink
+    )
     observer = getattr(runtime, "resource_health_observer", None)
     setter = getattr(plan.worker_factory, "set_health_observer", None)
     if observer is not None and callable(setter):
@@ -254,16 +262,25 @@ def build_runtime(
     """Build the ZN kernel from only ZN-owned configuration and resources."""
     if config is None:
         config = load_zn_config()
-    plan = build_zn_cognitive_resource_plan(config, credential_store=credential_store)
     if store_path is None:
         store_path = get_zn_home() / "kernel" / "kernel.db"
-    return ZNKernelRuntime(
-        store=KernelStore(store_path),
+    store = KernelStore(store_path)
+    # DSH-1: one session log per kernel store. The factory's sink writes
+    # every model request (exact post-redaction provider body) to it, so
+    # any model request can later be rebuilt from the log alone.
+    session_log = SessionLog(store)
+    plan = build_zn_cognitive_resource_plan(
+        config, credential_store=credential_store, session_sink=session_log
+    )
+    kernel = ZNKernelRuntime(
+        store=store,
         routes=plan.routes,
         worker_factory=plan.worker_factory,
         max_attempts=plan.max_attempts,
         resource_status={"available": plan.available, "error": plan.error},
     )
+    kernel.session_log = session_log
+    return kernel
 
 
 def build_resident_runtime(

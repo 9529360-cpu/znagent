@@ -19,6 +19,7 @@ from .cognitive_resource import (
 )
 from .gemini_resource import GeminiCognitiveResource, resolve_gemini_route
 from .models import ModelRoute
+from .session_log import SessionEventSink
 
 
 def resolve_zn_cognitive_route(route: ModelRoute) -> ModelRoute:
@@ -41,10 +42,11 @@ class ZNCognitiveResourceWorkerFactory(CognitiveResourceWorkerFactory):
         anthropic_client_builder: Any | None = None,
         gemini_client: Any | None = None,
         health_observer: ResourceHealthObserver | None = None,
+        session_sink: SessionEventSink | None = None,
     ):
         # Keep inheritance for compatibility with callers/tests that check the
         # old factory seam while moving actual resource ownership into ZN.
-        super().__init__(health_observer=health_observer)
+        super().__init__(health_observer=health_observer, session_sink=session_sink)
         self.openai_client_builder = openai_client_builder
         self.anthropic_client_builder = anthropic_client_builder
         self.gemini_client = gemini_client
@@ -65,16 +67,19 @@ class ZNCognitiveResourceWorkerFactory(CognitiveResourceWorkerFactory):
                 resource = AnthropicCognitiveResource(
                     route,
                     client_builder=self.anthropic_client_builder,
+                    session_sink=self.session_sink,
                 )
             elif route.provider == "gemini" or api_mode == "gemini_native":
                 resource = GeminiCognitiveResource(
                     route,
                     client=self.gemini_client,
+                    session_sink=self.session_sink,
                 )
             else:
                 resource = OpenAICompatibleCognitiveResource(
                     route,
                     client_builder=self.openai_client_builder,
+                    session_sink=self.session_sink,
                 )
         except Exception as exc:
             self._observe_factory_failure(route, exc)
@@ -83,6 +88,7 @@ class ZNCognitiveResourceWorkerFactory(CognitiveResourceWorkerFactory):
             resource,
             route=route,
             health_observer=self.health_observer,
+            session_sink=self.session_sink,
         )
 
     def _observe_factory_failure(self, route: ModelRoute, error: BaseException) -> None:

@@ -128,6 +128,11 @@ from .router import ModelRouter, NoRouteAvailable
 from .runtime import ZNKernelRuntime
 from .service import ResidentAlreadyRunning, ResidentService
 from .self_model import DomainReadiness, SelfModel, TaskReadiness
+from .session_log import (
+    SessionEvent,
+    SessionLog,
+    rebuild_model_request,
+)
 from .store import KernelStore
 from .will import NativeWill, ResidentIntention
 from .worker import Worker, WorkerFactory
@@ -251,7 +256,10 @@ __all__ = [
     "route_from_spec",
     "RuntimeMetrics",
     "SelfModel",
+    "SessionEvent",
+    "SessionLog",
     "SituationModel",
+    "rebuild_model_request",
     "StructuredMemory",
     "TaskReadiness",
     "ThoughtFrame",

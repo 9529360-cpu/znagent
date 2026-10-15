@@ -24,6 +24,7 @@ from .credential_isolation import CredentialRedactingFilter
 from .models import Goal, ModelRoute, WorkerResult
 from .privacy_choke import redact_for_egress
 from .proxy_env import build_sdk_client
+from .session_log import SessionEventSink, content_fingerprint, new_request_id
 
 
 @dataclass(slots=True)
@@ -274,9 +275,28 @@ class OpenAICompatibleCognitiveResource:
         route: ModelRoute,
         *,
         client_builder: ClientBuilder | None = None,
+        session_sink: SessionEventSink | None = None,
     ):
         self.route = resolve_openai_compatible_route(route)
         self._client_builder = client_builder
+        self._session_sink = session_sink
+
+    def _emit_session_event(
+        self,
+        kind: str,
+        *,
+        request_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        # DSH-1: session logging must never break cognition. A failed emit
+        # is a warning, not a provider failure; the request still goes out.
+        sink = self._session_sink
+        if sink is None:
+            return
+        try:
+            sink.emit(kind, request_id=request_id, payload=payload)
+        except Exception as exc:
+            _LOG.warning("Session log emit failed (%s)", type(exc).__name__)
 
     def _client(self):
         builder = self._client_builder
@@ -303,6 +323,7 @@ class OpenAICompatibleCognitiveResource:
         question: str,
         context: str,
         on_delta: Callable[[str], None] | None = None,
+        request_id: str | None = None,
     ) -> CognitiveIncrement:
         # W-2 egress redaction: this is the boundary where ZN text leaves
         # for a model server -- question and context are scrubbed here,
@@ -331,6 +352,47 @@ class OpenAICompatibleCognitiveResource:
 
         if on_delta is not None:
             request["stream"] = True
+        rid = str(request_id or "").strip() or new_request_id()
+        # DSH-1: log the exact post-redaction request BEFORE sending, so an
+        # interrupted dispatch is still reconstructable. The logged request
+        # holds no credentials: api key / base_url live on the client, not
+        # in this body.
+        self._emit_session_event(
+            "model_request_sent",
+            request_id=rid,
+            payload={
+                "provider": self.route.provider,
+                "model": self.route.model,
+                "api_mode": "chat_completions",
+                "request": request,
+            },
+        )
+        try:
+            increment = self._invoke_with_client(request, on_delta)
+        except Exception as exc:
+            self._emit_session_event(
+                "model_request_failed",
+                request_id=rid,
+                payload={"error_type": type(exc).__name__},
+            )
+            raise
+        self._emit_session_event(
+            "model_response",
+            request_id=rid,
+            payload={
+                "text": increment.text,
+                "finish_reason": increment.finish_reason,
+                "usage": dict(increment.usage or {}),
+            },
+        )
+        return increment
+
+    def _invoke_with_client(
+        self,
+        request: dict[str, Any],
+        on_delta: Callable[[str], None] | None,
+    ) -> CognitiveIncrement:
+        increment: CognitiveIncrement | None = None
         with _owned_cognitive_client(self._client()) as client:
             response = client.chat.completions.create(**request)
             if on_delta is not None and hasattr(response, "__iter__") and not hasattr(response, "choices"):
@@ -361,7 +423,7 @@ class OpenAICompatibleCognitiveResource:
                 result_text = "".join(chunks).strip()
                 if not result_text:
                     raise RuntimeError("cognitive resource returned an empty response")
-                return CognitiveIncrement(
+                increment = CognitiveIncrement(
                     text=result_text,
                     provider=self.route.provider,
                     model=self.route.model,
@@ -369,6 +431,8 @@ class OpenAICompatibleCognitiveResource:
                     usage=usage,
                     metadata={"api_mode": "chat_completions", "streamed": True},
                 )
+        if increment is not None:
+            return increment
         choices = getattr(response, "choices", None) or []
         if not choices:
             raise RuntimeError("cognitive resource returned no choices")
@@ -404,10 +468,61 @@ class CognitiveResourceWorker:
         *,
         route: ModelRoute | None = None,
         health_observer: ResourceHealthObserver | None = None,
+        session_sink: SessionEventSink | None = None,
     ):
         self.resource = resource
         self.route = route
         self.health_observer = health_observer
+        self._session_sink = session_sink
+
+    @staticmethod
+    def _invoke_accepts(invoke: Any, name: str) -> bool:
+        try:
+            parameters = inspect.signature(invoke).parameters.values()
+        except (TypeError, ValueError):
+            return False
+        return any(
+            parameter.name == name
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+
+    def _emit_planned(
+        self,
+        goal: Goal,
+        kernel_context: str,
+        request_id: str,
+        session_id: str,
+    ) -> None:
+        # DSH-1: planned event carries correlation ids plus only lengths
+        # and hashes of the pre-redaction question/context. The raw
+        # pre-redaction text is never logged: the model only ever sees
+        # the redacted form, which the resource logs as the sent event.
+        sink = self._session_sink
+        if sink is None:
+            return
+        try:
+            metadata = goal.metadata if isinstance(goal.metadata, dict) else {}
+            cognition = metadata.get("cognition_request")
+            cognition_request_id = ""
+            if isinstance(cognition, dict):
+                cognition_request_id = str(cognition.get("request_id") or "")
+            sink.emit(
+                "model_request_planned",
+                request_id=request_id,
+                session_id=session_id,
+                payload={
+                    "goal_id": goal.goal_id,
+                    "resident_event_id": str(metadata.get("resident_event_id") or ""),
+                    "cognition_request_id": cognition_request_id,
+                    "question_chars": len(goal.task or ""),
+                    "context_chars": len(kernel_context or ""),
+                    "question_sha256": content_fingerprint(goal.task or ""),
+                    "context_sha256": content_fingerprint(kernel_context or ""),
+                },
+            )
+        except Exception as exc:
+            _LOG.warning("Session log emit failed (%s)", type(exc).__name__)
 
     def run(self, goal: Goal, kernel_context: str) -> WorkerResult:
         return self._run(goal, kernel_context)
@@ -427,24 +542,20 @@ class CognitiveResourceWorker:
         *,
         on_delta: Callable[[str], None] | None = None,
     ) -> WorkerResult:
+        request_id = new_request_id()
+        metadata = goal.metadata if isinstance(goal.metadata, dict) else {}
+        session_id = str(metadata.get("resident_event_id") or "") or goal.goal_id
+        self._emit_planned(goal, kernel_context, request_id, session_id)
         try:
             invoke = self.resource.invoke
-            if on_delta is not None:
-                try:
-                    parameters = inspect.signature(invoke).parameters.values()
-                    supports_delta = any(
-                        parameter.name == "on_delta"
-                        or parameter.kind is inspect.Parameter.VAR_KEYWORD
-                        for parameter in parameters
-                    )
-                except (TypeError, ValueError):
-                    supports_delta = False
-                if supports_delta:
-                    increment = invoke(question=goal.task, context=kernel_context, on_delta=on_delta)
-                else:
-                    increment = invoke(question=goal.task, context=kernel_context)
-            else:
-                increment = invoke(question=goal.task, context=kernel_context)
+            kwargs: dict[str, Any] = {}
+            if on_delta is not None and self._invoke_accepts(invoke, "on_delta"):
+                kwargs["on_delta"] = on_delta
+            if self._invoke_accepts(invoke, "request_id"):
+                kwargs["request_id"] = request_id
+            increment = invoke(
+                question=goal.task, context=kernel_context, **kwargs
+            )
         except Exception as exc:
             self._observe(exc)
             return WorkerResult(
@@ -495,16 +606,39 @@ class CognitiveResourceWorkerFactory:
         resource_builder: ResourceBuilder | None = None,
         *,
         health_observer: ResourceHealthObserver | None = None,
+        session_sink: SessionEventSink | None = None,
     ):
         self.resource_builder = resource_builder or OpenAICompatibleCognitiveResource
         self.health_observer = health_observer
+        self.session_sink = session_sink
 
     def set_health_observer(self, observer: ResourceHealthObserver | None) -> None:
         self.health_observer = observer
 
+    def set_session_sink(self, sink: SessionEventSink | None) -> None:
+        self.session_sink = sink
+
     def create(self, route: ModelRoute) -> CognitiveResourceWorker:
+        builder = self.resource_builder
+        if self.session_sink is not None and self._builder_accepts_sink(builder):
+            resource = builder(route, session_sink=self.session_sink)
+        else:
+            resource = builder(route)
         return CognitiveResourceWorker(
-            self.resource_builder(route),
+            resource,
             route=route,
             health_observer=self.health_observer,
+            session_sink=self.session_sink,
+        )
+
+    @staticmethod
+    def _builder_accepts_sink(builder: Any) -> bool:
+        try:
+            parameters = inspect.signature(builder).parameters.values()
+        except (TypeError, ValueError):
+            return False
+        return any(
+            parameter.name == "session_sink"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
         )
