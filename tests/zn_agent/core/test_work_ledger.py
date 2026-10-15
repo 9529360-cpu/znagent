@@ -12,6 +12,80 @@ from zn_agent.core.work import ResidentWorkLedger
 
 
 class ResidentWorkLedgerTests(unittest.TestCase):
+    def test_thread_rename_preserves_work_and_survives_resident_restart(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=store_path,
+            )
+            ledger = ResidentWorkLedger(resident)
+            thread = ledger.create_thread(
+                thread_id="rename-me", title="Original title", metadata={"tag": "keep"},
+            )
+            message = ledger.append_message(
+                thread.thread_id, role="user", text="Preserved message",
+            )
+            renamed = ledger.rename_thread(thread.thread_id, "  Better  \n title ")
+            self.assertEqual(renamed.thread_id, thread.thread_id)
+            self.assertEqual(renamed.title, "Better title")
+            self.assertEqual(renamed.metadata, thread.metadata)
+            self.assertEqual(renamed.created_at, thread.created_at)
+            unchanged = ledger.rename_thread(thread.thread_id, "Better title")
+            self.assertEqual(unchanged.updated_at, renamed.updated_at)
+            for invalid in ("", "   ", "a" * 121):
+                with self.assertRaises(ValueError):
+                    ledger.rename_thread(thread.thread_id, invalid)
+            with self.assertRaises(ValueError):
+                ledger.rename_thread("absent-thread", "Valid title")
+            self.assertEqual(ledger.get_thread(thread.thread_id).title, "Better title")
+            resident.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=store_path,
+            )
+            restored_ledger = ResidentWorkLedger(restored)
+            snapshot, messages = restored_ledger.get_snapshot(thread.thread_id)
+            self.assertEqual(snapshot.title, "Better title")
+            self.assertEqual(snapshot.metadata, thread.metadata)
+            self.assertEqual([item.message_id for item in messages], [message.message_id])
+            restored.store.close()
+
+    def test_rename_rpc_round_trips_and_rejects_unexpected_fields(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=Path(tmp) / "kernel.db",
+            )
+            server = ResidentRpcServer(
+                resident=resident,
+                input_stream=io.StringIO(),
+                output_stream=io.StringIO(),
+            )
+            created = server.handle({
+                "id": "create", "method": "work_create",
+                "params": {"thread_id": "rpc-rename", "title": "Original"},
+            })
+            self.assertTrue(created["ok"])
+            renamed = server.handle({
+                "id": "rename", "method": "work_rename",
+                "params": {"thread_id": "rpc-rename", "title": "Edited"},
+            })
+            self.assertTrue(renamed["ok"])
+            self.assertEqual(renamed["result"]["id"], "rpc-rename")
+            self.assertEqual(renamed["result"]["title"], "Edited")
+            invalid = server.handle({
+                "id": "invalid", "method": "work_rename",
+                "params": {
+                    "thread_id": "rpc-rename", "title": "Untrusted", "metadata": {},
+                },
+            })
+            self.assertFalse(invalid["ok"])
+            current = server.handle({
+                "id": "get", "method": "work_get",
+                "params": {"thread_id": "rpc-rename"},
+            })
+            self.assertEqual(current["result"]["title"], "Edited")
+            resident.store.close()
+
     def test_work_history_survives_resident_reconstruction(self):
         with tempfile.TemporaryDirectory() as tmp:
             store_path = Path(tmp) / "kernel.db"
