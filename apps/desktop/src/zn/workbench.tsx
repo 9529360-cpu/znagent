@@ -909,7 +909,7 @@ export function ZnWorkbench() {
         setSidebarExpanded(true)
         setSearchFocusPending(true)
         requestWindowMode('expanded')
-      } else if (shortcut === 'stop' && view === 'work' && workActive && !stoppingWork) {
+      } else if (shortcut === 'stop' && view === 'work' && workProgress && workActive && !stoppingWork) {
         event.preventDefault()
         // Only the Resident decides whether the active event can be cancelled.
         void cancelCurrentWork()
@@ -917,7 +917,7 @@ export function ZnWorkbench() {
     }
     window.addEventListener('keydown', onKeyDown)
     return () => window.removeEventListener('keydown', onKeyDown)
-  }, [cancelCurrentWork, requestWindowMode, stoppingWork, view, workActive])
+  }, [cancelCurrentWork, requestWindowMode, stoppingWork, view, workActive, workProgress])
 
   const openSettings = useCallback(() => {
     setSettingsSection('language')
