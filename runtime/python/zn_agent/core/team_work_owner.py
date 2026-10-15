@@ -24,6 +24,7 @@ existing ``DisbandPlan`` -- never automatic.
 import json
 import uuid
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,7 +34,7 @@ from .completion_verdict import (
     record_verdict_attempt,
 )
 from .plan_mode import approved_plan_text
-from .project_team import ProjectTeam, assemble_team
+from .project_team import ProjectTeam, assemble_team, journal_message
 from .skill_ledger import SkillLedger
 from .specialist_workspace import (
     materialize_team_workspaces,
@@ -49,7 +50,11 @@ from .team_runner import (
     describe_team_route,
     WorkflowRoute,
 )
-from .team_timeline import apply_assignee_overrides, assignee_overrides
+from .team_timeline import (
+    apply_assignee_overrides,
+    assignee_overrides,
+    record_assignee_override,
+)
 
 
 #: Metrics key holding the Body-verified specialist evidence on a WorkerRun.
@@ -91,6 +96,10 @@ class TeamOwnerStep:
     # CP-3: set when the verdict retry budget is exhausted -- the resident
     # fails closed with this reason instead of re-asking cognition.
     verdict_escalation: str | None = None
+    # AF-4: handoffs executed / rejected by the auto-handoff middleware
+    # on this pulse (durable records; see HandoffRecord). Empty when the
+    # middleware ran clean with nothing to do.
+    handoffs: list[dict[str, Any]] = field(default_factory=list)
 
 
 def verified_evidence(run: Any) -> list[dict[str, Any]]:
@@ -106,6 +115,221 @@ def verified_evidence(run: Any) -> list[dict[str, Any]]:
         for entry in raw
         if isinstance(entry, dict) and entry.get("verified") is True
     ]
+
+
+# -- handoff (AF-4) --------------------------------------------------------
+#
+# Handoff as a tool + automatic-handoff middleware, replacing owner
+# re-dispatch. A specialist hands a plan item to another specialist with
+# its full context (task + progress + evidence refs); the middleware
+# drains explicit handoff requests and applies one conservative
+# capability-mismatch rule. Every executed handoff AND every rejected
+# request is durably logged in team shared memory (auditable), and every
+# executed handoff is journaled (kind="handoff") so the timeline shows
+# who handed what to whom, when, and why.
+#
+# The owner @-reassign path (``record_assignee_override`` via the
+# timeline) still works unchanged -- a handoff is the same durable
+# override plus a context snapshot, a journal entry, and an audit record.
+
+#: Team shared-memory key holding the durable handoff audit log: a list
+#: of ``HandoffRecord`` dicts (executed + rejected).
+HANDOFF_LOG_KEY = "handoffs"
+#: Team shared-memory key holding pending handoff requests.
+HANDOFF_REQUESTS_KEY = "handoff_requests"
+#: Tool name specialists call to hand a task to another specialist.
+HANDOFF_TOOL_NAME = "handoff_task"
+#: Max audit-log entries kept (oldest dropped first).
+HANDOFF_LOG_CAP = 200
+#: Max pending requests kept.
+HANDOFF_REQUESTS_CAP = 50
+#: Max characters of a specialist's progress summary kept in a record.
+HANDOFF_PROGRESS_CAP = 2000
+#: Max evidence refs kept in one record.
+HANDOFF_EVIDENCE_CAP = 20
+
+#: Capability signals: capability label -> keywords. A member "has" a
+#: capability when any keyword appears in its role key / title /
+#: responsibilities; a plan item "requires" it when a keyword appears in
+#: its title / objective. Explicit substring matching, no LLM judgment.
+#: The auto capability rule only fires on a total mismatch (the current
+#: holder covers NONE of the required capabilities) with exactly one
+#: member covering ALL of them, so a fuzzy signal can never silently
+#: reroute work to an ambiguous target.
+CAPABILITY_SIGNALS: dict[str, tuple[str, ...]] = {
+    "research": ("research", "调研", "选型", "文献"),
+    "design": ("design", "设计", "架构", "接口契约", "数据模型", "原型"),
+    "implement": ("implement", "实现", "编码", "开发", "代码", "coding", "build"),
+    "test": ("test", "测试", "验收", "qa", "回归", "pytest", "验证"),
+    "deploy": ("deploy", "部署", "发布", "上线", "release"),
+    "docs": ("doc", "文档", "手册"),
+}
+
+
+def _capabilities_of(text: str) -> set[str]:
+    """Capability labels whose keywords appear in ``text`` (lowercased)."""
+    lowered = str(text or "").lower()
+    return {
+        label
+        for label, keywords in CAPABILITY_SIGNALS.items()
+        if any(keyword in lowered for keyword in keywords)
+    }
+
+
+def _member_capabilities(member: Any) -> set[str]:
+    """Capabilities a specialist advertises via role + responsibilities."""
+    parts = [
+        str(getattr(member, "role_key", "") or ""),
+        str(getattr(member, "role_title", "") or ""),
+    ]
+    responsibilities = getattr(member, "responsibilities", None) or ()
+    parts.extend(str(item or "") for item in responsibilities)
+    return _capabilities_of("\n".join(parts))
+
+
+def _item_capabilities(plan_item: Any) -> set[str]:
+    """Capabilities a plan item's title + objective call for."""
+    return _capabilities_of(
+        str(getattr(plan_item, "title", "") or "")
+        + "\n"
+        + str(getattr(plan_item, "objective", "") or "")
+    )
+
+
+def _normalize_evidence_refs(refs: Any) -> list[dict[str, Any]]:
+    """Evidence refs as JSON-safe dicts, capped in count and value size."""
+    if not isinstance(refs, (list, tuple)):
+        return []
+    out: list[dict[str, Any]] = []
+    for ref in refs[:HANDOFF_EVIDENCE_CAP]:
+        if not isinstance(ref, dict):
+            continue
+        entry: dict[str, Any] = {}
+        for key, value in ref.items():
+            text = str(value) if not isinstance(value, str) else value
+            entry[str(key)[:100]] = text[:300]
+        out.append(entry)
+    return out
+
+
+def handoff_tool_spec() -> dict[str, Any]:
+    """Tool descriptor the resident exposes to specialist cognition.
+
+    Calling the tool routes to :meth:`TeamWorkOwner.execute_handoff` with
+    the same arguments. The specialist hands off the *task*, never just
+    a title: ``progress_summary`` + ``evidence_refs`` are the context the
+    receiving specialist continues from.
+    """
+    return {
+        "name": HANDOFF_TOOL_NAME,
+        "description": (
+            "Hand the current plan item to another team specialist when "
+            "you cannot or should not finish it (wrong capability, "
+            "explicitly asked to hand off). The receiving specialist gets "
+            "the full task, your progress summary, and your evidence refs. "
+            "Use progress_summary to say what is done, what is left, and "
+            "what to watch out for -- never hand off an empty summary on "
+            "a half-finished item."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "plan_item_id": {
+                    "type": "string",
+                    "description": "Plan item id being handed off.",
+                },
+                "to_specialist": {
+                    "type": "string",
+                    "description": "Name of the receiving specialist.",
+                },
+                "reason": {
+                    "type": "string",
+                    "description": "Why the handoff is needed.",
+                },
+                "progress_summary": {
+                    "type": "string",
+                    "description": (
+                        "What is done, what is left, and what to watch "
+                        "out for (carried verbatim into the handoff)."
+                    ),
+                },
+                "evidence_refs": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": (
+                        "Evidence refs (artifact refs / file paths / "
+                        "conclusions) the receiver continues from."
+                    ),
+                },
+            },
+            "required": ["plan_item_id", "to_specialist", "reason"],
+        },
+    }
+
+
+@dataclass(slots=True)
+class HandoffRecord:
+    """One auditable handoff: executed or rejected, never silent."""
+
+    handoff_id: str
+    plan_item_id: str
+    item_title: str
+    from_specialist: str
+    to_specialist: str
+    reason: str
+    triggered_by: str  # tool | auto:explicit_request | auto:capability_mismatch
+    status: str  # executed | rejected
+    created_at: str
+    context: dict[str, Any] = field(default_factory=dict)
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "handoff_id": self.handoff_id,
+            "plan_item_id": self.plan_item_id,
+            "item_title": self.item_title,
+            "from_specialist": self.from_specialist,
+            "to_specialist": self.to_specialist,
+            "reason": self.reason,
+            "triggered_by": self.triggered_by,
+            "status": self.status,
+            "created_at": self.created_at,
+            "context": dict(self.context),
+        }
+
+
+@dataclass(slots=True)
+class HandoffRequest:
+    """A pending handoff request, drained by the auto middleware."""
+
+    request_id: str
+    plan_item_id: str
+    from_specialist: str
+    to_specialist: str
+    reason: str
+    progress_summary: str = ""
+    evidence_refs: list[dict[str, Any]] = field(default_factory=list)
+    created_at: str = ""
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "request_id": self.request_id,
+            "plan_item_id": self.plan_item_id,
+            "from_specialist": self.from_specialist,
+            "to_specialist": self.to_specialist,
+            "reason": self.reason,
+            "progress_summary": self.progress_summary,
+            "evidence_refs": [dict(ref) for ref in self.evidence_refs],
+            "created_at": self.created_at,
+        }
+
+
+@dataclass(slots=True)
+class AutoHandoffResult:
+    """What one middleware pass did."""
+
+    executed: list[dict[str, Any]] = field(default_factory=list)
+    rejected: list[dict[str, Any]] = field(default_factory=list)
+    skipped: list[dict[str, Any]] = field(default_factory=list)
 
 
 class ResidentTeamVerifier:
@@ -514,6 +738,19 @@ class TeamWorkOwner:
         """One durable TeamRunner step for this pulse."""
         thread_id = str(event.payload.get("work_thread_id") or "").strip()
         team = self.resolve_team(event=event, state=state, thread_id=thread_id)
+        # AF-4: automatic handoff runs before the runner step so a
+        # handed-off item dispatches to its new specialist this pulse.
+        # Advisory by design: a middleware failure must never break the
+        # pulse -- the runner step below still runs.
+        handoff_result = AutoHandoffResult()
+        try:
+            handoff_result = self.run_auto_handoff(team=team)
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            handoff_result = AutoHandoffResult()
+        if handoff_result.executed:
+            # Re-resolve so this pulse's team carries the new assignees
+            # (resolve_team applies the durable overrides handoff wrote).
+            team = self.resolve_team(event=event, state=state, thread_id=thread_id)
         claim_outcome = self._apply_pending_claim(state=state, team=team)
         runner = TeamRunner(
             team=team,
@@ -622,20 +859,507 @@ class TeamWorkOwner:
                     break
         else:
             step.message = "team runner step applied; " + "; ".join(result.actions)[:600]
+        step.handoffs = [
+            *handoff_result.executed,
+            *handoff_result.rejected,
+        ]
         return step
+
+    # -- handoff (AF-4) ---------------------------------------------------
+
+    @staticmethod
+    def _now_iso(now: datetime | None) -> str:
+        return (now or datetime.now(timezone.utc)).isoformat()
+
+    def _shared(self, team_id: str) -> Any:
+        return team_shared_memory(self.memory, team_id)
+
+    def handoff_log(self, *, team_id: str) -> list[dict[str, Any]]:
+        """Durable handoff audit log for a team (executed + rejected)."""
+        try:
+            match = self._shared(team_id).recall(HANDOFF_LOG_KEY)
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return []
+        if match is None or not isinstance(match.value, list):
+            return []
+        return [dict(entry) for entry in match.value if isinstance(entry, dict)]
+
+    def _append_handoff_log(self, *, team_id: str, record: dict[str, Any]) -> None:
+        entries = self.handoff_log(team_id=team_id)
+        entries.append(dict(record))
+        self._shared(team_id).remember(
+            HANDOFF_LOG_KEY, entries[-HANDOFF_LOG_CAP:]
+        )
+
+    def pending_handoff_requests(self, *, team_id: str) -> list[dict[str, Any]]:
+        """Pending handoff requests awaiting the middleware drain."""
+        try:
+            match = self._shared(team_id).recall(HANDOFF_REQUESTS_KEY)
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return []
+        if match is None or not isinstance(match.value, list):
+            return []
+        return [dict(entry) for entry in match.value if isinstance(entry, dict)]
+
+    def _effective_team(self, team: ProjectTeam) -> ProjectTeam:
+        """``team`` with durable assignee overrides applied."""
+        try:
+            return apply_assignee_overrides(
+                team, assignee_overrides(self.memory, team.team_id)
+            )
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return team
+
+    def _plan_item(self, team: ProjectTeam, plan_item_id: str) -> Any | None:
+        for plan_item in team.plan:
+            if plan_item.item_id == plan_item_id:
+                return plan_item
+        return None
+
+    def _completed_plan_item_ids(self, team: ProjectTeam) -> set[str]:
+        """Plan items whose WorkItem is already completed (best-effort)."""
+        try:
+            id_map = self._plan_map(team)
+            if not id_map:
+                return set()
+            thread_id = team.work_thread_id or ""
+            items = {
+                item.work_item_id: item
+                for item in self.ledger.list_work_items(thread_id)
+            }
+            completed: set[str] = set()
+            for plan_item_id, wid in id_map.items():
+                item = items.get(wid)
+                if item is not None and item.status == "completed":
+                    completed.add(plan_item_id)
+            return completed
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return set()
+
+    def _live_work_item_ids(self, team: ProjectTeam) -> set[str]:
+        """Work item ids with a live (queued/running, unclaimed) run."""
+        try:
+            id_map = self._plan_map(team)
+            live: set[str] = set()
+            for wid in id_map.values():
+                for run in self.ledger.list_worker_runs(work_item_id=wid, limit=50):
+                    if (
+                        run.state in {"queued", "running"}
+                        and not run.claimed_completion
+                    ):
+                        live.add(str(run.work_item_id or ""))
+                        break
+            return live
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return set()
+
+    def _live_evidence_for(
+        self, *, team: ProjectTeam, plan_item_id: str
+    ) -> list[dict[str, Any]]:
+        """Verified evidence on the item's live run, if any (advisory)."""
+        try:
+            id_map = self._plan_map(team)
+            wid = id_map.get(plan_item_id)
+            if not wid:
+                return []
+            for run in self.ledger.list_worker_runs(work_item_id=wid, limit=50):
+                if run.state in {"queued", "running"} and not run.claimed_completion:
+                    return [
+                        {
+                            "objective": str(entry.get("objective") or "")[:300],
+                            "result": str(entry.get("result") or "")[:900],
+                            "relative_path": str(
+                                entry.get("relative_path") or ""
+                            )[:300],
+                        }
+                        for entry in verified_evidence(run)
+                    ]
+            return []
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return []
+
+    def _handoff_context(
+        self,
+        *,
+        team: ProjectTeam,
+        plan_item: Any,
+        progress_summary: str,
+        evidence_refs: Any,
+    ) -> dict[str, Any]:
+        """Context snapshot the receiving specialist continues from.
+
+        Task (title + objective + acceptance) + progress (caller summary
+        + live-run verified evidence) + caller evidence refs + prior
+        items' conclusions. Advisory parts degrade to empty, never fail
+        the handoff.
+        """
+        try:
+            wid = self._plan_map(team).get(plan_item.item_id) or ""
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            wid = ""
+        return {
+            "task": {
+                "plan_item_id": plan_item.item_id,
+                "title": str(plan_item.title or ""),
+                "objective": str(plan_item.objective or ""),
+                "acceptance_criteria": list(plan_item.acceptance_criteria),
+            },
+            "progress_summary": str(progress_summary or "")[:HANDOFF_PROGRESS_CAP],
+            "live_evidence": self._live_evidence_for(
+                team=team, plan_item_id=plan_item.item_id
+            ),
+            "evidence_refs": _normalize_evidence_refs(evidence_refs),
+            "prior_items": self._prior_items_for(
+                team=team, live_work_item_id=wid
+            )
+            if wid
+            else [],
+        }
+
+    def _journal_handoff(self, *, team: ProjectTeam, record: dict[str, Any]) -> None:
+        """Journal the handoff (best-effort: never fails the handoff)."""
+        thread_id = team.work_thread_id or ""
+        if not thread_id:
+            return
+        try:
+            message = journal_message(
+                team.team_id,
+                str(record.get("from_specialist") or ""),
+                f"交接：{record.get('item_title') or record.get('plan_item_id')} "
+                f"{record.get('from_specialist')} → {record.get('to_specialist')} "
+                f"（{record.get('reason')}）",
+                kind="handoff",
+            )
+            message["detail"].update(
+                {
+                    "handoff_id": record.get("handoff_id"),
+                    "plan_item_id": record.get("plan_item_id"),
+                    "from_author": record.get("from_specialist"),
+                    "to_author": record.get("to_specialist"),
+                    "triggered_by": record.get("triggered_by"),
+                    "status": record.get("status"),
+                }
+            )
+            self.ledger.append_message(
+                thread_id,
+                role=str(message.get("role") or ""),
+                text=str(message.get("text") or ""),
+                detail=dict(message.get("detail") or {}),
+            )
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return
+
+    def request_handoff(
+        self,
+        *,
+        team: ProjectTeam,
+        plan_item_id: str,
+        from_specialist: str,
+        to_specialist: str,
+        reason: str,
+        progress_summary: str = "",
+        evidence_refs: Any = (),
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Record a pending handoff request for the middleware to drain.
+
+        Validates shape only (item exists, both ends are members, from !=
+        to, reason non-empty). Whether the request is *executable* (from
+        is the current holder, item not completed) is decided at drain
+        time and audited as executed / rejected there.
+        """
+        plan_item = self._plan_item(team, str(plan_item_id or ""))
+        if plan_item is None:
+            raise ValueError(f"unknown plan item: {plan_item_id!r}")
+        members = {member.name for member in team.members}
+        if str(from_specialist or "") not in members:
+            raise ValueError(f"unknown specialist: {from_specialist!r}")
+        if str(to_specialist or "") not in members:
+            raise ValueError(f"unknown specialist: {to_specialist!r}")
+        if str(from_specialist or "") == str(to_specialist or ""):
+            raise ValueError("handoff target must differ from the source")
+        if not str(reason or "").strip():
+            raise ValueError("handoff reason must not be empty")
+        pending = self.pending_handoff_requests(team_id=team.team_id)
+        for existing in pending:
+            if (
+                existing.get("plan_item_id") == plan_item.item_id
+                and existing.get("from_specialist") == str(from_specialist or "")
+                and existing.get("to_specialist") == str(to_specialist or "")
+            ):
+                return existing
+        request = HandoffRequest(
+            request_id=f"handoff-req-{uuid.uuid4().hex[:12]}",
+            plan_item_id=plan_item.item_id,
+            from_specialist=str(from_specialist or ""),
+            to_specialist=str(to_specialist or ""),
+            reason=str(reason or "").strip()[:600],
+            progress_summary=str(progress_summary or "")[:HANDOFF_PROGRESS_CAP],
+            evidence_refs=_normalize_evidence_refs(evidence_refs),
+            created_at=self._now_iso(now),
+        ).as_dict()
+        pending.append(request)
+        self._shared(team.team_id).remember(
+            HANDOFF_REQUESTS_KEY, pending[-HANDOFF_REQUESTS_CAP:]
+        )
+        return request
+
+    def execute_handoff(
+        self,
+        *,
+        team: ProjectTeam,
+        plan_item_id: str,
+        from_specialist: str,
+        to_specialist: str,
+        reason: str,
+        progress_summary: str = "",
+        evidence_refs: Any = (),
+        triggered_by: str = "tool",
+        now: datetime | None = None,
+    ) -> dict[str, Any]:
+        """Hand a plan item to another specialist, with full context.
+
+        This is the handoff tool's implementation (see
+        :func:`handoff_tool_spec`). Validates: item exists, both ends
+        are members, from is the *current* holder, to differs from from,
+        reason non-empty, item not completed. On success: durable
+        assignee override + audit-log record + journal entry. Raises
+        ``ValueError`` on any validation failure (the middleware turns
+        those into audited rejections instead of crashing the pulse).
+        """
+        effective = self._effective_team(team)
+        plan_item = self._plan_item(effective, str(plan_item_id or ""))
+        if plan_item is None:
+            raise ValueError(f"unknown plan item: {plan_item_id!r}")
+        members = {member.name for member in effective.members}
+        if str(from_specialist or "") not in members:
+            raise ValueError(f"unknown specialist: {from_specialist!r}")
+        if str(to_specialist or "") not in members:
+            raise ValueError(f"unknown specialist: {to_specialist!r}")
+        if str(from_specialist or "") == str(to_specialist or ""):
+            raise ValueError("handoff target must differ from the source")
+        if not str(reason or "").strip():
+            raise ValueError("handoff reason must not be empty")
+        if plan_item.assignee != str(from_specialist or ""):
+            raise ValueError(
+                f"plan item {plan_item.item_id} is held by "
+                f"{plan_item.assignee!r}, not {from_specialist!r}"
+            )
+        if plan_item.item_id in self._completed_plan_item_ids(effective):
+            raise ValueError(f"plan item {plan_item.item_id} is already completed")
+        context = self._handoff_context(
+            team=effective,
+            plan_item=plan_item,
+            progress_summary=progress_summary,
+            evidence_refs=evidence_refs,
+        )
+        record = HandoffRecord(
+            handoff_id=f"handoff-{uuid.uuid4().hex[:12]}",
+            plan_item_id=plan_item.item_id,
+            item_title=str(plan_item.title or ""),
+            from_specialist=str(from_specialist or ""),
+            to_specialist=str(to_specialist or ""),
+            reason=str(reason or "").strip()[:600],
+            triggered_by=triggered_by,
+            status="executed",
+            created_at=self._now_iso(now),
+            context=context,
+        ).as_dict()
+        record_assignee_override(
+            self.memory,
+            effective.team_id,
+            plan_item.item_id,
+            str(to_specialist or ""),
+        )
+        self._append_handoff_log(team_id=effective.team_id, record=record)
+        self._journal_handoff(team=effective, record=record)
+        return record
+
+    def run_auto_handoff(
+        self,
+        *,
+        team: ProjectTeam,
+        now: datetime | None = None,
+    ) -> AutoHandoffResult:
+        """Automatic-handoff middleware: drain requests + capability rule.
+
+        Rules (explicit, testable, auditable):
+        - ``explicit_request``: a pending :meth:`request_handoff` is
+          executed when valid, else audited as rejected with the reason.
+        - ``capability_mismatch``: a not-yet-dispatched, uncompleted
+          item whose current holder covers NONE of its required
+          capabilities is handed to the single member covering ALL of
+          them. Ties (two or more full-cover candidates) and partial
+          coverage never auto-fire -- the owner decides those. An item
+          is never handed straight back to the specialist who just
+          handed it away (ping-pong guard).
+        """
+        result = AutoHandoffResult()
+        # -- drain pending explicit requests ------------------------------
+        pending = self.pending_handoff_requests(team_id=team.team_id)
+        if pending:
+            self._shared(team.team_id).remember(HANDOFF_REQUESTS_KEY, [])
+        for request in pending:
+            try:
+                record = self.execute_handoff(
+                    team=team,
+                    plan_item_id=str(request.get("plan_item_id") or ""),
+                    from_specialist=str(request.get("from_specialist") or ""),
+                    to_specialist=str(request.get("to_specialist") or ""),
+                    reason=str(request.get("reason") or ""),
+                    progress_summary=str(request.get("progress_summary") or ""),
+                    evidence_refs=request.get("evidence_refs") or (),
+                    triggered_by="auto:explicit_request",
+                    now=now,
+                )
+            except ValueError as exc:
+                rejected = HandoffRecord(
+                    handoff_id=f"handoff-{uuid.uuid4().hex[:12]}",
+                    plan_item_id=str(request.get("plan_item_id") or ""),
+                    item_title="",
+                    from_specialist=str(request.get("from_specialist") or ""),
+                    to_specialist=str(request.get("to_specialist") or ""),
+                    reason=str(exc)[:600],
+                    triggered_by="auto:explicit_request",
+                    status="rejected",
+                    created_at=self._now_iso(now),
+                    context={
+                        "request_reason": str(request.get("reason") or "")[:600],
+                        "progress_summary": str(
+                            request.get("progress_summary") or ""
+                        )[:HANDOFF_PROGRESS_CAP],
+                        "evidence_refs": _normalize_evidence_refs(
+                            request.get("evidence_refs") or ()
+                        ),
+                    },
+                ).as_dict()
+                self._append_handoff_log(team_id=team.team_id, record=rejected)
+                result.rejected.append(rejected)
+            else:
+                result.executed.append(record)
+        # -- capability-mismatch rule (pre-dispatch only) ------------------
+        completed = self._completed_plan_item_ids(team)
+        live = self._live_work_item_ids(team)
+        id_map = self._plan_map(team)
+        for plan_item in list(self._effective_team(team).plan):
+            if plan_item.item_id in completed:
+                continue
+            wid = id_map.get(plan_item.item_id) or ""
+            if wid and wid in live:
+                continue
+            required = _item_capabilities(plan_item)
+            if not required:
+                continue
+            effective = self._effective_team(team)
+            current_item = self._plan_item(effective, plan_item.item_id)
+            if current_item is None:
+                continue
+            current = effective.member(current_item.assignee)
+            if current is None:
+                continue
+            current_caps = _member_capabilities(current)
+            if required <= current_caps:
+                continue
+            if current_caps & required:
+                result.skipped.append(
+                    {
+                        "plan_item_id": plan_item.item_id,
+                        "rule": "capability_mismatch",
+                        "reason": (
+                            f"partial capability coverage "
+                            f"({sorted(current_caps & required)}); owner decides"
+                        ),
+                    }
+                )
+                continue
+            candidates = [
+                member
+                for member in effective.members
+                if member.name != current_item.assignee
+                and required <= _member_capabilities(member)
+            ]
+            if len(candidates) != 1:
+                result.skipped.append(
+                    {
+                        "plan_item_id": plan_item.item_id,
+                        "rule": "capability_mismatch",
+                        "reason": (
+                            f"{len(candidates)} full-cover candidates; "
+                            "auto-handoff needs exactly one"
+                        ),
+                    }
+                )
+                continue
+            target = candidates[0]
+            log = self.handoff_log(team_id=team.team_id)
+            last = next(
+                (
+                    entry
+                    for entry in reversed(log)
+                    if entry.get("plan_item_id") == plan_item.item_id
+                    and entry.get("status") == "executed"
+                ),
+                None,
+            )
+            if last is not None and last.get("from_specialist") == target.name:
+                result.skipped.append(
+                    {
+                        "plan_item_id": plan_item.item_id,
+                        "rule": "capability_mismatch",
+                        "reason": (
+                            f"ping-pong guard: {target.name} just handed "
+                            "this item away"
+                        ),
+                    }
+                )
+                continue
+            try:
+                record = self.execute_handoff(
+                    team=team,
+                    plan_item_id=plan_item.item_id,
+                    from_specialist=current_item.assignee,
+                    to_specialist=target.name,
+                    reason=(
+                        f"capability mismatch: item requires "
+                        f"{sorted(required)}, {current_item.assignee} covers "
+                        f"{sorted(current_caps)}; {target.name} covers all"
+                    ),
+                    progress_summary="",
+                    evidence_refs=(),
+                    triggered_by="auto:capability_mismatch",
+                    now=now,
+                )
+            except ValueError as exc:
+                result.skipped.append(
+                    {
+                        "plan_item_id": plan_item.item_id,
+                        "rule": "capability_mismatch",
+                        "reason": str(exc)[:600],
+                    }
+                )
+            else:
+                result.executed.append(record)
+        return result
 
 
 __all__ = [
     "EVIDENCE_KEY",
+    "HANDOFF_LOG_KEY",
+    "HANDOFF_REQUESTS_KEY",
+    "HANDOFF_TOOL_NAME",
     "TEAM_CLAIM_STATE_KEY",
     "TEAM_COMPLETE_STATE_KEY",
     "TEAM_ID_STATE_KEY",
     "TEAM_VERDICT_STATE_KEY",
+    "AutoHandoffResult",
     "Checkpoint",
     "CheckpointStorage",
+    "HandoffRecord",
+    "HandoffRequest",
     "ResidentTeamVerifier",
     "TeamOwnerStep",
     "TeamWorkOwner",
     "WorkflowRoute",
+    "handoff_tool_spec",
     "verified_evidence",
 ]
