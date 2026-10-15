@@ -21,7 +21,51 @@ from .models import ExecutionPath, ResidentRunResult, utc_now
 from .user_browser_extension_resident import UserBrowserExtensionResidentRuntime
 from .steerable_work import WorkItem
 from .structured_proposal import parse_exact_json_payload
+from .team_runner import FanIn, FanOut, SwitchCase, WorkflowRoute
 from .work import title_for_work_task
+
+
+def describe_rolling_route() -> WorkflowRoute:
+    """Describe the rolling Broad Work step routing (AF-2 vocabulary).
+
+    One cognition proposal switches on validity (valid -> accept, invalid
+    -> prose fallback); an accepted proposal fans out to two durable
+    effects (child WorkItem materialization + Body action cycle); the Body
+    result switches on verification (verified -> roll forward, failed ->
+    investigation); every branch joins back into the next pulse.
+    """
+    route = WorkflowRoute(
+        name="broad_goal_rolling",
+        edges=(
+            SwitchCase(
+                on="proposal_valid",
+                cases=(
+                    ("valid", "accept_proposal"),
+                    ("invalid", "prose_fallback"),
+                ),
+                default="prose_fallback",
+            ),
+            FanOut(
+                from_step="accept_proposal",
+                to_steps=("materialize_child_item", "begin_body_action"),
+            ),
+            SwitchCase(
+                on="verification",
+                cases=(
+                    ("verified", "roll_forward"),
+                    ("failed", "investigation"),
+                ),
+                default="investigation",
+            ),
+            FanIn(
+                from_steps=("roll_forward", "investigation", "prose_fallback"),
+                to_step="next_pulse",
+                require_all=False,
+            ),
+        ),
+    )
+    route.validate()
+    return route
 
 
 class BroadGoalWorkResidentRuntime(UserBrowserExtensionResidentRuntime):
