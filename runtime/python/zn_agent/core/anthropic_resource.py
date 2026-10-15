@@ -13,6 +13,7 @@ from typing import Any, Callable, Mapping
 
 from .cognitive_resource import CognitiveIncrement, _owned_cognitive_client
 from .models import ModelRoute
+from .privacy_choke import redact_for_egress
 from .proxy_env import build_sdk_client
 
 
@@ -139,7 +140,8 @@ class AnthropicCognitiveResource:
         return _build_anthropic_client(self.route, self._client_builder)
 
     def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
-        text = str(question or "").strip()
+        # W-2 egress redaction: see OpenAICompatibleCognitiveResource.invoke.
+        text = redact_for_egress(str(question or "").strip())
         if not text:
             raise ValueError("bounded cognition question must not be empty")
 
@@ -148,7 +150,7 @@ class AnthropicCognitiveResource:
             "max_tokens": max(1, int(self.route.metadata.get("max_tokens") or 16_384)),
             "messages": [{"role": "user", "content": text}],
         }
-        bounded_context = str(context or "").strip()
+        bounded_context = redact_for_egress(str(context or "").strip())
         if bounded_context:
             request["system"] = bounded_context
         if self.route.metadata.get("temperature") is not None:
@@ -260,6 +262,10 @@ class AnthropicToolLoopClient:
             }
             for tool in tools
         ]
+        # W-2 egress redaction: multi-turn messages carry tool results
+        # (file contents, terminal output) that may hold credential-shaped
+        # text -- scrubbed here, before the request is built. Tool
+        # schemas are ZN code, not user text, and are not scrubbed.
         request: dict[str, Any] = {
             "model": self.route.model,
             "max_tokens": max(
@@ -270,11 +276,11 @@ class AnthropicToolLoopClient:
                     or 8_192
                 ),
             ),
-            "messages": [dict(message) for message in messages],
+            "messages": redact_for_egress([dict(message) for message in messages]),
         }
         if anthropic_tools:
             request["tools"] = anthropic_tools
-        bounded_system = str(system or "").strip()
+        bounded_system = redact_for_egress(str(system or "").strip())
         if bounded_system:
             request["system"] = bounded_system
         if self.route.metadata.get("temperature") is not None:

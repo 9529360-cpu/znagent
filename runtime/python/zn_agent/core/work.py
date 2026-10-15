@@ -13,6 +13,7 @@ from typing import Any
 
 from .models import AgentEvent, EventStatus, ResidentRunResult, utc_now
 from .path_context import canonical_host_path, resolved_within
+from .privacy_choke import strip_tags
 
 
 _WORK_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -336,7 +337,9 @@ class ResidentWorkLedger:
         if existing is not None:
             return existing
         now = utc_now()
-        normalized_title = " ".join(str(title or "").strip().split()) or "New work"
+        # CM-3 follow-up F2: thread titles are user-provided text that
+        # persists in the ledger -- choked at the write boundary.
+        normalized_title = " ".join(strip_tags(str(title or "")).strip().split()) or "New work"
         thread = WorkThread(
             thread_id=normalized_id,
             title=normalized_title[:120],
@@ -397,9 +400,15 @@ class ResidentWorkLedger:
 
         Role carries routing (e.g. ``team:{team_id}:{author}``); the schema
         is untouched. Unlike ``submit`` this does not start a resident run.
+
+        CM-3 follow-up F2: this is the ledger write boundary for the team
+        journal, so role / text / detail are choked here. Journal
+        payloads are already choked at construction (``journal_message``);
+        this is defense in depth for any other caller (daemon assignment,
+        handover) that appends team text directly.
         """
-        normalized_role = str(role or "").strip()
-        normalized_text = str(text or "").strip()
+        normalized_role = strip_tags(str(role or "").strip())
+        normalized_text = strip_tags(str(text or "").strip())
         if not normalized_role:
             raise ValueError("message role must not be empty")
         if not normalized_text:
@@ -412,7 +421,7 @@ class ResidentWorkLedger:
             thread_id=thread.thread_id,
             role=normalized_role,
             text=normalized_text,
-            detail=dict(detail or {}),
+            detail=strip_tags(dict(detail or {})),
         )
         self._append(thread, message)
         return message

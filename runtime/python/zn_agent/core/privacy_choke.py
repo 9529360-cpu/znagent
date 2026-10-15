@@ -31,9 +31,17 @@ NOT values: they pass through verbatim. A reference carries no part of
 the secret and cannot be reversed into it; scrubbing one would break
 the M15 reference mechanism.
 
-This module only covers the *capture* side (memory / team memory
-writes). The egress side (redacting text before it is sent anywhere)
-is a separate item (W-2) and is deliberately not done here.
+Egress (W-2 follow-up) reuses the same single point via
+:func:`redact_for_egress`: every model-call boundary scrubs its
+outbound text (question / context / multi-turn messages) with the same
+patterns, ``<private>`` handling and custom patterns. The one
+difference is the overlong-field rule: at egress it is disabled
+(``max_field_chars=None``), because length is a *storage* rule -- a
+pasted dump must not land in memory as a field -- while at egress a
+long benign input (a tool result up to 200k chars, an unbounded kernel
+context) must still reach the model. Pattern scrubbing is what
+prevents leaks at egress; replacing a long legitimate request with a
+marker would corrupt the call instead of protecting it.
 
 Explicit limits (same honest boundary as M15): detection is
 marker-based. A bare high-entropy string with no marker, or a password
@@ -67,6 +75,7 @@ from .error_safety import (
 __all__ = [
     "MAX_FIELD_CHARS",
     "clear_custom_patterns",
+    "redact_for_egress",
     "register_custom_pattern",
     "strip_tags",
     "stripTags",
@@ -215,9 +224,9 @@ def _sanitize_text(
     text: str,
     custom: list[tuple[re.Pattern[str], str]],
     *,
-    max_field_chars: int = MAX_FIELD_CHARS,
+    max_field_chars: int | None = MAX_FIELD_CHARS,
 ) -> str:
-    if len(text) > max_field_chars:
+    if max_field_chars is not None and len(text) > max_field_chars:
         # Whole-field replacement: never keep a prefix of an overlong dump.
         return f"[redacted: field exceeded {max_field_chars} chars ({len(text)} chars)]"
     text = _strip_private_blocks(text)
@@ -234,7 +243,7 @@ def _sanitize_text(
     return "".join(parts)
 
 
-def strip_tags(value: Any, *, max_field_chars: int = MAX_FIELD_CHARS) -> Any:
+def strip_tags(value: Any, *, max_field_chars: int | None = MAX_FIELD_CHARS) -> Any:
     """Sanitize *value* for capture-side persistence. Never raises.
 
     Strings are scrubbed; mappings / sequences are sanitized leaf by
@@ -242,6 +251,10 @@ def strip_tags(value: Any, *, max_field_chars: int = MAX_FIELD_CHARS) -> Any:
     anything else is stringified and scrubbed. On any internal error
     the safe marker ``_CHOKE_FAILED`` is returned instead of the
     original -- fail closed, never leak.
+
+    ``max_field_chars=None`` disables the whole-field replacement for
+    overlong strings (used by :func:`redact_for_egress`); pattern
+    scrubbing still applies.
     """
     try:
         return _strip_tags(value, max_field_chars=max_field_chars)
@@ -249,9 +262,22 @@ def strip_tags(value: Any, *, max_field_chars: int = MAX_FIELD_CHARS) -> Any:
         return _CHOKE_FAILED
 
 
-def _strip_tags(value: Any, *, max_field_chars: int) -> Any:
+def redact_for_egress(value: Any) -> Any:
+    """Sanitize *value* before it is sent to a model / server. Never raises.
+
+    Same single point as :func:`strip_tags` (same patterns, same
+    ``<private>`` handling, same fail-closed marker), except the
+    overlong-field whole replacement is disabled: a long benign model
+    input (tool result, kernel context) must reach the model intact,
+    and length alone does not make content secret. Credential-shaped
+    content is still scrubbed no matter how long the field is.
+    """
+    return strip_tags(value, max_field_chars=None)
+
+
+def _strip_tags(value: Any, *, max_field_chars: int | None) -> Any:
     if isinstance(value, str):
-        if len(value) > max_field_chars:
+        if max_field_chars is not None and len(value) > max_field_chars:
             return (
                 f"[redacted: field exceeded {max_field_chars} chars "
                 f"({len(value)} chars)]"

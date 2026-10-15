@@ -21,6 +21,8 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
+from .privacy_choke import strip_tags
+
 JOURNAL_KINDS = ("note", "progress", "handoff", "blocker", "decision")
 
 #: Deletion-scope reminder, shown in every disband plan / cleanup checklist:
@@ -219,11 +221,20 @@ def journal_message(
     team_id: str, author: str, text: str, *, kind: str = "note"
 ) -> dict[str, Any]:
     """Payload ready for work_messages. role carries team routing; the ledger
-    schema is untouched (slice 1)."""
+    schema is untouched (slice 1).
+
+    CM-3 follow-up F2: journal payloads are choked at construction --
+    the team log never reaches the ledger carrying credential-shaped
+    text. The ledger's ``append_message`` chokes again at the write
+    boundary (defense in depth); choke output is idempotent.
+    """
     if kind not in JOURNAL_KINDS:
         raise ValueError(f"unknown journal kind: {kind!r}")
     if not text or not text.strip():
         raise ValueError("journal text must not be empty")
+    team_id = strip_tags(team_id)
+    author = strip_tags(author)
+    text = strip_tags(text)
     return {
         "role": f"team:{team_id}:{author}",
         "text": text,
