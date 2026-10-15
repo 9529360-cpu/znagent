@@ -845,6 +845,7 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 gap_value.get("missing") or ""
             ).strip():
                 interrupt_id = ""
+                checkpoint_error = ""
                 team_id = str(state.data.get(TEAM_ID_STATE_KEY) or "").strip()
                 if team_id:
                     interrupt_owner = TeamWorkOwner(
@@ -867,7 +868,10 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                     if record is not None:
                         interrupt_id = str(record.get("interrupt_id") or "")
                     # Best-effort checkpoint carrying the pending
-                    # decision: a failure here must not kill the pulse.
+                    # decision. A failure here must not kill the pulse
+                    # (shared memory + working state already hold the
+                    # truth), but it is recorded on the gap mirror
+                    # instead of swallowed, so it stays visible.
                     try:
                         root_item = self.work_ledger.work_item_for_event(
                             event.event_id
@@ -879,10 +883,15 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                             event=event, state=state, thread_id=thread_id
                         )
                         if root_item is not None:
-                            interrupt_owner.save_interrupt_checkpoint(
+                            saved = interrupt_owner.save_interrupt_checkpoint(
                                 team=team,
                                 root_work_item_id=root_item.work_item_id,
                             )
+                            if saved is None:
+                                checkpoint_error = (
+                                    "interrupt checkpoint not saved "
+                                    "(no storage wired or save failed)"
+                                )
                     except (
                         AttributeError,
                         KeyError,
@@ -890,8 +899,10 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                         OSError,
                         RuntimeError,
                         ValueError,
-                    ):
-                        pass
+                    ) as exc:
+                        checkpoint_error = (
+                            f"{type(exc).__name__}: {exc}"[:200]
+                        )
                 state.data[self._TEAM_GAP_KEY] = {
                     "interrupt_id": interrupt_id,
                     "run_id": str(context.get("run_id") or ""),
@@ -900,6 +911,7 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                     "missing": str(gap_value.get("missing") or "")[:600],
                     "needed": str(gap_value.get("needed") or "")[:600],
                     "impact": str(gap_value.get("impact") or "")[:600],
+                    "checkpoint_error": checkpoint_error,
                 }
                 state.stage = "native_deliberation"
                 state.next_action = (

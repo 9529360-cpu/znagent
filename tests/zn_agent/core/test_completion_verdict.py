@@ -861,7 +861,9 @@ class ResidentGapReportTests(ResidentVerdictTests):
     not be executed as a step, and the team blocks alive on the pending
     decision instead of failing terminally (LG-2 supersedes the old
     fail-closed-terminal behavior: the gap can now be resumed with a
-    value -- see test_lg2_interrupt_resume.py for the resume half)."""
+    value -- see test_lg2_interrupt_resume.py for the resume half).
+    例外申请（CONSTRAINTS §3）：本改动删除旧终端失败断言，见 PR 正文；
+    需非作者审查批准后方可合并。"""
 
     def test_gap_report_interrupts_without_inventing_scope(self):
         gap = json.dumps(

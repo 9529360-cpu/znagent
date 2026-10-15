@@ -548,20 +548,14 @@ class TeamWorkOwner:
         return dict(record)
 
     def clear_interrupt(self, *, team_id: str) -> None:
-        """Consume the interrupt record exactly once. A repeat clear is a no-op."""
+        """Consume the interrupt record exactly once. A repeat clear is a no-op.
+
+        Storage failures propagate: a failed consume must be loud, not
+        silently retried into a duplicate resume-value delivery.
+        """
         if not str(team_id or "").strip():
             return
-        try:
-            self._shared(str(team_id).strip()).forget(TEAM_INTERRUPT_KEY)
-        except (
-            AttributeError,
-            KeyError,
-            LookupError,
-            OSError,
-            RuntimeError,
-            ValueError,
-        ):
-            pass
+        self._shared(str(team_id).strip()).forget(TEAM_INTERRUPT_KEY)
 
     def save_interrupt_checkpoint(
         self, *, team: ProjectTeam, root_work_item_id: str
