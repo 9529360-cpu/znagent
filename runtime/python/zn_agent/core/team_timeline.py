@@ -282,6 +282,48 @@ def build_team_timeline(
     return entries
 
 
+def review_timeline_entry(
+    review: Any, *, team_id: str, author: str = "coordinator"
+) -> dict[str, Any]:
+    """Convert an AF-3 plan review (see team_coordinator.PlanReview) to
+    one timeline entry, in the same shape build_team_timeline produces.
+
+    Reviews normally reach the timeline as journal ``decision`` messages
+    (see team_coordinator.review_journal); this helper is for callers
+    that already hold the review object and want its timeline form
+    without round-tripping through the journal. It never reads or
+    mutates history.
+    """
+    verdict = str(getattr(review, "verdict", "") or "")
+    plan_id = str(getattr(review, "plan_id", "") or "")
+    findings = list(getattr(review, "findings", ()) or ())
+    recommendations = list(getattr(review, "recommendations", ()) or ())
+    if verdict == "revise":
+        text = f"计划评审：计划 {plan_id} 需修订（{len(findings)} 个发现）"
+    elif verdict == "continue":
+        text = f"计划评审：计划 {plan_id} 继续执行，无需修订"
+    else:
+        text = f"计划评审：计划 {plan_id}（未知结论 {verdict!r}）"
+    return {
+        "id": f"review-{plan_id}-{getattr(review, 'seq', 0)}",
+        "kind": "decision",
+        "author": author,
+        "text": text,
+        "at": "",
+        "team_id": team_id,
+        "from_author": author,
+        "to_author": "",
+        "item_title": "",
+        "objective": "",
+        "instruction": "",
+        "evidence": [],
+        "plan_id": plan_id,
+        "review_verdict": verdict,
+        "review_findings": findings,
+        "review_recommendations": recommendations,
+    }
+
+
 __all__ = [
     "ASSIGNEE_OVERRIDES_KEY",
     "TIMELINE_KINDS",
@@ -292,4 +334,5 @@ __all__ = [
     "parse_mention",
     "parse_team_role",
     "record_assignee_override",
+    "review_timeline_entry",
 ]
