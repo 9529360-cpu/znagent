@@ -708,3 +708,39 @@ No River/ADWIN runtime dependency was added. Its drift-detection principle remai
 
 This status does **not** mean “Memory is complete”, “human-like long-term memory is complete” or “any workflow can now be learned”. General multi-step procedure representation, broader task families and higher-level consolidation remain future work and must earn their own real integration evidence.
 
+
+## 17. Structured observation records (CM-1)
+
+An observation records what was learned / built / fixed — never what was
+merely said. Format (implementation: `StructuredMemory` in
+`runtime/python/zn_agent/core/memory.py`, tests in
+`tests/zn_agent/core/test_memory_observations.py`):
+
+```text
+kind            observation type, e.g. learned / built / fixed / decided
+title           one-line name; the fact key is "observation:<title>"
+facts           checkable claims (non-empty list of strings)
+narrative       free-form account of what happened
+concepts        tags the record should be found by
+files_read      files the observation touches (read)
+files_modified  files the observation touches (written)
+```
+
+Rules:
+
+- Observations live in the facts table like any other fact (the facts
+  table remains the sole owner). A `record_kind: "observation"` marker
+  tells read paths apart from plain dict facts.
+- Writing validates: `kind`, `title`, `facts` are required; a missing or
+  mistyped field rejects the write with a `ValueError` naming the field.
+  Nothing is written on rejection.
+- Writing bypasses `remember()` supersession: two similar observations
+  are distinct evidence, not near-duplicates to merge. Re-recording the
+  same title replaces the earlier observation.
+- Reading is backward compatible: old-format facts (plain strings,
+  arbitrary values) still recall exactly as before and never appear in
+  `list_observations()`; a malformed observation row is skipped, never
+  fatal.
+- This fixes only the record format. Lifecycle is KWP-2
+  (`two_level_memory.py`); validity windows are GR-1/GR-2. No vector
+  store, embedding pipeline, or hosted service is involved.
