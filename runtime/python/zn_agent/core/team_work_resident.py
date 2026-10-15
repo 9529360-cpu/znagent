@@ -59,6 +59,14 @@ from .plan_mode import (
     render_plan_markdown,
     request_plan,
 )
+from .spec_first import (
+    SPEC_GATE_STATE_KEY,
+    check_implementation_gate,
+    load_spec_files,
+    spec_gate_gap,
+    spec_prompt_excerpt,
+    spec_slug_from_event,
+)
 from .sensitive_handover import (
     detect_sensitive_step,
     pending_handover,
@@ -323,6 +331,40 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             self._sync_execution_context(event, state)
             self.store.save_working_state(state)
             return None
+        # W-3 Spec-first: a spec-bound team never starts implementation
+        # work without a complete, ready-to-implement spec. The gate is
+        # re-checked from disk every pulse and mirrored in working
+        # state (NOT recorded as an LG-2 interrupt): fixing the spec
+        # files unblocks the team on the next pulse with no resume
+        # ceremony, and a missing spec never becomes invented scope.
+        spec_slug = spec_slug_from_event(event)
+        if spec_slug:
+            workspace_path = str(
+                event.payload.get("workspace_path") or ""
+            ).strip()
+            spec_files = load_spec_files(workspace_path, spec_slug)
+            allowed, spec_reason = check_implementation_gate(
+                slug=spec_slug, spec_files=spec_files
+            )
+            if not allowed:
+                gap = spec_gate_gap(slug=spec_slug, reason=spec_reason)
+                state.data[SPEC_GATE_STATE_KEY] = {
+                    "slug": spec_slug,
+                    "status": "blocked",
+                    "reason": spec_reason,
+                    "gap": gap,
+                }
+                state.blocked_by = "user_presence_required"
+                state.stage = "native_deliberation"
+                state.next_action = (
+                    "等待主人补齐 spec："
+                    f"{spec_reason}（spec 在 specs/{spec_slug}/，"
+                    "贴 ready-to-implement 标签后自动继续）"
+                )
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return None
+            state.data.pop(SPEC_GATE_STATE_KEY, None)
         pending = pending_handover(self.memory, team.team_id)
         if pending is not None:
             state.blocked_by = "user_presence_required"
@@ -755,6 +797,41 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 "计划文件，等用户改完批准后才执行。未经批准不要执行计划"
                 "中的任何步骤，也不要重新规划一个已提交待审批的计划。"
             )
+        # W-3 Spec-first: a spec-bound item works from its approved
+        # spec. The gate already passed by the time cognition runs
+        # (dispatch blocks otherwise); the prompt layer repeats the
+        # rule so a stale live context can never silently work
+        # spec-less. The excerpt carries the goal + approach the
+        # specialist must follow, not the whole spec.
+        spec_text = ""
+        spec_slug = spec_slug_from_event(event)
+        if spec_slug:
+            payload = getattr(event, "payload", None)
+            workspace_path = ""
+            if isinstance(payload, dict):
+                workspace_path = str(
+                    payload.get("workspace_path") or ""
+                ).strip()
+            spec_files = load_spec_files(workspace_path, spec_slug)
+            allowed, spec_reason = check_implementation_gate(
+                slug=spec_slug, spec_files=spec_files
+            )
+            if allowed:
+                excerpt = spec_prompt_excerpt(
+                    slug=spec_slug, spec_files=spec_files
+                )
+                spec_text = (
+                    "Spec-first：本事项已有 approved spec，按 spec 执行，"
+                    "不要偏离 spec 的范围与验收，不要修改 spec 文件本身；"
+                    "缺 spec 内容时上报 "
+                    "gap_report，不要自行发明范围。"
+                    f"{excerpt} "
+                )
+            else:
+                spec_text = (
+                    "Spec-first：spec 未就绪，不要动手："
+                    f"{spec_reason} "
+                )
         approved_text = ""
         approved_plan = context.get("approved_plan")
         if isinstance(approved_plan, str) and approved_plan.strip():
@@ -817,6 +894,7 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             '"impact":"what breaks without it"}}. '
             "The team stops and waits for the user to decide on a reported gap. "
             f"{plan_text}"
+            f"{spec_text}"
             f"{approved_text}"
             "If your item's acceptance criteria are NOT all "
             "satisfied yet, do NOT claim completion: do another work step. "
