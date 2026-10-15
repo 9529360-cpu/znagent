@@ -33,6 +33,19 @@ already proved they need it. The default path is the two-stage one, and
 :func:`validate_resident_entry` rejects any resident entry whose summary
 or trigger exceeds the cap — over-cap text is truncated at build time
 (with ``truncated: True``) and rejected at validation time.
+
+Layered registry (DSH-5): registration is layered, not single-root.
+
+:class:`LayeredSkillRegistry` holds one host layer plus one layer per
+scope (project, team, session, ...), ordered farthest-first. Resolution
+is deterministic: the nearest layer holding a skill name wins outright,
+whatever the farther layers' ranks; inside one layer, the highest
+frontmatter ``rank`` wins. Directory and full text stay separate:
+:meth:`LayeredSkillRegistry.list` reads frontmatter only and never
+exposes a body, while :meth:`LayeredSkillRegistry.get` reads the full
+body of the winning entry on demand. This registry does not change
+CUR-1 two-stage binding or router ranking; it is the registration
+mechanism those paths can build on.
 """
 
 import fnmatch
@@ -494,6 +507,227 @@ class SkillStore:
         if bundle["skills"]:
             context["resident_skills"] = bundle
         return request
+
+
+def _parse_rank(meta: dict[str, Any]) -> int:
+    """Per-skill rank from frontmatter, default 0.
+
+    Only real integers (and integer strings like ``"10"``) count.
+    Booleans, floats, and unparseable values read as 0 so a stray
+    ``rank: true`` can never outrank an explicit rank.
+    """
+    raw = meta.get("rank")
+    if isinstance(raw, bool):
+        return 0
+    if isinstance(raw, int):
+        return raw
+    if isinstance(raw, str):
+        try:
+            return int(raw.strip())
+        except ValueError:
+            return 0
+    return 0
+
+
+def _skill_file_in(directory: Path) -> Path | None:
+    """Skill file inside one bundle directory: SKILL.md first, skill.md fallback."""
+    for name in ("SKILL.md", "skill.md"):
+        candidate = directory / name
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _read_skill_frontmatter(path: Path) -> dict[str, Any] | None:
+    """Read only the YAML frontmatter of a skill file; the body is never loaded.
+
+    Returns None when the file has no parseable frontmatter block.
+    """
+    try:
+        with open(path, "rb") as handle:
+            first = handle.readline()
+            if first.strip() != b"---":
+                return None
+            lines: list[bytes] = []
+            for line in handle:
+                if line.strip() == b"---":
+                    break
+                lines.append(line)
+            else:
+                return None
+            try:
+                meta = yaml.safe_load(b"".join(lines).decode("utf-8")) or {}
+            except (UnicodeError, yaml.YAMLError):
+                return None
+    except OSError:
+        return None
+    if not isinstance(meta, dict):
+        return None
+    return meta
+
+
+@dataclass(frozen=True, slots=True)
+class SkillDirectoryEntry:
+    """Directory-stage view of one skill: frontmatter only, never the body.
+
+    This is what :meth:`LayeredSkillRegistry.list` returns. There is
+    deliberately no ``body`` attribute: directory callers cannot
+    accidentally depend on full text, and listing never pays the cost
+    of reading bodies.
+    """
+
+    name: str
+    description: str
+    version: str
+    path: Path
+    layer: str
+    rank: int = 0
+    globs: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class SkillLayer:
+    """One registry layer: a named scope over one or more skill roots.
+
+    ``name`` is the scope (``"host"``, ``"project"``, ``"team"``, ...).
+    ``roots`` holds the skill directories for this layer. A layer with
+    several roots can hold the same skill name twice; then rank decides
+    (see :class:`LayeredSkillRegistry`).
+    """
+
+    name: str
+    roots: tuple[Path, ...] = ()
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "roots", tuple(Path(item) for item in (self.roots or ()))
+        )
+
+    @classmethod
+    def single(cls, name: str, root: Path) -> SkillLayer:
+        """One layer over one skill root."""
+        return cls(name=name, roots=(Path(root),))
+
+
+@dataclass(slots=True)
+class LayeredSkillRegistry:
+    """Layered skill registry: host layer + one layer per scope.
+
+    ``layers`` is ordered farthest-first: ``layers[0]`` is the host
+    layer, later layers are nearer scopes. Layer identity is the
+    position in this list: two entries with the same name are two
+    layers, and the later one is nearer.
+
+    Resolution rules, in order:
+
+    1. Nearest layer wins: a skill name present in a nearer layer
+       shadows every same-named skill in farther layers, whatever
+       their ranks.
+    2. Same layer, same name: the highest frontmatter ``rank`` wins
+       (default 0; a non-integer rank reads as 0).
+    3. Same layer, same name, same rank: the smallest path wins, so
+       resolution is deterministic.
+
+    Directory and full text stay separate: :meth:`list` reads
+    frontmatter only and returns :class:`SkillDirectoryEntry` values
+    with no body; :meth:`get` reads the full body of the winning
+    entry on demand and returns None when the winner has no readable
+    body. ``get`` never falls back to a shadowed entry: the winner
+    is the winner, even when its body cannot be read.
+    """
+
+    layers: tuple[SkillLayer, ...] = field(default_factory=tuple)
+
+    def __post_init__(self) -> None:
+        self.layers = tuple(self.layers or ())
+
+    def _resolve(self) -> dict[str, SkillDirectoryEntry]:
+        """Winning directory entry per skill name, after layer resolution."""
+        winners: dict[str, tuple[int, int, str, SkillDirectoryEntry]] = {}
+        for layer_index, layer in enumerate(self.layers):
+            for root in layer.roots:
+                if not root.is_dir():
+                    continue
+                for candidate in sorted(root.iterdir()):
+                    if not candidate.is_dir() or candidate.name.startswith(("_", ".")):
+                        continue
+                    skill_file = _skill_file_in(candidate)
+                    if skill_file is None:
+                        continue
+                    entry = self._read_entry(skill_file, layer.name)
+                    if entry is None:
+                        continue
+                    key = (layer_index, entry.rank, entry.path.as_posix())
+                    current = winners.get(entry.name)
+                    if current is None:
+                        winners[entry.name] = (key[0], key[1], key[2], entry)
+                        continue
+                    current_key = (current[0], current[1], current[2])
+                    # Nearest layer wins; same layer: higher rank wins;
+                    # same rank: smallest path wins.
+                    if (key[0], key[1]) > (current_key[0], current_key[1]):
+                        winners[entry.name] = (key[0], key[1], key[2], entry)
+                    elif key[0] == current_key[0] and key[1] == current_key[1] and key[2] < current_key[2]:
+                        winners[entry.name] = (key[0], key[1], key[2], entry)
+        return {name: item[3] for name, item in winners.items()}
+
+    @staticmethod
+    def _read_entry(path: Path, layer: str) -> SkillDirectoryEntry | None:
+        meta = _read_skill_frontmatter(path)
+        if meta is None:
+            return None
+        name = _clean(meta.get("name") or path.parent.name)
+        description = _clean(meta.get("description") or "")
+        version = _clean(meta.get("version") or "0.1.0")
+        if not _NAME_RE.match(name):
+            return None
+        if not description or len(description) > MAX_SKILL_DESCRIPTION_CHARS:
+            return None
+        return SkillDirectoryEntry(
+            name=name,
+            description=description,
+            version=version,
+            path=path,
+            layer=layer,
+            rank=_parse_rank(meta),
+            globs=_parse_globs(meta),
+        )
+
+    def list(self) -> list[SkillDirectoryEntry]:
+        """Directory: winning entry per skill name, sorted by name.
+
+        Reads frontmatter only. The returned entries carry no body.
+        """
+        resolved = self._resolve()
+        return [resolved[name] for name in sorted(resolved)]
+
+    def get(self, name: str) -> Skill | None:
+        """Full text: the winning entry's whole skill, body included.
+
+        Returns None for an unknown name or when the winner's body
+        cannot be read. Never falls back to a shadowed entry.
+        """
+        entry = self._resolve().get(_clean(name))
+        if entry is None:
+            return None
+        try:
+            text = entry.path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            return None
+        meta, body = _split_frontmatter(text)
+        body = body.strip()
+        if not body:
+            return None
+        if len(body) > MAX_SKILL_BODY_CHARS:
+            body = body[:MAX_SKILL_BODY_CHARS]
+        return Skill(
+            name=entry.name,
+            description=entry.description,
+            version=entry.version,
+            path=entry.path,
+            body=body,
+            globs=entry.globs,
+        )
 
 
 def _context_size(value: dict[str, Any]) -> int:
