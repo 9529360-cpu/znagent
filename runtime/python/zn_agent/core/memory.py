@@ -73,6 +73,164 @@ class FactMatch:
     matched_by: str
 
 
+# -- CM-1: structured observation records ---------------------------------
+#
+# An observation records what was learned / built / fixed -- never what
+# was merely said. It lives in the facts table like any other fact (the
+# facts table remains the sole owner); the ``record_kind`` marker tells
+# read paths apart from plain dict facts. KWP-2 (lifecycle) and GR-1/GR-2
+# (validity windows) are orthogonal: this only fixes the record format.
+
+#: Facts-table key prefix for structured observation records.
+OBSERVATION_PREFIX = "observation:"
+
+#: Stored marker distinguishing observation records from other dict facts.
+_OBSERVATION_RECORD_KIND = "observation"
+
+_OBSERVATION_FIELDS = (
+    "record_kind", "kind", "title", "facts", "narrative",
+    "concepts", "files_read", "files_modified",
+)
+
+_MAX_OBSERVATION_KIND_CHARS = 64
+_MAX_OBSERVATION_TITLE_CHARS = 200
+_MAX_OBSERVATION_FACT_CHARS = 2000
+_MAX_OBSERVATION_NARRATIVE_CHARS = 8000
+_MAX_OBSERVATION_TOKEN_CHARS = 512
+
+
+def _observation_text(value: Any, *, field: str, required: bool, max_chars: int) -> str:
+    if not isinstance(value, str):
+        raise ValueError(
+            f"observation field '{field}' must be a string, got {type(value).__name__}"
+        )
+    text = value.strip()
+    if required and not text:
+        raise ValueError(f"observation missing required field '{field}': must be non-empty")
+    if len(text) > max_chars:
+        raise ValueError(
+            f"observation field '{field}' is too long: {len(text)} chars (max {max_chars})"
+        )
+    return text
+
+
+def _observation_str_list(
+    value: Any, *, field: str, required: bool, max_chars: int,
+) -> tuple[str, ...]:
+    if isinstance(value, str) or not isinstance(value, (list, tuple)):
+        raise ValueError(
+            f"observation field '{field}' must be a list of strings, got {type(value).__name__}"
+        )
+    if required and not value:
+        raise ValueError(f"observation missing required field '{field}': must be non-empty")
+    cleaned: list[str] = []
+    for item in value:
+        cleaned.append(_observation_text(item, field=field, required=True, max_chars=max_chars))
+    return tuple(cleaned)
+
+
+@dataclass(slots=True)
+class Observation:
+    """One structured observation record (CM-1).
+
+    ``kind`` is the observation type (e.g. learned / built / fixed /
+    decided); ``title`` is its one-line name; ``facts`` are the
+    checkable claims; ``narrative`` is the free-form account;
+    ``concepts`` are the tags it should be found by; ``files_read`` /
+    ``files_modified`` are the files the observation touches.
+    """
+
+    kind: str
+    title: str
+    facts: tuple[str, ...]
+    narrative: str = ""
+    concepts: tuple[str, ...] = ()
+    files_read: tuple[str, ...] = ()
+    files_modified: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        # Accept lists at construction time; store tuples so equality and
+        # serialisation stay stable. A bare string is left alone so
+        # validation in from_dict() still rejects it as the wrong type.
+        for field in ("facts", "concepts", "files_read", "files_modified"):
+            value = getattr(self, field)
+            if isinstance(value, list):
+                object.__setattr__(self, field, tuple(value))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "record_kind": _OBSERVATION_RECORD_KIND,
+            "kind": self.kind,
+            "title": self.title,
+            "facts": list(self.facts),
+            "narrative": self.narrative,
+            "concepts": list(self.concepts),
+            "files_read": list(self.files_read),
+            "files_modified": list(self.files_modified),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Any) -> Observation:
+        """Validate a mapping and build an Observation.
+
+        Raises ValueError naming the missing or invalid field, so a
+        rejected write always says why.
+        """
+        if not isinstance(data, dict):
+            raise ValueError(
+                "observation must be a mapping, got "
+                f"{type(data).__name__}"
+            )
+        for key in data:
+            if key not in _OBSERVATION_FIELDS:
+                raise ValueError(
+                    f"observation has unknown field '{key}' "
+                    f"(expected one of: {', '.join(_OBSERVATION_FIELDS)})"
+                )
+        marker = data.get("record_kind", _OBSERVATION_RECORD_KIND)
+        if marker != _OBSERVATION_RECORD_KIND:
+            raise ValueError(
+                f"observation field 'record_kind' must be "
+                f"'{_OBSERVATION_RECORD_KIND}', got {marker!r}"
+            )
+        if "kind" not in data:
+            raise ValueError("observation missing required field 'kind': must be non-empty")
+        if "title" not in data:
+            raise ValueError("observation missing required field 'title': must be non-empty")
+        if "facts" not in data:
+            raise ValueError("observation missing required field 'facts': must be non-empty")
+        return cls(
+            kind=_observation_text(
+                data["kind"], field="kind", required=True,
+                max_chars=_MAX_OBSERVATION_KIND_CHARS,
+            ),
+            title=_observation_text(
+                data["title"], field="title", required=True,
+                max_chars=_MAX_OBSERVATION_TITLE_CHARS,
+            ),
+            facts=_observation_str_list(
+                data["facts"], field="facts", required=True,
+                max_chars=_MAX_OBSERVATION_FACT_CHARS,
+            ),
+            narrative=_observation_text(
+                data.get("narrative", ""), field="narrative",
+                required=False, max_chars=_MAX_OBSERVATION_NARRATIVE_CHARS,
+            ),
+            concepts=_observation_str_list(
+                data.get("concepts", ()), field="concepts",
+                required=False, max_chars=_MAX_OBSERVATION_TOKEN_CHARS,
+            ),
+            files_read=_observation_str_list(
+                data.get("files_read", ()), field="files_read",
+                required=False, max_chars=_MAX_OBSERVATION_TOKEN_CHARS,
+            ),
+            files_modified=_observation_str_list(
+                data.get("files_modified", ()), field="files_modified",
+                required=False, max_chars=_MAX_OBSERVATION_TOKEN_CHARS,
+            ),
+        )
+
+
 class StructuredMemory:
     """Token-free durable facts and bounded, read-only cognition projections.
 
@@ -145,6 +303,64 @@ class StructuredMemory:
 
     def forget(self, key: str) -> None:
         self.store.delete_fact(key)
+
+    # -- CM-1: structured observation records ---------------------------
+
+    def record_observation(self, observation: Observation | dict[str, Any]) -> str:
+        """Write one structured observation record. Returns its fact key.
+
+        Validation failures raise ValueError naming the field, and
+        nothing is written. The write bypasses ``remember``'s
+        supersession on purpose: two observations with similar wording
+        are distinct evidence, not near-duplicate facts to merge.
+        Re-recording the same title replaces the earlier observation
+        (facts-table upsert semantics).
+        """
+        parsed = Observation.from_dict(
+            observation.to_dict() if isinstance(observation, Observation) else observation
+        )
+        key = f"{OBSERVATION_PREFIX}{parsed.title}"
+        self.store.put_fact(key, parsed.to_dict())
+        return key
+
+    def recall_observation(self, title: str) -> Observation | None:
+        """One observation by exact title, or None when absent/malformed."""
+        key = f"{OBSERVATION_PREFIX}{str(title or '').strip()}"
+        value = self.store.get_fact(key)
+        if not isinstance(value, dict):
+            return None
+        try:
+            return Observation.from_dict(value)
+        except ValueError:
+            return None
+
+    def list_observations(self) -> list[Observation]:
+        """All well-formed observation records, sorted by title (fact order).
+
+        Malformed rows are skipped, never fatal: one bad row must not
+        break reading the rest. Only facts carrying the observation
+        marker count; plain facts (the old format) are untouched.
+        """
+        found: list[Observation] = []
+        for fact in self.store.list_facts():
+            if not str(fact["key"]).startswith(OBSERVATION_PREFIX):
+                continue
+            value = fact["value"]
+            if not isinstance(value, dict) or value.get("record_kind") != _OBSERVATION_RECORD_KIND:
+                continue
+            try:
+                found.append(Observation.from_dict(value))
+            except ValueError:
+                continue
+        return found
+
+    def forget_observation(self, title: str) -> bool:
+        """Delete one observation by title. False when it did not exist."""
+        key = f"{OBSERVATION_PREFIX}{str(title or '').strip()}"
+        if self.store.get_fact(key) is None:
+            return False
+        self.store.delete_fact(key)
+        return True
 
     def consolidate(self) -> dict[str, Any]:
         """Merge facts that claim the same normalized alias.
