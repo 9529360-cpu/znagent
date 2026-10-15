@@ -212,6 +212,21 @@ class ResidentRpcServer:
                 metadata=metadata,
             )
             result = self._work_snapshot((thread, []), artifact_limit=0)
+        elif method == "work_rename":
+            # Renderer titles are untrusted input. Enforce an exact RPC schema;
+            # the Work ledger owns persistence and the privacy choke.
+            if set(params) != {"thread_id", "title"}:
+                raise ValueError("work_rename accepts only thread_id and title")
+            thread_id = params.get("thread_id")
+            title = params.get("title")
+            if not isinstance(thread_id, str) or not thread_id.strip():
+                raise ValueError("work_rename requires thread_id")
+            if not isinstance(title, str):
+                raise ValueError("work_rename requires a string title")
+            thread = self.work.rename_thread(thread_id, title)
+            result = self._work_snapshot(
+                self.work_control.get_snapshot(thread.thread_id)
+            )
         elif method == "work_get":
             thread_id = str(params.get("thread_id") or "").strip()
             if not thread_id:
