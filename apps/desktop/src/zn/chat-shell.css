@@ -815,3 +815,27 @@ body::before, body::after { display: none !important; }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
 }
+
+
+/* User-initiated, transcript-only exports; keep controls quiet beside the conversation. */
+.zn-conversation-exports {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.zn-conversation-exports button {
+  padding: 5px 10px;
+  border: 1px solid var(--zn-chat-border);
+  border-radius: 7px;
+  background: var(--zn-chat-bg);
+  color: var(--zn-chat-text-soft);
+  font-size: 11px;
+}
+.zn-conversation-exports button:hover {
+  background: var(--zn-chat-hover);
+}
+.zn-conversation-exports button:focus-visible {
+  outline: 2px solid var(--zn-chat-accent);
+  outline-offset: 2px;
+}
