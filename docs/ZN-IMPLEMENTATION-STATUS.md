@@ -98,6 +98,19 @@ Evidence: `test_subagent_delegation.py` (16 tests: pure state machine incl. cap 
 
 Known boundary: delivery marking happens in the same owner step that attaches input to the live context (the same commit-point semantics as the LG-2 resume-value pop). A crash before that owner step leaves everything pending for the next pulse; nothing is marked delivered without being attached.
 
+## Spec-first workflow (W-3): no approved spec, no implementation work
+
+Every feature starts with a spec directory `specs/<slug>/` holding `PRODUCT.md` + `TECH.md` (`spec_first.py`; templates via `render_spec_templates`). Two label gates control the two kinds of "starting work":
+
+- **Gate 1 `ready-to-spec`** -- starting to *write* the spec (`can_start_spec` against the labels on the feature request / assignment). A `ready-to-implement` label alone does not authorize spec-writing.
+- **Gate 2 `ready-to-implement`** -- starting *implementation* (`check_implementation_gate`): both spec files present, every required section filled (PRODUCT: 背景/目标/范围/非目标/验收；TECH: 方案/改动点/验收/风险；a section whose body is only the `【待填写】` placeholder or shorter than 20 chars is incomplete), and the `ready-to-implement` label in TECH.md's `<!-- SPEC LABELS: ... -->` marker. The label lives in the spec file itself, so fixing the spec unblocks the team on the next pulse with no resume ceremony.
+
+Wiring (built on existing interfaces, no parallel flow): the resident checks the spec gate in the dispatch path after the Plan Mode gate and before `owner.advance` -- a spec precedes even the plan, and with Plan Mode also on, a missing spec blocks before any plan proposal is made. A blocked gate produces a gap-shaped dict (`missing` / `needed` / `impact`, same shape as P2b `gap_report`) mirrored in working state under `team_spec_gate` and surfaced in the blocked `next_action`. It is deliberately NOT recorded as an LG-2 interrupt: an interrupt needs an explicit resume value to clear, but a spec gate must self-heal the moment the spec files on disk are fixed. When the gate passes, a compact spec summary (goal + approach) rides into the specialist's question next to Plan Mode's `plan_text`, with "do not modify the spec files" and "report a gap instead of inventing scope".
+
+Boundary: the natural-language "assemble a team" path never invents a `spec_slug` -- the assigner binds the work to a spec via `team_request["spec_slug"]`. No slug means the gate is not consulted (legacy flows unchanged).
+
+Evidence: `test_spec_first.py` (24 tests: templates, both gates, gap shape, disk loader incl. hostile slugs, and four resident-loop tests -- missing spec blocks with zero specialist calls and nothing written; approved spec unblocks with the spec summary in the specialist's question; fixing the spec on disk unblocks without resume; spec gate runs before Plan Mode; legacy no-slug flow unaffected).
+
 ## Recently retired scenario-owned surfaces
 
 The cleanup removes product code whose primary owner was a narrow representative task rather than a reusable capability contract, including:
