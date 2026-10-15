@@ -888,9 +888,13 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                                 root_work_item_id=root_item.work_item_id,
                             )
                             if saved is None:
+                                # DSH-3: save failures now raise
+                                # CheckpointSaveError (caught below with
+                                # the real cause), so None here means
+                                # only "no checkpoint storage wired".
                                 checkpoint_error = (
                                     "interrupt checkpoint not saved "
-                                    "(no storage wired or save failed)"
+                                    "(no checkpoint storage wired)"
                                 )
                     except (
                         AttributeError,

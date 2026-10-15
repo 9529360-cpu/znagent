@@ -89,6 +89,10 @@ class TeamStepResult:
     escalations: list[Escalation] = field(default_factory=list)
     team_complete: bool = False
     retrospective_summary: str | None = None
+    # DSH-3: plan-step ids whose in-flight tool call outcome is unknown
+    # because the previous pulse was interrupted. Non-empty only on a
+    # recovery pulse; the steps were marked uncertain, never re-dispatched.
+    uncertain_step_ids: list[str] = field(default_factory=list)
     # Hard termination (CP-1): when True, this step dispatched, verified,
     # and completed nothing -- the team is stopped with ``stop_reason``.
     stopped: bool = False
@@ -270,6 +274,27 @@ def describe_team_route(team: ProjectTeam) -> WorkflowRoute:
 # (two-phase writes, "checkpoint not older than parent chain") land in LG-1
 # on top of this protocol -- this module deliberately does not change the
 # overwrite-recovery completion semantics.
+#
+# DSH-3 (fail-closed + unknown results): a checkpoint write/read failure
+# is an explicit error, never a silent None -- the caller must not proceed
+# as if the pulse were durable. An interrupted pulse (the termination
+# state's pulse count ahead of the latest checkpoint's pulse) leaves its
+# in-flight tool calls with unknown outcomes: the recovery path marks
+# those steps ``uncertain`` and never re-dispatches them.
+
+
+class CheckpointSaveError(RuntimeError):
+    """A checkpoint write failed: the pulse was NOT durably recorded.
+
+    Callers must treat this as a hard failure (fail closed), never as a
+    best-effort miss: proceeding would silently drop resume state.
+    """
+
+
+class CheckpointLoadError(RuntimeError):
+    """A checkpoint read failed: the caller must NOT treat this as "no
+    checkpoint" (that would mark every step pending and re-run completed
+    work). Fail closed instead."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -296,6 +321,13 @@ class Checkpoint:
     # from the latest checkpoint + the durable ledger, never from a
     # stale checkpoint alone.
     parent_checkpoint_id: str = ""
+    # DSH-3: plan-step ids whose in-flight tool call outcome is UNKNOWN
+    # because the pulse that dispatched them was interrupted before its
+    # checkpoint saved. An uncertain step is never re-dispatched: the
+    # coordinator waits on its live run, and the run's metrics carry
+    # ``outcome_uncertain``. Uncertainty clears when the step completes
+    # (completion implies the CP-3 verdict verified the outcome).
+    uncertain_step_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -306,6 +338,7 @@ class Checkpoint:
             "pending_step_ids": list(self.pending_step_ids),
             "state": dict(self.state),
             "parent_checkpoint_id": str(self.parent_checkpoint_id or ""),
+            "uncertain_step_ids": list(self.uncertain_step_ids),
         }
 
     @classmethod
@@ -328,6 +361,9 @@ class Checkpoint:
             ),
             state=dict(raw.get("state") or {}),
             parent_checkpoint_id=str(raw.get("parent_checkpoint_id") or ""),
+            uncertain_step_ids=tuple(
+                str(s) for s in (raw.get("uncertain_step_ids") or ())
+            ),
         )
 
 
@@ -477,6 +513,9 @@ class TeamRunner:
         )
         self._limits = termination_limits or TerminationLimits()
         self._now_fn = now_fn or (lambda: datetime.now(timezone.utc))
+        # DSH-3: uncertain steps found by reconcile_interrupted_pulse()
+        # this instance, carried into the next checkpoint it builds.
+        self._uncertain_step_ids: set[str] = set()
 
     @property
     def team(self) -> ProjectTeam:
@@ -522,6 +561,11 @@ class TeamRunner:
                 if latest.checkpoint_id == checkpoint_id
                 else latest.checkpoint_id
             )
+        # DSH-3: uncertainty survives into later checkpoints until the
+        # step completes (completion implies the CP-3 verdict verified
+        # the outcome, so it is no longer unknown).
+        carried = set(getattr(latest, "uncertain_step_ids", ()) or ())
+        uncertain = sorted((carried | self._uncertain_step_ids) - set(completed))
         return Checkpoint(
             checkpoint_id=checkpoint_id,
             team_id=self._team.team_id,
@@ -533,31 +577,145 @@ class TeamRunner:
                 "stop_reason": state.stop_reason,
             },
             parent_checkpoint_id=parent,
+            uncertain_step_ids=tuple(uncertain),
         )
 
     def save_checkpoint(self) -> Checkpoint | None:
-        """Persist the current snapshot. Best-effort: never breaks stepping.
+        """Persist the current snapshot. Fail-closed (DSH-3).
 
-        Returns the saved checkpoint, or None when no storage is wired or
-        the save failed (a checkpoint is a resume aid, not a gate).
+        Returns None only when no storage is wired (checkpointing not
+        configured). When storage IS wired and the save fails, raises
+        :class:`CheckpointSaveError`: the pulse was not durably
+        recorded, and the caller must not proceed as if it were.
         """
         if self._checkpoint_storage is None:
             return None
         try:
             checkpoint = self.build_checkpoint()
             self._checkpoint_storage.save(checkpoint)
-        except Exception:
-            return None
+        except CheckpointSaveError:
+            raise
+        except CheckpointLoadError:
+            raise
+        except Exception as exc:
+            raise CheckpointSaveError(
+                "checkpoint save failed for team "
+                f"{self._team.team_id!r}: {type(exc).__name__}: {exc}"
+            ) from exc
         return checkpoint
 
     def latest_checkpoint(self) -> Checkpoint | None:
-        """Latest checkpoint for this team, or None when none exists."""
+        """Latest checkpoint for this team, or None when none exists.
+
+        Fail-closed (DSH-3): when storage is wired but the load fails,
+        raises :class:`CheckpointLoadError` instead of returning None --
+        a failed load must never masquerade as "no checkpoint" (that
+        would mark every step pending and re-run completed work).
+        """
         if self._checkpoint_storage is None:
             return None
         try:
             return self._checkpoint_storage.latest(team_id=self._team.team_id)
-        except Exception:
-            return None
+        except CheckpointLoadError:
+            raise
+        except Exception as exc:
+            raise CheckpointLoadError(
+                "checkpoint load failed for team "
+                f"{self._team.team_id!r}: {type(exc).__name__}: {exc}"
+            ) from exc
+
+    # -- DSH-3: interrupted-pulse recovery --------------------------------
+
+    def interrupted_pulse_detected(self) -> bool:
+        """True when the previous pulse was interrupted mid-flight.
+
+        The runner records the termination pulse count at pulse START
+        and the checkpoint at pulse END. A latest checkpoint older than
+        the termination pulse count (or no checkpoint at all while a
+        pulse already started) means the process died between the two --
+        the interrupted pulse's in-flight tool calls have unknown
+        outcomes. No storage wired means nothing durable to compare:
+        False (checkpointing is not configured).
+        """
+        if self._checkpoint_storage is None:
+            return False
+        shared = team_shared_memory(self._memory, self._team.team_id)
+        state = load_termination_state(shared)
+        pulses = max(0, int(state.pulses or 0))
+        if pulses <= 0:
+            return False
+        latest = self.latest_checkpoint()
+        if latest is None:
+            return True
+        return int(latest.pulse) < pulses
+
+    def reconcile_interrupted_pulse(self) -> list[str]:
+        """Mark interrupted in-flight tool calls as unknown, never retry.
+
+        When :meth:`interrupted_pulse_detected` is True, every pending
+        step with a live, unclaimed WorkerRun may already have executed
+        its tool call -- the outcome is unknown. Each such run gets
+        ``outcome_uncertain=True`` stamped into its metrics (the durable
+        evidence trail), and its step id is remembered for the next
+        checkpoint's ``uncertain_step_ids``. The steps are NOT
+        re-dispatched: the coordinator waits on the live run, and the
+        specialist must verify the effect before proposing the step
+        again. Returns the uncertain step ids (empty: no interruption).
+        Idempotent per instance: a second call returns the same set
+        without re-stamping.
+        """
+        if not self.interrupted_pulse_detected():
+            return sorted(self._uncertain_step_ids)
+        latest = self.latest_checkpoint()
+        pending = (
+            list(latest.pending_step_ids)
+            if latest is not None
+            else [item.item_id for item in self._team.plan]
+        )
+        shared = team_shared_memory(self._memory, self._team.team_id)
+        match = shared.recall(self.PLAN_MAP_KEY)
+        id_map: dict[str, str] = (
+            dict(match.value)
+            if match is not None and isinstance(match.value, dict)
+            else {}
+        )
+        thread_id = self._team.work_thread_id or ""
+        uncertain: list[str] = []
+        for plan_item_id in pending:
+            wid = id_map.get(plan_item_id)
+            if not wid:
+                continue
+            history = self._ledger.list_worker_runs(work_item_id=wid, limit=50)
+            live = next(
+                (
+                    run
+                    for run in history
+                    if getattr(run, "state", "") in {"queued", "running"}
+                    and not getattr(run, "claimed_completion", False)
+                ),
+                None,
+            )
+            if live is None:
+                continue
+            uncertain.append(plan_item_id)
+            if plan_item_id in self._uncertain_step_ids:
+                continue
+            self._uncertain_step_ids.add(plan_item_id)
+            update_metrics = getattr(
+                self._ledger, "update_worker_run_metrics", None
+            )
+            if callable(update_metrics):
+                try:
+                    update_metrics(
+                        live.worker_run_id,
+                        metrics={"outcome_uncertain": True},
+                    )
+                except Exception:
+                    # The checkpoint state (written by the next save)
+                    # is the durable uncertainty record; a metrics
+                    # stamp failure must not block the recovery itself.
+                    pass
+        return sorted(self._uncertain_step_ids)
 
     def pending_step_ids(self, checkpoint: Checkpoint | None = None) -> list[str]:
         """Plan steps still pending at the checkpoint (default: latest).
@@ -761,6 +919,11 @@ class TeamRunner:
         a team hitting a cap (or a requested external stop) stops here --
         before any dispatch, verification, or completion.
         """
+        # DSH-3: reconcile an interrupted previous pulse FIRST, before
+        # the pulse counter moves: the detector compares the latest
+        # checkpoint's pulse against the stored termination pulses, and
+        # incrementing first would hide the interruption.
+        uncertain = self.reconcile_interrupted_pulse()
         shared = team_shared_memory(self._memory, self._team.team_id)
         state = load_termination_state(shared)
         if state.stop_reason is not None:
@@ -770,6 +933,7 @@ class TeamRunner:
                 stop_reason=state.stop_reason,
                 stop_trigger=dict(state.trigger or {}),
                 stop_progress=dict(state.progress or {}),
+                uncertain_step_ids=list(uncertain),
             )
         now = self._now_fn()
         if state.started_at is None:
@@ -792,11 +956,13 @@ class TeamRunner:
                 now=now,
             )
             self.save_checkpoint()
+            stopped.uncertain_step_ids = list(uncertain)
             return stopped
         cap = evaluate_termination(state, self._limits, now=now)
         if cap is not None:
             stopped = self._take_stop(shared, state, cap, now=now)
             self.save_checkpoint()
+            stopped.uncertain_step_ids = list(uncertain)
             return stopped
 
         thread_id = self._team.work_thread_id or ""
@@ -814,6 +980,9 @@ class TeamRunner:
             self._ledger, runs=runs, id_map=id_map
         )
         result = TeamStepResult()
+        result.uncertain_step_ids = list(uncertain)
+        for sid in uncertain:
+            result.actions.append(f"uncertain:{sid}")
         for decision in decisions:
             try:
                 self._apply(decision, items, runs, result)

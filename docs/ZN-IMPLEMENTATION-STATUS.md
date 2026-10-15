@@ -63,6 +63,14 @@ Team tasks live in `team_task_state.py` (`TeamTaskStateStore` + immutable `TaskS
 
 Evidence: `test_team_task_state.py` (16 tests), including a two-reader lost-update rejection, tombstone retention + refusal, and advisory-not-blocking checks.
 
+## Checkpoint fail-closed + unknown results (DSH-3)
+
+Pulse-boundary checkpoints (`team_runner.py`, `team_work_owner.py`) fail closed. `TeamRunner.save_checkpoint` / `TeamWorkOwner.save_interrupt_checkpoint` raise `CheckpointSaveError` (a `RuntimeError`) when storage is wired and the write fails -- the pulse was not durably recorded, and the caller must not proceed as if it were; they still return `None` only when no storage is wired. `latest_checkpoint` / `pending_step_ids` raise `CheckpointLoadError` on a load failure instead of returning `None`: a failed load must never masquerade as "no checkpoint", which would mark every step pending and re-run completed work. The resident already fails an event closed on `RuntimeError` from `advance()`, so a checkpoint failure surfaces as an explicit terminal failure.
+
+Interrupted tool calls resume as unknown, never retried. The detector is durable, not heuristic: the runner records the termination pulse count at pulse START and the checkpoint at pulse END, so a latest checkpoint older than the termination pulses (or no checkpoint while a pulse already started) proves the previous pulse died mid-flight. On the recovery pulse, `TeamRunner.step()` reconciles first -- before the pulse counter moves -- and every pending step with a live, unclaimed `WorkerRun` gets `outcome_uncertain=True` stamped into the run's metrics and its step id recorded in the checkpoint's `uncertain_step_ids` (carried forward until the step completes; completion implies the CP-3 verdict verified the outcome). The steps are not re-dispatched: the coordinator already waits on a live run, and the recovery result carries `uncertain_step_ids` through `TeamStepResult` / `TeamOwnerStep`. No new retry path exists; the kernel's `_checkpoint_uncertain_dispatch` and the LG-1 native-completion rebuild keep their own unknown-result handling untouched.
+
+Evidence: `test_dsh3_checkpoint_failclosed.py` (12 tests), including save/load failure raising, step() propagating a save failure, interrupted-pulse marking with no second dispatch, first-pulse crash, and uncertainty clearing on completion.
+
 ## Recently retired scenario-owned surfaces
 
 The cleanup removes product code whose primary owner was a narrow representative task rather than a reusable capability contract, including:
