@@ -1,0 +1,67 @@
+name: ZN Floor Guard (AS-1)
+
+# AS-1: "never edit tests to make them pass" as a mechanical check over
+# the PR diff — suppression comments, skip markers, deleted tests /
+# assertions, stubs, and weakening of the floor itself (CONSTRAINTS.md,
+# floor-guard, or this workflow). Deterministic, zero token, no model
+# calls, no network. See CONSTRAINTS.md for the rules and the exception
+# process (explicit approval + trace; no silent loosening).
+#
+# This workflow is a standalone CI check on PRs. It is NOT wired into
+# the required-checks gate in zn-ci.yml — that file is intentionally
+# untouched. Promoting this check to required is a separate
+# branch-protection decision, not part of this PR.
+
+on:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  floor-guard:
+    name: ZN Floor Guard / Ubuntu
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      UV_PYTHON_INSTALL_DIR: ${{ github.workspace }}/.ci/uv-python
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+        with:
+          version: '0.11.6'
+          enable-cache: true
+
+      - name: Prepare Python 3.12 venv with ZN runtime deps
+        run: |
+          uv python install 3.12
+          rm -rf .ci/floor-guard-venv
+          uv venv .ci/floor-guard-venv --python 3.12
+          uv pip install --python .ci/floor-guard-venv/bin/python runtime/python
+
+      - name: Run floor guard over the PR diff
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            git fetch origin main --quiet
+            git diff origin/main...HEAD > /tmp/floor-guard.diff
+          elif [ "${{ github.event.before }}" = "0000000000000000000000000000000000000000" ]; then
+            git diff HEAD~1...HEAD > /tmp/floor-guard.diff
+          else
+            git diff ${{ github.event.before }}...HEAD > /tmp/floor-guard.diff
+          fi
+          PYTHONPATH=runtime/python .ci/floor-guard-venv/bin/python scripts/floor_guard.py --diff-file /tmp/floor-guard.diff
+
+      - name: Run floor guard unit tests
+        run: |
+          PYTHONPATH=runtime/python .ci/floor-guard-venv/bin/python -m unittest discover -s tests/zn_agent/core -p "test_floor_guard.py" -v

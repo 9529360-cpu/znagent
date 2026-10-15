@@ -3,6 +3,7 @@
 > 来源：anthropics/knowledge-work-plugins（Apache 2.0）与 addyosmani/agent-skills（MIT）。
 > 只抄机制，不抄具体业务插件内容。本清单是 ZN 作者写新 Skill 时的唯一检查入口。
 > AS-4（Evals Tier 1 + Tier 2，进 CI 的触发校验）已落地，见 §11。
+> AS-1（floor-guard：不许为通过而改测试，机械检查）已落地，见 §12。
 
 ## 0. 先说清三个容易混淆的点
 
@@ -183,3 +184,28 @@ CI：`.github/workflows/zn-skill-evals.yml` 在 PR / push 到 main 时跑
 仓库扫描 + `test_skill_evals.py`。该 workflow 是独立检查，未接进
 `zn-ci.yml` 的必需检查门（`zn-ci.yml` 未动）；升为必需检查是单独的
 分支保护决策，不在本 PR。
+
+## 12. Floor-guard（AS-1）：不许为通过而改测试，机械检查
+
+本清单的校验器管 Skill 写得好不好；floor-guard 管另一件事——
+任何人（包括写 Skill 的人）都不许为通过而改测试。规则在仓库根
+`CONSTRAINTS.md`，实现在 `runtime/python/zn_agent/core/floor_guard.py`
+（只查 PR diff 的新增/删除行，不接线进运行时，不改既有行为），
+CI 在 `.github/workflows/zn-floor-guard.yml`（独立检查，未接进
+`zn-ci.yml` 必需检查门，升必需是单独的分支保护决策）。
+
+拦截（违规）：压制注释（`# noqa`、`# type: ignore` 等）、skip 标记、
+删测试 / 删断言、空 `except: pass`、stub 冒充实现、CONSTRAINTS /
+floor-guard / 本 workflow 自身被放宽。警告（不拦截，PR 里交代）：
+`pytest.xfail`、裸 `except:`、`# pragma: no cover`、TODO 标记、
+删非测试代码里的 `assert`。禁令句、字符串字面量、三引号字符串里的
+模式引用不判违规；例外必须显式批准 + 留痕，见 `CONSTRAINTS.md` §3。
+
+本地跑：
+
+```bash
+# 对当前分支相对 origin/main 的 diff 做检查（与 CI 同一条命令）
+git diff origin/main...HEAD | PYTHONPATH=runtime/python python3 scripts/floor_guard.py
+# 单元测试
+PYTHONPATH=runtime/python python3 -m pytest tests/zn_agent/core/test_floor_guard.py -q
+```
