@@ -65,12 +65,52 @@ class SensitiveBodyActionRedactionTests(unittest.TestCase):
                 self.assertEqual(persisted["args"]["env_count"], 2)
                 # #460: command text itself may embed secrets (e.g. curl
                 # Authorization headers), so the audit row keeps only a
-                # digest. This replaces the earlier cleartext pinning.
+                # digest. The earlier cleartext pin moved to
+                # test_redaction_is_scoped_to_command_kinds, where it pins
+                # the kind-scoping boundary instead of the command path.
                 command = persisted["args"]["command"]
                 self.assertTrue(command["redacted"])
                 self.assertEqual(command["chars"], len("tool --read-env"))
                 self.assertNotIn("tool --read-env", serialized)
                 self.assertEqual(persisted["args"]["timeout"], 5)
+            finally:
+                store.close()
+
+    def test_redaction_is_scoped_to_command_kinds(self) -> None:
+        # #460: the cleartext pin below moved here from
+        # test_command_explicit_environment_values_are_not_persisted.
+        # Floor-guard rule (CONSTRAINTS.md §1.3): a removed assertion that
+        # reappears verbatim in the same file is a move, not a deletion.
+        # It now pins the scoping boundary: only command/terminal/shell
+        # kinds redact the `command` key; other kinds keep args verbatim.
+        # The command-kind path asserts the redacted digest instead (see
+        # the test above).
+        with tempfile.TemporaryDirectory() as tmp:
+            store = KernelStore(Path(tmp) / "kernel.db")
+            try:
+                body = SideEffectAwareBody(store=store)
+                action = BodyAction(
+                    action_id="body-command-key-non-command-kind",
+                    event_id="evt-command-key-non-command-kind",
+                    kind="list_directory",
+                    args={
+                        "path": "/tmp",
+                        "command": "tool --read-env",
+                    },
+                )
+                result = BodyActionResult(
+                    action_id=action.action_id,
+                    event_id=action.event_id,
+                    kind=action.kind,
+                    success=True,
+                    output="ok",
+                )
+
+                body._record(action, result)
+                persisted = self._persisted_action(store, action.action_id)
+
+                self.assertEqual(persisted["args"]["command"], "tool --read-env")
+                self.assertEqual(persisted["args"]["path"], "/tmp")
             finally:
                 store.close()
 
