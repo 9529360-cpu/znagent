@@ -38,7 +38,7 @@ or trigger exceeds the cap — over-cap text is truncated at build time
 import fnmatch
 import re
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
 
 import yaml
@@ -153,6 +153,26 @@ def validate_resident_entry(entry: dict[str, Any]) -> None:
             )
 
 
+def _is_absolute_pattern(pattern: str) -> bool:
+    """Platform-independent absolute-path check for a glob pattern.
+
+    ``Path.is_absolute()`` is platform-dependent: on Windows,
+    ``Path('/abs/path').is_absolute()`` is False (no drive letter), so a
+    POSIX absolute pattern would slip through as a glob on Windows.
+    Check both POSIX and Windows semantics so the same frontmatter is
+    rejected on every platform. A leading ``\\`` (Windows rooted path)
+    and a drive prefix (``C:...``) are absolute on Windows even though
+    ``PureWindowsPath.is_absolute()`` reports them as not absolute.
+    """
+    if pattern.startswith(("/", "\\")):
+        return True
+    if len(pattern) >= 2 and pattern[1] == ":" and pattern[0].isalpha():
+        return True
+    return PurePosixPath(pattern).is_absolute() or PureWindowsPath(
+        pattern
+    ).is_absolute()
+
+
 def _parse_globs(meta: dict[str, Any]) -> tuple[str, ...]:
     """Valid ``globs`` patterns from frontmatter; invalid entries dropped.
 
@@ -170,7 +190,7 @@ def _parse_globs(meta: dict[str, Any]) -> tuple[str, ...]:
         pattern = item.strip()
         if not pattern or "\x00" in pattern or ".." in pattern:
             continue
-        if Path(pattern).is_absolute():
+        if _is_absolute_pattern(pattern):
             continue
         patterns.append(pattern)
     return tuple(patterns)
