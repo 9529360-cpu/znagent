@@ -40,12 +40,23 @@ import hashlib
 import json
 import shlex
 import sys
+from pathlib import Path
 from typing import Any
 
 from .action import NativeActionIntent
 from .broad_goal_coding_resident import BroadGoalCodingResidentRuntime
 from .cognition import CognitiveIncrement
 from .models import ExecutionPath, utc_now
+from .plan_mode import (
+    PLAN_GATE_STATE_KEY,
+    parse_plan_proposal,
+    plan_file_rel_path,
+    plan_gate,
+    plan_mode_enabled,
+    plan_pending,
+    render_plan_markdown,
+    request_plan,
+)
 from .sensitive_handover import (
     detect_sensitive_step,
     pending_handover,
@@ -220,6 +231,32 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             self._sync_execution_context(event, state)
             self.store.save_working_state(state)
             return self._checkpoint_terminal_failure(event, state, reason=reason)
+        # CUR-2 Plan Mode: a pending plan blocks dispatch (never a work
+        # step before approval); a rejected plan fails the team closed.
+        # This mirrors the handover branch -- the event stays alive while
+        # waiting, and resumes on the next pulse after approval lands.
+        gate = plan_gate(state.data) if isinstance(state.data, dict) else None
+        if gate is not None and gate.get("status") == "rejected":
+            state.data.pop(PLAN_GATE_STATE_KEY, None)
+            reason = (
+                "计划被拒绝，团队已停止："
+                f"{str(gate.get('reject_reason') or '计划被拒绝')[:600]}"
+            )
+            state.data["local_failure"] = reason[:3000]
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._checkpoint_terminal_failure(event, state, reason=reason)
+        if plan_pending(state.data if isinstance(state.data, dict) else {}):
+            state.blocked_by = "user_presence_required"
+            state.stage = "native_deliberation"
+            state.next_action = (
+                "等待主人审批计划："
+                f"{str(gate.get('title') or '')[:200]}"
+                f"（已写入 {str(gate.get('plan_file') or '')}，可编辑后批准）"
+            )
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
         pending = pending_handover(self.memory, team.team_id)
         if pending is not None:
             state.blocked_by = "user_presence_required"
@@ -516,6 +553,28 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 "与之矛盾的范围）:"
                 f" {json.dumps(prior_items, ensure_ascii=False)} "
             )
+        # CUR-2 Plan Mode: when enabled, a multi-file / design-decision
+        # item plans first -- no files are written before approval.
+        plan_text = ""
+        if plan_mode_enabled(event):
+            plan_text = (
+                "Plan Mode 已开启：如果你的事项涉及多个文件或需要设计抉择，"
+                "不要先写文件。只回复这一个 JSON 对象（不要其他文字）："
+                '{"plan_proposal":{"title":"...","goal":"...","files":'
+                '["relative/path",...],"steps":["...",...],"decisions":'
+                '[{"question":"...","options":["...","..."],'
+                '"recommendation":"..."}],"risks":["...",...],'
+                '"acceptance":["...",...]}}。计划会写成可审阅、可编辑的'
+                "计划文件，等用户改完批准后才执行。未经批准不要执行计划"
+                "中的任何步骤，也不要重新规划一个已提交待审批的计划。"
+            )
+        approved_text = ""
+        approved_plan = context.get("approved_plan")
+        if isinstance(approved_plan, str) and approved_plan.strip():
+            approved_text = (
+                "已批准的计划（用户改完批准的版本，按它执行，不要重新"
+                f"规划，不要偏离）：{approved_plan[:6000]} "
+            )
         request.question = (
             "You are the "
             f"{context.get('specialist_name') or 'specialist'} specialist on one "
@@ -549,6 +608,8 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             '"needed":"what is needed to continue",'
             '"impact":"what breaks without it"}}. '
             "The team stops and waits for the user to decide on a reported gap. "
+            f"{plan_text}"
+            f"{approved_text}"
             "If your item's acceptance criteria are NOT all "
             "satisfied yet, do NOT claim completion: do another work step. "
             "Only when EVERY criterion is satisfied by the verified evidence "
@@ -695,6 +756,111 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
             self._sync_execution_context(event, state)
             self.store.save_working_state(state)
             return None
+
+        # CUR-2 Plan Mode: a plan proposal is not a work step and must
+        # never be executed. Render it as a reviewable, editable plan
+        # file; the team blocks until the user approves the plan.
+        # Exact-shape routing only -- prose merely mentioning
+        # "plan_proposal" must not misfire this branch.
+        if plan_mode_enabled(event):
+            plan_shape = parse_exact_json_payload(increment.content)
+            if isinstance(plan_shape, dict) and "plan_proposal" in plan_shape:
+                proposal, plan_err = parse_plan_proposal(increment.content)
+                if proposal is None:
+                    state.data[self._TEAM_REJECTION_KEY] = {
+                        "run_id": str(context.get("run_id") or ""),
+                        "reason": f"plan_proposal 格式错误：{plan_err}",
+                        "proposal_excerpt": str(increment.content or "")[:600],
+                    }
+                    state.stage = "native_deliberation"
+                    state.next_action = "专员计划格式错误：按拒因重提"
+                    self._sync_execution_context(event, state)
+                    self.store.save_working_state(state)
+                    return None
+                gate, replaced = request_plan(
+                    state.data,
+                    work_item_id=str(context.get("work_item_id") or ""),
+                    run_id=str(context.get("run_id") or ""),
+                    proposal=proposal,
+                    plan_file=plan_file_rel_path(
+                        str(context.get("work_item_id") or "")
+                    ),
+                )
+                if not replaced:
+                    state.data[self._TEAM_REJECTION_KEY] = {
+                        "run_id": str(context.get("run_id") or ""),
+                        "reason": (
+                            "已有待审批计划，不要重新规划："
+                            f"{str(gate.get('title') or '')[:200]}"
+                        ),
+                        "proposal_excerpt": str(increment.content or "")[:600],
+                    }
+                    state.stage = "native_deliberation"
+                    state.next_action = "已有待审批计划：等用户审批，不要重提"
+                    self._sync_execution_context(event, state)
+                    self.store.save_working_state(state)
+                    return None
+                workspace_path = str(
+                    event.payload.get("workspace_path") or ""
+                ).strip()
+                if not workspace_path:
+                    # No file was written: drop the gate so the state
+                    # stays consistent (no pending plan without a file).
+                    state.data.pop(PLAN_GATE_STATE_KEY, None)
+                    state.data[self._TEAM_REJECTION_KEY] = {
+                        "run_id": str(context.get("run_id") or ""),
+                        "reason": "无已附加工作区，计划文件无处可写",
+                        "proposal_excerpt": str(increment.content or "")[:600],
+                    }
+                    state.stage = "native_deliberation"
+                    state.next_action = "无工作区：计划文件无处可写"
+                    self._sync_execution_context(event, state)
+                    self.store.save_working_state(state)
+                    return None
+                try:
+                    plan_path = (
+                        Path(workspace_path)
+                        / str(gate.get("plan_file") or "")
+                    )
+                    plan_path.parent.mkdir(parents=True, exist_ok=True)
+                    plan_path.write_text(
+                        render_plan_markdown(
+                            proposal,
+                            work_item_id=str(
+                                context.get("work_item_id") or ""
+                            ),
+                            specialist_name=str(
+                                context.get("specialist_name") or "specialist"
+                            ),
+                        ),
+                        encoding="utf-8",
+                    )
+                except OSError as exc:
+                    # No file was written: drop the gate so the state
+                    # stays consistent (no pending plan without a file).
+                    state.data.pop(PLAN_GATE_STATE_KEY, None)
+                    state.data[self._TEAM_REJECTION_KEY] = {
+                        "run_id": str(context.get("run_id") or ""),
+                        "reason": (
+                            "计划文件写入失败："
+                            f"{type(exc).__name__}: {exc}"
+                        ),
+                        "proposal_excerpt": str(increment.content or "")[:600],
+                    }
+                    state.stage = "native_deliberation"
+                    state.next_action = "计划文件写入失败：按拒因重提"
+                    self._sync_execution_context(event, state)
+                    self.store.save_working_state(state)
+                    return None
+                state.stage = "native_deliberation"
+                state.next_action = (
+                    "专员已提交计划，等待用户审批："
+                    f"{proposal.title[:200]}"
+                    f"（已写入 {gate.get('plan_file')}，可编辑后批准）"
+                )
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return None
 
         # Route the proposal to the parser matching its declared action
         # kind, so the rejection reason (fed back to the next cognition

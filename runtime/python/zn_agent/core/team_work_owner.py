@@ -32,6 +32,7 @@ from .completion_verdict import (
     adjudicate_completion,
     record_verdict_attempt,
 )
+from .plan_mode import approved_plan_text
 from .project_team import ProjectTeam, assemble_team
 from .skill_ledger import SkillLedger
 from .specialist_workspace import (
@@ -560,6 +561,17 @@ class TeamWorkOwner:
                         "acceptance_criteria": list(plan_item.acceptance_criteria),
                         "prior_items": self._prior_items_for(
                             team=team, live_work_item_id=live.work_item_id
+                        ),
+                        # CUR-2 Plan Mode: an approved (possibly edited)
+                        # plan rides along so the specialist follows it
+                        # instead of re-planning or freelancing.
+                        "approved_plan": approved_plan_text(
+                            state.data
+                            if isinstance(
+                                getattr(state, "data", None), dict
+                            )
+                            else {},
+                            work_item_id=live.work_item_id,
                         ),
                         "evidence": [
                             {
