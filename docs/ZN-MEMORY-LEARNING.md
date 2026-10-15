@@ -838,3 +838,52 @@ ledger, not a second supersession mechanism.
 - Deliberately not in this change: vector store / Qdrant (ZN
   keyword search stays on SQLite FTS5), SUPERSEDE events +
   retrieval arbitration.
+
+## 21. Hybrid retrieval fusion (M0-4)
+
+`StructuredMemory.recall_hybrid(query, max_facts=5, as_of=None)` ranks
+memory by fused signals, on top of the GR-1/GR-2 validity ledger —
+no second supersession mechanism, no vector side, no Qdrant, no
+embedding, no network. Fusion shape adapted from mem0 (Apache 2.0);
+implementation is ZN's own, deterministic, zero-token.
+
+- Keyword (weight 0.45): BM25 (k1=1.2, b=0.75) over each candidate's
+  key + aliases + value text, normalised by the best candidate's raw
+  score. IDF uses the candidate set itself as the corpus, so there
+  are no global statistics to keep in sync.
+- Entity (weight 0.35): alias/key weighting. Exact key/alias equality
+  is 1.0; a CJK alias/key appearing as a substring of the query is a
+  mention (1.0); otherwise the share of query tokens covered by the
+  entity's tokens (whole-token equality — Latin "art" never matches
+  "part").
+- Exact (weight 0.15): query == key or alias — the legacy `recall()`
+  signal, kept so exact matches still win ties.
+- Recency (weight 0.05): `valid_at` age decay over ~30 days. Only a
+  tie-breaker: a candidate with no keyword, entity, or exact signal
+  scores 0 and is dropped, however fresh it is.
+- Correction to §20's parenthetical: no SQLite FTS5 virtual table
+  exists in this repo, and M0-4 does not add one. The keyword side
+  is BM25 computed in Python over the candidate facts rows — the
+  same ranking shape without a schema migration or write-path sync
+  on every `remember()`/`put_fact()` caller.
+- Validity: default (`as_of=None`) returns only currently-valid
+  facts — superseded versions never surface. With `as_of` set, each
+  key contributes the one version whose window covers that moment
+  (plus legacy rows with no ledger, when their `created_at` is at or
+  before `as_of`). `forget()` removes a key from current hybrid
+  results; its history stays reachable via `as_of`.
+- Scope boundary: value-text keyword scoring lives ONLY in
+  `recall_hybrid()`. `recall()` stays exact-only, and
+  `relevant_context()` / `bind_cognition_context()` keep their
+  deliberate key/alias-only conservative lookup, so hybrid
+  retrieval never widens what gets injected into a cognition call.
+  Each result carries `score`, per-signal `signals`, `matched_by`
+  ("key", an alias, or "keyword" for a value-text-only hit), and
+  GR-1/M0-1 provenance (`valid_at` / `invalid_at` / `id` /
+  `linked_memory_ids`).
+- Tests: `tests/zn_agent/core/test_memory_hybrid_retrieval.py`
+  (fusion ordering, entity beats keyword-only, value-only keyword
+  surfacing, exact wins, current-only, as-of history,
+  forget filtering, old-behavior regression, determinism).
+- Deliberately not in this change: vector embeddings / Qdrant,
+  SUPERSEDE events + retrieval arbitration, FTS5 virtual table.
