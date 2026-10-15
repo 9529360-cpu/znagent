@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { znConversationExportPayload, znExportConversation, znExportFilename } from '../src/zn/conversation-export'
-import type { ZnThread } from '../src/zn/state'
 
-const thread: ZnThread = {
+const thread = {
   id: 'work-1', title: '讨论 / Work', createdAt: 0, updatedAt: 10, artifacts: [],
   messages: [
     { id: 'm1', role: 'user', text: 'Hello', at: 0 },
@@ -10,7 +9,7 @@ const thread: ZnThread = {
     { id: 'm3', role: 'zn', text: 'Done', at: 2, detail: { password: 'private', tool_args: 'sensitive' } }
   ],
   workspace: { name: 'Secret workspace', path: '/private/secrets', attachedAt: 3 }
-}
+} as const
 
 describe('ZN conversation export', () => {
   it('exports only user-visible conversation and excludes tool arguments, paths, and internal details', () => {
