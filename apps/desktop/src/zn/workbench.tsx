@@ -65,6 +65,8 @@ import { ZnApprovalPanel } from './approval-panel'
 import { RoutinesPanel } from './routines-panel'
 import { ZnSlidesWorkstation } from './slides-workstation'
 import { ZnDocumentWorkstation } from './document-workstation'
+import { ZnExecutionTimeline } from './execution-timeline-view'
+import { znExecutionActionsFromDetail } from './execution-timeline'
 import {
   addZnThreadMessage,
   loadZnThreadCache,
@@ -1397,6 +1399,9 @@ export function ZnWorkbench() {
                     const executionEvidence = message.role === 'activity'
                       ? executionEvidenceFromDetail(message.detail)
                       : null
+                    const historyActions = message.role === 'activity'
+                      ? znExecutionActionsFromDetail(message.detail)
+                      : []
                     return (
                       <article className={'zn-message ' + message.role} key={message.id}>
                         <div className="zn-message-label">{message.role === 'user' ? t('message.you') : message.role === 'zn' ? 'ZN' : t('message.activity')}</div>
@@ -1407,13 +1412,21 @@ export function ZnWorkbench() {
                             <span>{t('message.modelCalls', { count: executionEvidence.modelInvocations })}</span>
                           </div>
                         ) : null}
+                        {historyActions.length > 0 ? (
+                          <details className="zn-history-trace">
+                            <summary>{t('trace.historyActions', { count: historyActions.length })}</summary>
+                            <ZnExecutionTimeline
+                              actions={historyActions}
+                              locale={localeState.resolvedLocale}
+                              t={t}
+                            />
+                          </details>
+                        ) : null}
                         {message.detail && Object.keys(message.detail).length > 0 ? (
-                          executionEvidence ? (
-                            <details className="zn-activity-technical">
-                              <summary>{t('message.technical')}</summary>
-                              <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
-                            </details>
-                          ) : <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
+                          <details className="zn-activity-technical">
+                            <summary>{t('message.technical')}</summary>
+                            <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
+                          </details>
                         ) : null}
                       </article>
                     )
@@ -1507,6 +1520,15 @@ export function ZnWorkbench() {
                     <div className="active"><CircleNotch className="zn-spin" size={17} /><span>{stageLabel(workProgress.stage, t)}</span></div>
                     <div><CheckCircle size={17} /><span>{t('work.verify')}</span></div>
                   </div>
+                  <section className="zn-live-trace" aria-label={t('trace.timelineAria')}>
+                    <div className="zn-live-trace-title">{t('trace.recentActions')}</div>
+                    <ZnExecutionTimeline
+                      actions={workProgress.bodyActions}
+                      currentStage={stageLabel(workProgress.stage, t)}
+                      locale={localeState.resolvedLocale}
+                      t={t}
+                    />
+                  </section>
 
                   {workProgress.delegation ? (
                     <div className="zn-work-detail" aria-label={t('work.delegatedProgressAria')}>
@@ -1541,15 +1563,7 @@ export function ZnWorkbench() {
                         {workProgress.investigation.nextProbe ? t('work.next', { next: workProgress.investigation.nextProbe }) : ''}
                       </div>
                     ) : null}
-                    {workProgress.bodyActions.length > 0 ? (
-                      <div className="zn-work-detail">
-                        {workProgress.bodyActions.map((action, index) => (
-                          <div key={action.at + '-' + action.kind + '-' + index}>
-                            {action.kind} · {action.success ? t('work.ok') : t('work.failed')}{action.summary ? ' · ' + action.summary : ''}
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
+
                   </details>
 
                   <div className="zn-current-work-actions">
