@@ -1414,7 +1414,7 @@ export function ZnWorkbench() {
                         ) : null}
                         {historyActions.length > 0 ? (
                           <details className="zn-history-trace">
-                            <summary>{t('trace.historyActions', { count: historyActions.length })}</summary>
+                            <summary>{t('trace.historyActions') + ' · ' + historyActions.length}</summary>
                             <ZnExecutionTimeline
                               actions={historyActions}
                               locale={localeState.resolvedLocale}
