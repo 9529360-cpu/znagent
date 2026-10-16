@@ -15,7 +15,8 @@ const MAX_SUMMARY_LENGTH = 320
 
 function normalizedTimestamp(value: unknown): number | undefined {
   if (typeof value === 'number') {
-    return Number.isFinite(value) && value > 0 ? value : undefined
+    return Number.isFinite(value) && value > 0 && !Number.isNaN(new Date(value).getTime())
+      ? value : undefined
   }
   if (typeof value !== 'string' || !value.trim()) return undefined
   const at = Date.parse(value)
