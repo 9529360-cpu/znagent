@@ -775,10 +775,15 @@ class ResidentWorkLedger:
         except Exception:
             return []
 
+        # Select only the bounded, current-Work entries *before* privacy
+        # processing. A long session may have large Body outputs; repeatedly
+        # scanning unrelated output on each read-only 700ms poll is wasteful.
+        matching = [
+            action for action in reversed(recent)
+            if getattr(action, "event_id", None) == event_id
+        ][-6:]
         matches: list[dict[str, Any]] = []
-        for action in reversed(recent):
-            if getattr(action, "event_id", None) != event_id:
-                continue
+        for action in matching:
             kind = " ".join(strip_tags(str(getattr(action, "kind", "") or "")).split())[:80]
             raw_summary = str(
                 getattr(action, "output", None)
@@ -794,7 +799,7 @@ class ResidentWorkLedger:
                 "at": getattr(action, "completed_at", None),
                 "summary": summary,
             })
-        return matches[-6:]
+        return matches
 
     def progress(self, thread_id: str, event_id: str) -> dict[str, Any]:
         normalized_thread = self._normalize_thread_id(thread_id)
