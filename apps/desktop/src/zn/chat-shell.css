@@ -815,3 +815,62 @@ body::before, body::after { display: none !important; }
 @media (prefers-reduced-motion: reduce) {
   * { scroll-behavior: auto !important; }
 }
+
+
+/* Plain conversation actions; accessible without relying on hover. */
+.zn-message-actions {
+  grid-column: 2;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 1px;
+  min-height: 23px;
+}
+.zn-message-actions button {
+  border: 0;
+  padding: 3px 4px;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--zn-chat-muted);
+  font: inherit;
+  font-size: 11px;
+}
+.zn-message-actions button:hover {
+  background: var(--zn-chat-hover);
+  color: var(--zn-chat-text);
+}
+.zn-message-actions button:focus-visible {
+  outline: 2px solid var(--zn-chat-accent);
+  outline-offset: 2px;
+}
+.zn-message-actions [role="status"] {
+  color: var(--zn-chat-danger);
+  font-size: 11px;
+}
+.zn-message.user .zn-message-actions {
+  margin-top: 5px;
+}
+
+
+/* User-initiated, transcript-only exports; keep controls quiet beside the conversation. */
+.zn-conversation-exports {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin: 0 0 16px;
+}
+.zn-conversation-exports button {
+  padding: 5px 10px;
+  border: 1px solid var(--zn-chat-border);
+  border-radius: 7px;
+  background: var(--zn-chat-bg);
+  color: var(--zn-chat-text-soft);
+  font-size: 11px;
+}
+.zn-conversation-exports button:hover {
+  background: var(--zn-chat-hover);
+}
+.zn-conversation-exports button:focus-visible {
+  outline: 2px solid var(--zn-chat-accent);
+  outline-offset: 2px;
+}
