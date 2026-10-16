@@ -35,6 +35,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol, Sequence
 
+from .conversation_driver import ConversationDriver
 from .hook_semantics import HOOK_SEMANTICS_PROMPT
 from .terminal import TerminalRequest, ZNLocalTerminal, get_zn_local_terminal
 
@@ -382,6 +383,9 @@ class AgenticToolLoop:
     generic_action_loop "one proposal per impasse" protocol did; it only
     bounds total turns and executes the concrete tool calls the model made.
     """
+
+    # W-4: this loop's conversation driver (declarative only).
+    conversation_driver = ConversationDriver.MODEL_TOOL_LOOP
 
     def __init__(
         self,

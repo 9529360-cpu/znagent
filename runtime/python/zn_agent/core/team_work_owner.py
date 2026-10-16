@@ -28,6 +28,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .conversation_driver import ConversationDriver
 from .completion_verdict import (
     CompletionVerdict,
     adjudicate_completion,
@@ -437,6 +438,11 @@ class ResidentTeamVerifier:
 
 class TeamWorkOwner:
     """Own one team request through durable TeamRunner steps."""
+
+    # W-4: team steps run on the resident pulse (declarative only).
+    # TeamWorkOwner.advance is called from the resident pulse; the
+    # specialist steps it dispatches execute through the Body.
+    conversation_driver = ConversationDriver.RESIDENT_PULSE
 
     def __init__(
         self,
