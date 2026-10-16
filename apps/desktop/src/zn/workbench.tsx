@@ -1524,7 +1524,7 @@ export function ZnWorkbench() {
                     <div className="zn-live-trace-title">{t('trace.recentActions')}</div>
                     <ZnExecutionTimeline
                       actions={workProgress.bodyActions}
-                      currentStage={stageLabel(workProgress.stage, t)}
+                      currentStage={workProgress.terminal ? undefined : stageLabel(workProgress.stage, t)}
                       locale={localeState.resolvedLocale}
                       t={t}
                     />
