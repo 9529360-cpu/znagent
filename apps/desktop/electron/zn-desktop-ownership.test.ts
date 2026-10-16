@@ -447,3 +447,19 @@ test('approved MCP capabilities use trusted desktop IPC without arbitrary proces
   assert.match(typedBridge, /mcpCapabilities: \(\) => Promise<unknown>/)
   assert.match(typedBridge, /mcpConnect: \(providerId: string\) => Promise<unknown>/)
 })
+
+
+test('chat renaming crosses the trusted Resident IPC boundary and keeps Work identity', () => {
+  const renderer = read('src/zn/workbench.tsx')
+  const client = read('src/zn/resident-client.ts')
+  const ipc = read('electron/zn-resident-ipc.ts')
+  const preload = read('electron/zn-preload.ts')
+  const typedBridge = read('src/zn/desktop-env.d.ts')
+  assert.match(renderer, /await renameZnWorkThread\(threadId, title\)/)
+  assert.match(client, /desktop\(\)\.resident\.workRename\(/)
+  assert.match(ipc, /handleZnDesktopIpc\('zn:resident:work-rename'/)
+  assert.match(ipc, /request\('work_rename',/)
+  assert.match(preload, /workRename: \(payload\?: ZnDesktopPayload\)/)
+  assert.match(typedBridge, /workRename: \(payload: ZnDesktopPayload\) => Promise<unknown>/)
+  assert.doesNotMatch(renderer, /localStorage\.setItem\(['"]work_title/)
+})

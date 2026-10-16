@@ -199,6 +199,18 @@ export function registerZnResidentIpc(): void {
       metadata: payload?.metadata && typeof payload.metadata === 'object' ? payload.metadata : {}
     })
   })
+  handleZnDesktopIpc('zn:resident:work-rename', async (_event, payload) => {
+    const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
+    const title = payload?.title
+    if (!threadId) throw new Error('threadId is required')
+    if (typeof title !== 'string' || !title.trim()) throw new Error('title is required')
+    // A renderer cannot modify the ledger directly: Resident owns validation,
+    // privacy filtering, and durable identity/state.
+    return getZnResidentProcess().request('work_rename', {
+      thread_id: threadId,
+      title
+    })
+  })
   handleZnDesktopIpc('zn:resident:work-get', async (_event, payload) => {
     const threadId = String(payload?.threadId || payload?.thread_id || '').trim()
     if (!threadId) throw new Error('threadId is required')
