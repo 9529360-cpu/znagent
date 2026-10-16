@@ -19,6 +19,7 @@ export type ZnResidentRequest = {
     | 'mcp_disconnect'
     | 'work_list'
     | 'work_create'
+    | 'work_rename'
     | 'work_get'
     | 'work_attach_workspace'
     | 'work_detach_workspace'

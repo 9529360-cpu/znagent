@@ -350,6 +350,40 @@ class ResidentWorkLedger:
         self._save_thread(thread)
         return thread
 
+    def rename_thread(self, thread_id: str, title: str) -> WorkThread:
+        """Rename an existing Work thread without replacing its durable state.
+
+        Threat model: renderer/RPC titles are untrusted. Validate and privacy-
+        choke before the SQLite write boundary; use a bound parameter instead
+        of treating titles as SQL, file paths or agent instructions.
+        """
+        if not isinstance(title, str):
+            raise ValueError("work title must be text")
+        normalized_title = " ".join(strip_tags(title).strip().split())
+        if not normalized_title:
+            raise ValueError("work title must not be empty")
+        if len(normalized_title) > 120:
+            raise ValueError("work title must be 120 characters or fewer")
+
+        normalized_id = self._normalize_thread_id(thread_id)
+        with self._lock, closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM work_threads WHERE thread_id=?", (normalized_id,)
+            ).fetchone()
+            if row is None:
+                raise ValueError("unknown work thread")
+            if row["title"] == normalized_title:
+                return self._thread_from_row(row)
+            conn.execute(
+                "UPDATE work_threads SET title=?,updated_at=? WHERE thread_id=?",
+                (normalized_title, utc_now(), normalized_id),
+            )
+            conn.commit()
+            updated = conn.execute(
+                "SELECT * FROM work_threads WHERE thread_id=?", (normalized_id,)
+            ).fetchone()
+        return self._thread_from_row(updated)
+
     def _save_thread(self, thread: WorkThread) -> None:
         with self._lock, closing(self._connect()) as conn:
             conn.execute(
@@ -759,6 +793,48 @@ class ResidentWorkLedger:
             chunks.append(text)
             self._response_streams[normalized_event] = (chunks, sequence + 1)
 
+    def _recent_public_body_actions(self, event_id: str) -> list[dict[str, Any]]:
+        """Project recent *completed* Body actions, never their arguments.
+
+        Threat model: tool output can contain user data, injected instructions,
+        credentials or private sections. The Work UI receives only a bounded,
+        privacy-choked summary after action completion; these records grant
+        no replay, permission, or action authority.
+        """
+        body = getattr(self.resident, "body", None)
+        if body is None:
+            return []
+        try:
+            recent = body.recent_actions(120)
+        except Exception:
+            return []
+
+        # Select only the bounded, current-Work entries *before* privacy
+        # processing. A long session may have large Body outputs; repeatedly
+        # scanning unrelated output on each read-only 700ms poll is wasteful.
+        matching = [
+            action for action in reversed(recent)
+            if getattr(action, "event_id", None) == event_id
+        ][-6:]
+        matches: list[dict[str, Any]] = []
+        for action in matching:
+            kind = " ".join(strip_tags(str(getattr(action, "kind", "") or "")).split())[:80]
+            raw_summary = str(
+                getattr(action, "output", None)
+                or getattr(action, "error", None)
+                or ""
+            )
+            # Sanitize BEFORE truncating: a private block must never be cut
+            # mid-marker and leave raw secret text in the persisted excerpt.
+            summary = " ".join(strip_tags(raw_summary).split())[:320]
+            matches.append({
+                "kind": kind or "body_action",
+                "success": getattr(action, "success", False) is True,
+                "at": getattr(action, "completed_at", None),
+                "summary": summary,
+            })
+        return matches
+
     def progress(self, thread_id: str, event_id: str) -> dict[str, Any]:
         normalized_thread = self._normalize_thread_id(thread_id)
         normalized_event = str(event_id or "").strip()
@@ -838,28 +914,7 @@ class ResidentWorkLedger:
             }
             break
 
-        body_actions: list[dict[str, Any]] = []
-        body = getattr(self.resident, "body", None)
-        if body is not None:
-            try:
-                matches = [
-                    item
-                    for item in reversed(body.recent_actions(120))
-                    if item.event_id == normalized_event
-                ][-6:]
-            except Exception:
-                matches = []
-            for action in matches:
-                summary = str(action.output or action.error or "").strip()
-                summary = " ".join(summary.split())[:320]
-                body_actions.append(
-                    {
-                        "kind": action.kind,
-                        "success": action.success,
-                        "at": action.completed_at,
-                        "summary": summary,
-                    }
-                )
+        body_actions = self._recent_public_body_actions(normalized_event)
 
         result: dict[str, Any] = {
             "event_id": normalized_event,
@@ -1020,6 +1075,9 @@ class ResidentWorkLedger:
                 "execution_path": run.execution_path.value,
                 "model_invocations": run.model_invocations,
             }
+            recent_actions = self._recent_public_body_actions(event_id)
+            if recent_actions:
+                activity["body_actions"] = recent_actions
             if workspace is not None:
                 activity["workspace"] = workspace.to_dict()
             if new_artifacts:

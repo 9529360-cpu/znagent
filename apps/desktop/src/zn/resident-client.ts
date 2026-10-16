@@ -911,6 +911,18 @@ export async function loadZnWorkThread(threadId: string): Promise<ZnThread> {
   }))
 }
 
+export async function renameZnWorkThread(threadId: string, title: string): Promise<ZnThread> {
+  const normalizedId = threadId.trim()
+  const normalizedTitle = title.trim()
+  if (!normalizedId || !normalizedTitle || normalizedTitle.length > 120) {
+    throw new Error('Invalid conversation title')
+  }
+  return normalizeThread(await desktop().resident.workRename({
+    threadId: normalizedId,
+    title: normalizedTitle
+  }))
+}
+
 export async function createZnWorkThread(thread: ZnThread): Promise<ZnThread> {
   const result = await desktop().resident.workCreate({
     threadId: thread.id,

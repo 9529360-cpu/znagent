@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next'
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   ArrowLeft,
@@ -33,6 +33,7 @@ import {
   cancelZnWork,
   checkZnUpdate,
   createZnWorkThread,
+  renameZnWorkThread,
   detachZnWorkspace,
   dismissZnSuggestion,
   loadZnApprovals,
@@ -55,6 +56,7 @@ import {
 } from './team-timeline'
 import { describeZnProviderReadiness } from './provider-readiness'
 import { useZnWorkReconnection } from './use-work-reconnection'
+import { znPlainEnterToSend, znWorkbenchShortcut } from './workbench-shortcuts'
 import {
   getZnDesktopLocaleState,
   setZnDesktopLocalePreference
@@ -65,6 +67,9 @@ import { ZnApprovalPanel } from './approval-panel'
 import { RoutinesPanel } from './routines-panel'
 import { ZnSlidesWorkstation } from './slides-workstation'
 import { ZnDocumentWorkstation } from './document-workstation'
+import { ZnExecutionTimeline } from './execution-timeline-view'
+import { znExecutionActionsFromDetail } from './execution-timeline'
+import { znExportConversation, znExportFilename, type ZnConversationExportFormat } from './conversation-export'
 import {
   addZnThreadMessage,
   loadZnThreadCache,
@@ -285,6 +290,12 @@ export function ZnWorkbench() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>('language')
   const [query, setQuery] = useState('')
   const [draft, setDraft] = useState('')
+  const [renamingThreadId, setRenamingThreadId] = useState<string | null>(null)
+  const [renamingTitle, setRenamingTitle] = useState('')
+  const [renameBusy, setRenameBusy] = useState(false)
+  const searchInputRef = useRef<HTMLInputElement | null>(null)
+  const [searchFocusPending, setSearchFocusPending] = useState(false)
+  const [copyNotice, setCopyNotice] = useState<{ id: string; status: 'copied' | 'failed' } | null>(null)
   const [submissionBusy, setBusy] = useState(false)
   const [workProgress, setWorkProgress] = useState<ZnWorkProgress | null>(null)
   const [cancelBusy, setCancelBusy] = useState(false)
@@ -351,6 +362,39 @@ export function ZnWorkbench() {
     }
   }, [pinnedThreadIds])
 
+  const copyMessage = useCallback(async (id: string, text: string) => {
+    // Copy only an explicitly selected visible message. Never copy hidden
+    // tool payloads or silently write clipboard content to persistent logs.
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error('Clipboard unavailable')
+      await navigator.clipboard.writeText(text)
+      setCopyNotice({ id, status: 'copied' })
+    } catch {
+      setCopyNotice({ id, status: 'failed' })
+    }
+  }, [])
+
+  const exportConversation = useCallback((format: ZnConversationExportFormat) => {
+    if (!activeThread) return
+    // Only a deliberate user click can export a transcript. No Resident
+    // action, file writes in the workspace, or automatic network requests.
+    const content = znExportConversation(activeThread, format)
+    const blob = new Blob([content], {
+      type: format === 'json' ? 'application/json;charset=utf-8' : 'text/markdown;charset=utf-8'
+    })
+    const url = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = znExportFilename(activeThread, format)
+    document.body.appendChild(link)
+    try {
+      link.click()
+    } finally {
+      link.remove()
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000)
+    }
+  }, [activeThread])
+
   const togglePinnedThread = useCallback((threadId: string) => {
     setPinnedThreadIds(current => current.includes(threadId)
       ? current.filter(id => id !== threadId)
@@ -403,6 +447,35 @@ export function ZnWorkbench() {
         .sort((left, right) => right.updatedAt - left.updatedAt)
     )
   }, [])
+
+  const beginThreadRename = useCallback(() => {
+    if (!activeThread || renameBusy) return
+    setRenamingThreadId(activeThread.id)
+    setRenamingTitle(activeThread.title)
+  }, [activeThread, renameBusy])
+
+  const saveThreadRename = useCallback(async () => {
+    if (!activeThread || renameBusy || renamingThreadId !== activeThread.id) return
+    const title = renamingTitle.trim()
+    if (!title || title.length > 120) return
+    const threadId = activeThread.id
+    setRenameBusy(true)
+    try {
+      // Renderer state is a projection. The Resident is the sole durable owner.
+      replaceThread(await renameZnWorkThread(threadId, title))
+      setRenamingThreadId(current => current === threadId ? null : current)
+      setResidentError(null)
+    } catch (error) {
+      setResidentError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setRenameBusy(false)
+    }
+  }, [activeThread, renameBusy, renamingThreadId, renamingTitle, replaceThread])
+
+  useEffect(() => {
+    setRenamingThreadId(null)
+    setRenamingTitle('')
+  }, [activeThreadId])
 
   const workActive = useZnWorkReconnection({
     thread: activeThread,
@@ -875,6 +948,34 @@ export function ZnWorkbench() {
     if (artifactOpen && selectedWorkstationArtifact && view === 'work') requestWindowMode('expanded')
   }, [artifactOpen, selectedWorkstationArtifact?.id, activeThreadId, requestWindowMode, view])
 
+  useEffect(() => {
+    if (!searchFocusPending || windowMode !== 'expanded') return
+    const frame = window.requestAnimationFrame(() => {
+      searchInputRef.current?.focus()
+      setSearchFocusPending(false)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [searchFocusPending, windowMode])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const shortcut = znWorkbenchShortcut(event)
+      if (shortcut === 'search') {
+        event.preventDefault()
+        setView('work')
+        setSidebarExpanded(true)
+        setSearchFocusPending(true)
+        requestWindowMode('expanded')
+      } else if (shortcut === 'stop' && view === 'work' && workProgress && workActive && !stoppingWork) {
+        event.preventDefault()
+        // Only the Resident decides whether the active event can be cancelled.
+        void cancelCurrentWork()
+      }
+    }
+    window.addEventListener('keydown', onKeyDown)
+    return () => window.removeEventListener('keydown', onKeyDown)
+  }, [cancelCurrentWork, requestWindowMode, stoppingWork, view, workActive, workProgress])
+
   const openSettings = useCallback(() => {
     setSettingsSection('language')
     setArtifactOpen(false)
@@ -963,6 +1064,7 @@ export function ZnWorkbench() {
         <label className="zn-search-shell">
           <MagnifyingGlass size={15} />
           <input
+            ref={searchInputRef}
             className="zn-search"
             aria-label={t('sidebar.searchRecent')}
             placeholder={t('sidebar.searchRecent')}
@@ -1074,7 +1176,8 @@ export function ZnWorkbench() {
                 value={draft}
                 onChange={event => setDraft(event.target.value)}
                 onKeyDown={event => {
-                  if (event.key === 'Enter' && !event.shiftKey) {
+                  const key = event.nativeEvent
+                  if (znPlainEnterToSend(key) || znWorkbenchShortcut(key) === 'send') {
                     event.preventDefault()
                     event.currentTarget.form?.requestSubmit()
                   }
@@ -1133,7 +1236,40 @@ export function ZnWorkbench() {
           </div>
 
           <div className="zn-topbar-copy">
-            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
+            <div className="zn-topbar-title-line">
+              {view === 'work' && activeThread && renamingThreadId === activeThread.id ? (
+                <form className="zn-thread-rename-form" onSubmit={event => {
+                  event.preventDefault()
+                  void saveThreadRename()
+                }}>
+                  <input
+                    autoFocus
+                    aria-label={t('thread.renameInput')}
+                    maxLength={120}
+                    value={renamingTitle}
+                    onChange={event => setRenamingTitle(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key === 'Escape') {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        setRenamingThreadId(null)
+                      }
+                    }}
+                  />
+                  <button type="submit" disabled={renameBusy || !renamingTitle.trim()}>{t('thread.save')}</button>
+                  <button type="button" onClick={() => setRenamingThreadId(null)}>{t('thread.cancel')}</button>
+                </form>
+              ) : (
+                <>
+                  <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
+                  {view === 'work' && activeThread ? (
+                    <button type="button" className="zn-thread-rename-trigger" aria-label={t('thread.rename')} title={t('thread.rename')} onClick={beginThreadRename}>
+                      {t('thread.rename')}
+                    </button>
+                  ) : null}
+                </>
+              )}
+            </div>
             <div className="zn-muted zn-small">{view === 'settings' ? `ZN · ${t('topbar.thisComputer')}` : activeWorkspace?.name || t('topbar.thisComputer')}</div>
           </div>
 
@@ -1393,27 +1529,56 @@ export function ZnWorkbench() {
 
               {activeThread && activeThread.messages.length > 0 ? (
                 <div className="zn-messages">
+                  <div className="zn-conversation-exports" role="group" aria-label="Export conversation">
+                    <button type="button" onClick={() => exportConversation('markdown')} aria-label="Export conversation as Markdown">Export .md</button>
+                    <button type="button" onClick={() => exportConversation('json')} aria-label="Export conversation as JSON">Export .json</button>
+                  </div>
                   {activeThread.messages.map(message => {
                     const executionEvidence = message.role === 'activity'
                       ? executionEvidenceFromDetail(message.detail)
                       : null
+                    const historyActions = message.role === 'activity'
+                      ? znExecutionActionsFromDetail(message.detail)
+                      : []
                     return (
                       <article className={'zn-message ' + message.role} key={message.id}>
                         <div className="zn-message-label">{message.role === 'user' ? t('message.you') : message.role === 'zn' ? 'ZN' : t('message.activity')}</div>
                         <div className="zn-message-body">{message.text}</div>
+                        {message.role !== 'activity' ? (
+                          <div className="zn-message-actions">
+                            <button
+                              type="button"
+                              onClick={() => void copyMessage(message.id, message.text)}
+                              aria-label={t('message.copy')}
+                            >
+                              {copyNotice?.id === message.id && copyNotice.status === 'copied'
+                                ? t('message.copied') : t('message.copy')}
+                            </button>
+                            {copyNotice?.id === message.id && copyNotice.status === 'failed'
+                              ? <span role="status">{t('message.copyFailed')}</span> : null}
+                          </div>
+                        ) : null}
                         {executionEvidence ? (
                           <div className="zn-execution-evidence" aria-label={t('message.executionEvidence')}>
                             <span>{executionPathLabel(executionEvidence.executionPath, t)}</span>
                             <span>{t('message.modelCalls', { count: executionEvidence.modelInvocations })}</span>
                           </div>
                         ) : null}
+                        {historyActions.length > 0 ? (
+                          <details className="zn-history-trace">
+                            <summary>{t('trace.historyActions') + ' · ' + historyActions.length}</summary>
+                            <ZnExecutionTimeline
+                              actions={historyActions}
+                              locale={localeState.resolvedLocale}
+                              t={t}
+                            />
+                          </details>
+                        ) : null}
                         {message.detail && Object.keys(message.detail).length > 0 ? (
-                          executionEvidence ? (
-                            <details className="zn-activity-technical">
-                              <summary>{t('message.technical')}</summary>
-                              <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
-                            </details>
-                          ) : <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
+                          <details className="zn-activity-technical">
+                            <summary>{t('message.technical')}</summary>
+                            <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
+                          </details>
                         ) : null}
                       </article>
                     )
@@ -1507,6 +1672,15 @@ export function ZnWorkbench() {
                     <div className="active"><CircleNotch className="zn-spin" size={17} /><span>{stageLabel(workProgress.stage, t)}</span></div>
                     <div><CheckCircle size={17} /><span>{t('work.verify')}</span></div>
                   </div>
+                  <section className="zn-live-trace" aria-label={t('trace.timelineAria')}>
+                    <div className="zn-live-trace-title">{t('trace.recentActions')}</div>
+                    <ZnExecutionTimeline
+                      actions={workProgress.bodyActions}
+                      currentStage={workProgress.terminal ? undefined : stageLabel(workProgress.stage, t)}
+                      locale={localeState.resolvedLocale}
+                      t={t}
+                    />
+                  </section>
 
                   {workProgress.delegation ? (
                     <div className="zn-work-detail" aria-label={t('work.delegatedProgressAria')}>
@@ -1541,15 +1715,7 @@ export function ZnWorkbench() {
                         {workProgress.investigation.nextProbe ? t('work.next', { next: workProgress.investigation.nextProbe }) : ''}
                       </div>
                     ) : null}
-                    {workProgress.bodyActions.length > 0 ? (
-                      <div className="zn-work-detail">
-                        {workProgress.bodyActions.map((action, index) => (
-                          <div key={action.at + '-' + action.kind + '-' + index}>
-                            {action.kind} · {action.success ? t('work.ok') : t('work.failed')}{action.summary ? ' · ' + action.summary : ''}
-                          </div>
-                        ))}
-                      </div>
-                    ) : null}
+
                   </details>
 
                   <div className="zn-current-work-actions">

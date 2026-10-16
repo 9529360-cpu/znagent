@@ -5,6 +5,8 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.models import WorkingState
@@ -59,6 +61,9 @@ class ResidentWorkProgressTests(unittest.TestCase):
             self.assertEqual(final_thread.thread_id, "work-progress")
             self.assertEqual([message.role for message in messages], ["user", "zn", "activity"])
             self.assertEqual(messages[-1].detail["event_id"], event.event_id)
+            # The same read-only projection survives finalization; the
+            # current progress card is not the sole source of action evidence.
+            self.assertEqual(messages[-1].detail["body_actions"], completed["body_actions"])
 
             again = ledger.progress("work-progress", event.event_id)
             self.assertTrue(again["finalized"])
@@ -69,6 +74,80 @@ class ResidentWorkProgressTests(unittest.TestCase):
                 [message.message_id for message in messages],
             )
             resident.store.close()
+
+    def test_execution_timeline_actions_are_bounded_redacted_and_restoreable(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store_path = Path(tmp) / "kernel.db"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=store_path,
+            )
+            resident.memory.remember("trace task", "Verified response")
+            ledger = ResidentWorkLedger(resident)
+            _, event = ledger.start("work-trace", "trace task")
+            # recent_actions() returns newest-first in production. Keep an
+            # unrelated event and seven matching calls to prove event scoping
+            # and the six-result limit, with no raw arguments in the result.
+            actions = [
+                SimpleNamespace(
+                    kind=f"read_file_{index}", event_id=event.event_id,
+                    success=(index != 3),
+                    completed_at=f"2026-10-16T03:00:{index:02d}Z",
+                    output=(
+                        "API_KEY=secret-forbidden "
+                        "<private>not-for-transcript</private> completed"
+                        if index == 7 else "file read complete"
+                    ),
+                    error="",
+                    private_command=f"do-not-copy-tool-arguments-{index}",
+                )
+                for index in range(1, 8)
+            ]
+            other_event = SimpleNamespace(
+                kind="other_thread", event_id="other-event", success=True,
+                completed_at="2026-10-16T03:00:20Z",
+                output="other-thread-output", error="",
+            )
+            with patch.object(
+                resident.body, "recent_actions",
+                return_value=list(reversed([other_event, *actions])),
+            ):
+                progress = ledger.progress("work-trace", event.event_id)
+                self.assertEqual(
+                    [item["kind"] for item in progress["body_actions"]],
+                    [f"read_file_{index}" for index in range(2, 8)],
+                )
+                self.assertFalse(progress["body_actions"][1]["success"])
+                self.assertTrue(progress["body_actions"][-1]["success"])
+                serialized = json.dumps(progress["body_actions"], ensure_ascii=False)
+                for secret in (
+                    "secret-forbidden", "not-for-transcript",
+                    "other-thread-output", "do-not-copy-tool-arguments",
+                ):
+                    self.assertNotIn(secret, serialized)
+
+                resident.live_once()
+                finalized = ledger.progress("work-trace", event.event_id)
+                self.assertTrue(finalized["finalized"])
+                _, messages = ledger.get_snapshot("work-trace")
+                self.assertEqual(
+                    messages[-1].detail["body_actions"],
+                    progress["body_actions"],
+                )
+                self.assertNotIn(
+                    "secret-forbidden", json.dumps(messages[-1].detail),
+                )
+            resident.store.close()
+
+            restored = build_resident_runtime_from_existing_stack(
+                config={"model": {}}, store_path=store_path,
+            )
+            restored_ledger = ResidentWorkLedger(restored)
+            _, messages = restored_ledger.get_snapshot("work-trace")
+            self.assertEqual(
+                messages[-1].detail["body_actions"],
+                progress["body_actions"],
+            )
+            restored.store.close()
 
     def test_user_presence_blocker_projects_waiting_for_user_without_terminalizing_work(self):
         with tempfile.TemporaryDirectory() as tmp:
