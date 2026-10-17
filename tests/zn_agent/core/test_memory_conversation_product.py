@@ -200,33 +200,64 @@ class MemoryConversationProductTests(unittest.TestCase):
         self.fail("no endpoint")
 
     def socket_finish(self, endpoint, event_id):
-        deadline = time.monotonic() + 60
+        # Progress-based wait. The Work needs several sequential life-loop
+        # cycles (event -> investigate -> deliberate -> external_cognition ->
+        # integrate -> complete), and each cycle does real store/cognition
+        # work whose latency stretches on loaded runners. A fixed wall-clock
+        # budget flakes when the machine is slow even though the run keeps
+        # advancing (raising it 20s -> 60s in #447 did not stop the flake).
+        # Fail only when the run makes no observable progress for a sustained
+        # window, so a slow-but-advancing run and a genuinely stuck run are
+        # no longer indistinguishable. The overall cap is a backstop so the
+        # test can never hang forever.
+        no_progress_deadline = time.monotonic() + 60
+        overall_deadline = time.monotonic() + 180
+        last_progress_key = None
+        last_stage = None
+        polls = 0
+        timeouts = 0
         while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0:
+            now = time.monotonic()
+            if now >= overall_deadline:
                 break
             try:
                 result = self.socket_call(
                     endpoint,
                     "work_progress",
-                    timeout=min(10.0, remaining),
+                    timeout=min(10.0, overall_deadline - now),
                     thread_id="conversation",
                     event_id=event_id,
                 )
             except TimeoutError:
                 # Desktop progress observation is read-only and retries transport
-                # errors. Keep the same bounded behavior while preserving a
-                # total completion budget that remains stricter than the desktop
-                # client's 120s request timeout on slower Windows runners.
+                # errors. Keep the same bounded behavior.
+                timeouts += 1
                 continue
-            if result["progress"]["finalized"]:
+            polls += 1
+            progress = result["progress"]
+            if progress.get("finalized"):
                 return result["thread"]
+            thought = progress.get("thought") or {}
+            progress_key = (
+                progress.get("stage"),
+                progress.get("updated_at"),
+                thought.get("at"),
+            )
+            last_stage = progress.get("stage")
+            if progress_key != last_progress_key:
+                last_progress_key = progress_key
+                no_progress_deadline = time.monotonic() + 60
+            if time.monotonic() >= no_progress_deadline:
+                break
             # Match the desktop observer's production polling cadence. Hammering
             # a new authenticated TCP connection every 50ms creates an artificial
             # Windows ThreadingTCPServer/SQLite contention pattern that the product
             # never generates (desktop polls every 700ms).
-            time.sleep(min(0.7, max(0.0, deadline - time.monotonic())))
-        self.fail("socket Work did not finish")
+            time.sleep(min(0.7, max(0.0, overall_deadline - time.monotonic())))
+        self.fail(
+            "socket Work did not finish "
+            f"(last stage={last_stage!r}, polls={polls}, timeouts={timeouts})"
+        )
 
     def test_authenticated_disconnect_reopen_and_process_reconstruction_keep_memory_and_work_aligned(self):
         self.seed()
