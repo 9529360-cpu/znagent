@@ -84,6 +84,8 @@ from .self_team import (
     SelfTeamWorkOwner,
     quiet_save_working_state,
 )
+from .skill_gap_driver import build_skill_gap_driver
+from .skills import SkillStore
 from .team_work_owner import (
     EVIDENCE_KEY,
     TEAM_CLAIM_STATE_KEY,
@@ -659,9 +661,26 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         owner. No team state machine change either way."""
         payload = getattr(event, "payload", None)
         request = payload.get("team_request") if isinstance(payload, dict) else None
+        # M-15: a missing confirmed skill on the team path goes through
+        # propose -> open-card instead of being swallowed. The driver is
+        # advisory-only: any failure degrades to no block, never breaks
+        # team dispatch. Built once per resident so the driver's per-query
+        # proposal registry dedupes across dispatches -- one card per gap,
+        # not one card per dispatch.
+        gap_driver = getattr(self, "_team_gap_driver", None)
+        if gap_driver is None:
+            gap_driver = build_skill_gap_driver(
+                skill_store=SkillStore(),
+                store=getattr(self.memory, "store", None),
+            )
+            self._team_gap_driver = gap_driver
         if isinstance(request, dict) and request.get("self_team"):
-            return SelfTeamWorkOwner(ledger=self.work_ledger, memory=self.memory)
-        return TeamWorkOwner(ledger=self.work_ledger, memory=self.memory)
+            return SelfTeamWorkOwner(
+                ledger=self.work_ledger, memory=self.memory, gap_driver=gap_driver
+            )
+        return TeamWorkOwner(
+            ledger=self.work_ledger, memory=self.memory, gap_driver=gap_driver
+        )
 
     def _count_no_evidence_pulse(self, event, state, *, run_id: str) -> str | None:
         """Count one pulse with no new verified evidence for the live run.

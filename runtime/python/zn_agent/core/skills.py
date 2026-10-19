@@ -272,6 +272,12 @@ class SkillStore:
     """Discover and conservatively match file-based skill bundles."""
 
     root: Path = field(default_factory=lambda: get_zn_home() / "skills")
+    #: M-15: auto-trigger driver for skill-gap proposals. When set and no
+    #: skill matches the task in :meth:`bind_cognition_context`, the driver
+    #: runs detect -> propose -> open-card (reusing the M-13 mechanism) and
+    #: attaches a bounded ``resident_skill_gap`` note. None keeps the exact
+    #: previous behavior (gap silently swallowed).
+    gap_driver: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
@@ -601,7 +607,17 @@ class SkillStore:
         else:
             skills = self.relevant_skills(event.task, file_path=file_path)
         if not skills:
-            return request
+            # M-15: no skill covers this task -- hand the gap to the
+            # auto-trigger driver (propose -> open-card) instead of
+            # silently continuing without the capability. Without a
+            # driver the previous behavior is kept exactly.
+            driver = self.gap_driver
+            if driver is None:
+                return request
+            try:
+                return driver.on_skill_bind(event, request, file_path=file_path)
+            except Exception:
+                return request
         bundle: dict[str, Any] = {
             "source": "resident_skill_bundles",
             "stage": "full-body (legacy opt-in)" if include_bodies else "resident-summary",

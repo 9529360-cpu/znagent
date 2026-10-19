@@ -36,6 +36,7 @@ from .completion_verdict import (
 )
 from .plan_mode import approved_plan_text
 from .project_team import ProjectTeam, assemble_team, journal_message
+from .skill_gap import detect_skill_gap_from_matches
 from .skill_ledger import SkillLedger
 from .specialist_workspace import (
     materialize_team_workspaces,
@@ -450,6 +451,7 @@ class TeamWorkOwner:
         ledger: Any,
         memory: Any,
         checkpoint_storage: CheckpointStorage | None = None,
+        gap_driver: Any | None = None,
     ) -> None:
         self.ledger = ledger
         self.memory = memory
@@ -457,6 +459,11 @@ class TeamWorkOwner:
         # behavior (no checkpointing); when wired, every runner step
         # persists a snapshot for interrupt-resume.
         self.checkpoint_storage = checkpoint_storage
+        # M-15: skill-gap auto-trigger driver for the team path. When no
+        # confirmed skill covers a specialist objective, the gap goes
+        # through propose -> open-card instead of being swallowed. None
+        # keeps the previous behavior (no block when nothing matched).
+        self.gap_driver = gap_driver
 
     # -- routing + checkpoints (AF-2) -------------------------------------
 
@@ -881,7 +888,7 @@ class TeamWorkOwner:
         except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
             return ""
         if not skills:
-            return ""
+            return self._gap_proposal_block(objective)
         parts = [
             "Relevant confirmed ZN skills (human-confirmed, advisory -- "
             "follow their steps; approval boundaries still apply):"
@@ -889,6 +896,28 @@ class TeamWorkOwner:
         for skill in skills:
             parts.append(SkillLedger.render_for_cognition(skill, max_chars=800))
         return "\n".join(parts)
+
+    def _gap_proposal_block(self, objective: str) -> str:
+        """M-15: a missing confirmed skill goes through proposal, not silence.
+
+        When no confirmed skill covers the specialist objective, the gap is
+        proposed (detect -> propose -> open-card via the driver) and rendered
+        as an advisory block, instead of being swallowed as "".
+
+        Advisory only, like the skill block itself: any failure here
+        degrades to no block, never breaks team dispatch.
+        """
+        driver = getattr(self, "gap_driver", None)
+        if driver is None:
+            return ""
+        try:
+            gap = detect_skill_gap_from_matches(objective, [])
+            proposal = driver.propose_gap(gap)
+            if proposal is None:
+                return ""
+            return driver.render_brief_block(proposal)
+        except (AttributeError, KeyError, LookupError, OSError, RuntimeError, ValueError):
+            return ""
 
     def live_run(self, *, team: ProjectTeam) -> Any | None:
         """The currently-dispatched, unclaimed WorkerRun, if any."""
