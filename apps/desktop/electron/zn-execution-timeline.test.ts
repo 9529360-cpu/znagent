@@ -53,7 +53,7 @@ test('workbench timeline is read-only and uses native disclosure, not HTML injec
   const read = (part: string) => fs.readFileSync(path.join(root, part), 'utf8')
   const screen = read('src/zn/workbench.tsx')
   const view = read('src/zn/execution-timeline-view.tsx')
-  const main = read('src/zn/main.tsx')
+  const shell = read('src/zn/zn-claude-shell.tsx')
   assert.match(screen, /znExecutionActionsFromDetail\(message\.detail\)/)
   assert.match(screen, /className="zn-history-trace"/)
   assert.match(screen, /actions=\{workProgress\.bodyActions\}/)
@@ -61,5 +61,8 @@ test('workbench timeline is read-only and uses native disclosure, not HTML injec
   assert.match(view, /<details className="zn-trace-summary">/)
   assert.match(view, /<time dateTime=\{time\.dateTime\}>/)
   assert.doesNotMatch(view, /dangerouslySetInnerHTML|eval\(|innerHTML/)
-  assert.match(main, /import '\.\/execution-timeline\.css'/)
+  // The new active shell is chat + pending approvals/todos only: it never
+  // renders the execution timeline / ledger, and never fabricates one.
+  assert.doesNotMatch(shell, /execution-timeline|zn-history-trace|zn-live-trace/)
+  assert.doesNotMatch(shell, /dangerouslySetInnerHTML|eval\(|innerHTML/)
 })

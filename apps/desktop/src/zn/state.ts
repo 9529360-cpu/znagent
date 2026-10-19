@@ -132,6 +132,10 @@ export type ZnApprovalAuditEntry = {
 
 export type ZnApprovalList = {
   pending: ZnApprovalRequest[]
+  // Denied requests: the desktop can see refused cards (same shape as
+  // pending). Denied is sticky server-side; the tray only offers
+  // decisions on pending cards, never re-decides a denied one.
+  denied: ZnApprovalRequest[]
   expired: ZnApprovalRequest[]
   // CUR-4: applied (consumed) requests, newest first; undoable ones
   // carry previousCaptured=true.

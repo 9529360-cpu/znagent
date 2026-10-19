@@ -290,7 +290,10 @@ export function registerZnResidentIpc(): void {
       scope,
       value_text: String(payload?.valueText || payload?.value_text || ''),
       source: String(payload?.source || 'resident'),
-      event_id: String(payload?.eventId || payload?.event_id || '') || undefined
+      event_id: String(payload?.eventId || payload?.event_id || '') || undefined,
+      // CUR-4 diff-first review: forward the pending diff so approval
+      // cards can show it. The server defaults an absent diff to ''.
+      diff_text: String(payload?.diffText || payload?.diff_text || '')
     })
   })
   handleZnDesktopIpc('zn:resident:approval-decide', async (_event, payload) => {

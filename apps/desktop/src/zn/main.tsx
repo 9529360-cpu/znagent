@@ -2,31 +2,23 @@ import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 
 import { ZnDesktopErrorBoundary } from './error-boundary'
-import { initializeZnDesktopI18n } from './i18n'
-import { ZnWorkbench } from './workbench'
-import './styles.css'
-import './liquid-performance.css'
-import './chat-shell.css'
-import './desktop-resilience.css'
-import './settings-shell.css'
-import './desk.css'
-import './execution-timeline.css'
-import './thread-rename.css'
+import { ZnDesktopRoot } from './zn-claude-shell'
+// Vendor 令牌（cds-theme.css）+ vendor Tailwind 类名的机械映射胶水。
+// 旧工作台的 CSS（styles.css 等）不再由入口引入；workbench.tsx 文件
+// 保留在原地，供接线工人对照 resident-client 调用实现真实数据钩子。
+import '../../../../vendor/open-claude-ui/code-examples/cds-theme.css'
+import './zn-vendor-compat.css'
+import './zn-claude-shell.css'
 
 document.title = 'ZN'
 
-async function renderZnDesktop(): Promise<void> {
-  await initializeZnDesktopI18n()
-  const root = document.getElementById('root')
-  if (!root) throw new Error('ZN renderer root is missing')
+const root = document.getElementById('root')
+if (!root) throw new Error('ZN renderer root is missing')
 
-  createRoot(root).render(
-    <StrictMode>
-      <ZnDesktopErrorBoundary>
-        <ZnWorkbench />
-      </ZnDesktopErrorBoundary>
-    </StrictMode>
-  )
-}
-
-void renderZnDesktop()
+createRoot(root).render(
+  <StrictMode>
+    <ZnDesktopErrorBoundary>
+      <ZnDesktopRoot />
+    </ZnDesktopErrorBoundary>
+  </StrictMode>
+)

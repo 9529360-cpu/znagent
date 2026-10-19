@@ -508,12 +508,16 @@ export function normalizeApprovalList(value: unknown): ZnApprovalList {
   const item = record(value)
   if (!item) throw new Error('Resident returned an invalid approval list')
   const pending = Array.isArray(item.pending) ? item.pending : []
+  // The RPC returns denied too; dropping it hid refused cards from the
+  // desktop entirely. Map it like every other list.
+  const denied = Array.isArray(item.denied) ? item.denied : []
   const expired = Array.isArray(item.expired) ? item.expired : []
   const applied = Array.isArray(item.applied) ? item.applied : []
   const rules = Array.isArray(item.rules) ? item.rules : []
   const audit = Array.isArray(item.audit) ? item.audit : []
   return {
     pending: pending.map(normalizeApprovalRequest),
+    denied: denied.map(normalizeApprovalRequest),
     expired: expired.map(normalizeApprovalRequest),
     applied: applied.map(normalizeApprovalRequest),
     rules: rules.map(normalizeApprovalRule),
@@ -1085,6 +1089,47 @@ export async function decideZnApproval(
     decision
   }))
   if (!result) throw new Error('Resident returned an invalid approval decision')
+  return normalizeApprovalRequest(result.request)
+}
+
+export type ZnApprovalRequestInput = {
+  actionKind: ZnApprovalActionKind
+  target: string
+  scope: string
+  valueText?: string
+  source?: string
+  eventId?: string
+  /** CUR-4 diff-first review: the pending diff shown on the card. */
+  diffText?: string
+}
+
+/**
+ * Explicitly create an approval card. Normally cards are created by the
+ * server-side gate / routine layer, not by the UI — there is no
+ * "manually create a card" entry point in the desktop. This wrapper
+ * exists so the approval-request IPC path (including diff_text
+ * forwarding) is usable and testable when a caller genuinely needs it.
+ */
+export async function requestZnApproval(input: ZnApprovalRequestInput): Promise<ZnApprovalRequest> {
+  const actionKind = input.actionKind
+  if (actionKind !== 'send' && actionKind !== 'publish' && actionKind !== 'purchase' &&
+      actionKind !== 'delete' && actionKind !== 'production_change') {
+    throw new Error('Unsupported approval action kind')
+  }
+  const target = input.target.trim()
+  const scope = input.scope.trim()
+  if (!target) throw new Error('Approval request target is required')
+  if (!scope) throw new Error('Approval request scope is required')
+  const result = record(await desktop().resident.approvalRequest({
+    actionKind,
+    target,
+    scope,
+    valueText: input.valueText ?? '',
+    source: input.source ?? 'resident',
+    ...(input.eventId?.trim() ? { eventId: input.eventId.trim() } : {}),
+    ...(input.diffText ? { diffText: input.diffText } : {})
+  }))
+  if (!result) throw new Error('Resident returned an invalid approval request')
   return normalizeApprovalRequest(result.request)
 }
 

@@ -52,6 +52,22 @@ test('approval cards: resident client normalizes and exposes approval helpers', 
   assert.match(client, /applied/)
 })
 
+test('approval cards: normalizer keeps denied and request forwards diff_text', () => {
+  const client = read('src/zn/resident-client.ts')
+  const ipc = read('electron/zn-resident-ipc.ts')
+  const state = read('src/zn/state.ts')
+  // Wiring gap 1: the normalizer used to drop `denied`, so the desktop
+  // could never see refused cards. The type carries it now too.
+  assert.match(client, /denied: denied\.map\(normalizeApprovalRequest\)/)
+  assert.match(state, /denied: ZnApprovalRequest\[\]/)
+  // Wiring gap 2: approval-request IPC must forward diff_text to the
+  // Resident (CUR-4 diff-first review), and the render layer exposes a
+  // typed wrapper for it. No UI entry point creates cards by hand.
+  assert.match(ipc, /diff_text: String\(payload\?\.diffText \|\| payload\?\.diff_text/)
+  assert.match(client, /export async function requestZnApproval/)
+  assert.match(client, /diffText: input\.diffText/)
+})
+
 test('approval cards: workbench shows a pending banner and a settings section', () => {
   const workbench = read('src/zn/workbench.tsx')
   assert.match(workbench, /ZnApprovalPanel/)
