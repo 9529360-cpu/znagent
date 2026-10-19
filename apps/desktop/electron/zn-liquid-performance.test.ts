@@ -14,24 +14,38 @@ function read(relative: string): string {
 
 test('ambient material keeps visual polish while degrading for compact and accessibility contexts', () => {
   const entry = read('src/zn/main.tsx')
-  const liquid = read('src/zn/liquid-performance.css')
+  const theme = fs.readFileSync(
+    path.join(desktopRoot, '../../vendor/open-claude-ui/code-examples/cds-theme.css'),
+    'utf8'
+  )
+  const compat = read('src/zn/zn-vendor-compat.css')
+  const shellCss = read('src/zn/zn-claude-shell.css')
 
-  const baseStyleIndex = entry.indexOf("import './styles.css'")
-  const performanceIndex = entry.indexOf("import './liquid-performance.css'")
-  assert.ok(baseStyleIndex >= 0)
-  assert.ok(performanceIndex > baseStyleIndex)
+  // New shell style order: vendor tokens first, then the mechanical Tailwind
+  // mapping, then the shell's own structural layout glue.
+  const themeIndex = entry.indexOf('cds-theme.css')
+  const compatIndex = entry.indexOf("import './zn-vendor-compat.css'")
+  const shellIndex = entry.indexOf("import './zn-claude-shell.css'")
+  assert.ok(themeIndex >= 0)
+  assert.ok(compatIndex > themeIndex)
+  assert.ok(shellIndex > compatIndex)
 
-  assert.match(liquid, /will-change:\s*transform/)
-  assert.match(liquid, /backface-visibility:\s*hidden/)
-  assert.match(liquid, /@media \(max-width: 720px\)/)
-  assert.match(liquid, /@media \(max-width: 520px\)/)
-  assert.match(liquid, /@media \(prefers-reduced-motion: reduce\)/)
-  assert.match(liquid, /will-change:\s*auto/)
-  assert.match(liquid, /@media \(forced-colors: active\)/)
-  assert.match(liquid, /backdrop-filter:\s*none !important/)
-  assert.match(liquid, /@media \(prefers-reduced-transparency: reduce\)/)
+  // Vendor motion system: keyframes + status primitives, motion gated on
+  // reduced-motion preference.
+  assert.match(theme, /@keyframes timeline-quiet-dot/)
+  assert.match(theme, /@keyframes message-fade-up/)
+  assert.match(theme, /@keyframes cds-skeleton-sweep/)
+  assert.match(theme, /@media \(prefers-reduced-motion: no-preference\)/)
+  assert.match(theme, /\.status-dot\s*\{/)
+  assert.match(theme, /\.cds-btn-squish\s*\{/)
 
-  assert.doesNotMatch(liquid, /\.zn-app\b/)
-  assert.doesNotMatch(liquid, /grid-template-columns/)
-  assert.doesNotMatch(liquid, /position:\s*(fixed|absolute)/)
+  // Compat mapping only implements vendor classes; it invents no layout.
+  assert.doesNotMatch(compat, /\.zn-shell\b/)
+  assert.doesNotMatch(compat, /grid-template-columns/)
+
+  // Shell layout glue stays structural: flex positioning only, no fixed /
+  // absolute positioning, no invented visual design.
+  assert.match(shellCss, /display:\s*flex/)
+  assert.doesNotMatch(shellCss, /position:\s*(fixed|absolute)/)
+  assert.doesNotMatch(shellCss, /\.zn-app\b/)
 })

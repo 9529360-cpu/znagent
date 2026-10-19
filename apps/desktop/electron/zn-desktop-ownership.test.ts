@@ -183,21 +183,53 @@ test('workspace attachment uses an OS folder picker before resident association'
 
 test('active ZN renderer root is content-first and independent of inherited shell', () => {
   const main = read('src/zn/main.tsx')
+  const shell = read('src/zn/zn-claude-shell.tsx')
+  const hooks = read('src/zn/zn-data-hooks.ts')
   const workbench = read('src/zn/workbench.tsx')
   const residentClient = read('src/zn/resident-client.ts')
-  const styles = read('src/zn/styles.css')
   const html = read('electron/zn-shell.html')
   const localization = read('localization/zn-localization.ts')
 
-  assert.match(main, /ZnWorkbench/)
+  // Active root is the vendored open-claude-ui assembly, not the old workbench.
+  assert.match(main, /ZnDesktopRoot/)
+  assert.match(main, /from '\.\/zn-claude-shell'/)
+  assert.doesNotMatch(main, /ZnWorkbench/)
   assert.doesNotMatch(main, /ZnProviderOnboarding/)
-  assert.match(styles, /\.zn-settings\s*\{/)
-  assert.match(styles, /\.zn-card\s*\{/)
-  assert.match(workbench, /sidebar\.newWork/)
-  assert.match(workbench, /sidebar\.workspaces/)
-  assert.match(workbench, /settings\.title/)
-  assert.match(workbench, /composer\.messageAria/)
-  assert.match(localization, /'sidebar\.newWork': 'New chat'/)
+  // Vendor tokens first, then the mechanical class mapping, then shell layout.
+  assert.match(main, /vendor\/open-claude-ui\/code-examples\/cds-theme\.css/)
+  assert.match(main, /import '\.\/zn-vendor-compat\.css'/)
+  assert.match(main, /import '\.\/zn-claude-shell\.css'/)
+
+  // Shell composition: session list + chat + composer + tray-only-when-pending.
+  assert.match(shell, /ZnSessionList/)
+  assert.match(shell, /ChatComposer/)
+  assert.match(shell, /UserMessageBubble/)
+  assert.match(shell, /AssistantMessageBubble/)
+  assert.match(shell, /McpToolDecisionCard/)
+  assert.match(shell, /showTray/)
+  assert.match(shell, /需要你出面/)
+  // No ledger / console / secretary-desk screens in the shell, ever.
+  // (The shell file documents this rule in a comment; these assertions
+  // guard the rendered structure, not the prose.)
+  assert.doesNotMatch(shell, /LedgerScreen|ConsoleScreen|SecretaryDesk|zn-shell-ledger|zn-shell-console/)
+  assert.doesNotMatch(shell, /execution-timeline|zn-history-trace|zn-live-trace/)
+  // Never render the vendor list with its hardcoded demo sessions.
+  assert.doesNotMatch(shell, /<DraggableSessionList/)
+  assert.doesNotMatch(shell, /INITIAL_SESSIONS/)
+  // Vendor components come from vendor/ verbatim; the shell never edits them.
+  assert.match(shell, /from '\.\.\/\.\.\/\.\.\/\.\.\/vendor\/open-claude-ui\/code-examples\//)
+
+  // Data hooks: the only seam between UI and backend. Stub returns
+  // loading + empty data, never fabricated sessions/messages/approvals.
+  assert.match(hooks, /export function useZnShellData/)
+  assert.match(hooks, /connection: 'loading'/)
+  assert.match(hooks, /sessions: \[\]/)
+  assert.match(hooks, /messages: \[\]/)
+  assert.match(hooks, /approvals: \[\]/)
+  assert.match(hooks, /todos: \[\]/)
+
+  // Old workbench stays on disk as the wiring reference: it still holds the
+  // real resident-client calls the wiring worker maps onto the data hooks.
   assert.match(workbench, /loadZnWorkThreads/)
   assert.match(workbench, /createZnWorkThread/)
   assert.match(workbench, /startZnWork/)
@@ -205,20 +237,8 @@ test('active ZN renderer root is content-first and independent of inherited shel
   assert.match(workbench, /cancelZnWork/)
   assert.match(workbench, /attachZnWorkspace/)
   assert.match(workbench, /detachZnWorkspace/)
-  assert.match(workbench, /sidebar\.attachFolder/)
-  assert.match(workbench, /selectedArtifactId/)
-  assert.match(workbench, /details\.artifactsAria/)
-  assert.match(workbench, /artifactKindLabel/)
-  assert.match(workbench, /loadZnProviderSettings/)
-  assert.match(workbench, /describeZnProviderReadiness/)
-  assert.match(workbench, /topbar\.openSettings/)
-  assert.match(workbench, /settings\.models\.description/)
+  assert.match(localization, /'sidebar\.newWork': 'New chat'/)
   assert.match(localization, /It asks before anything it can't undo/)
-  assert.match(workbench, /className="zn-stop-button"/)
-  assert.doesNotMatch(workbench, /zn-send-stop/)
-  assert.match(workbench, /className="zn-send"/)
-  assert.match(workbench, /disabled=\{submissionBusy \|\| stoppingWork \|\| !draft\.trim\(\)\}/)
-  assert.doesNotMatch(workbench, /while \(!current\.terminal/)
   assert.match(residentClient, /resident\.workList/)
   assert.match(residentClient, /resident\.workStart/)
   assert.match(residentClient, /resident\.workProgress/)

@@ -1,0 +1,78 @@
+/*
+ * ZN 桌面壳的结构胶水（layout glue）。
+ *
+ * 只负责“摆位置”：整壳纵向（顶栏 + 下方横排）、下方横排（会话列表 +
+ * 聊天主区）、主区纵向（托盘 + 消息滚动区 + 输入框）、空状态居中。
+ * 颜色 / 圆角 / 阴影 / 动效全部来自 vendor 的 cds-theme.css 令牌与
+ * zn-vendor-compat.css 里的 vendor 类名映射；这里不发明任何视觉样式。
+ * 会话列表自身的宽度来自 vendor 的 w-72 类名，不在这里重复写。
+ */
+
+.zn-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+  background: var(--cds-surface-1, #fcfcfb);
+  color: var(--cds-text-primary, #1a1a1a);
+  color-scheme: dark;
+}
+
+.zn-shell-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.zn-shell-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.zn-shell-tray {
+  flex-shrink: 0;
+  max-height: 45vh;
+  overflow-y: auto;
+  border-bottom: 1px solid var(--cds-border, #e8e8e6);
+}
+
+.zn-shell-messages {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.zn-shell-composer {
+  flex-shrink: 0;
+  padding: 12px 0 16px;
+  border-top: 1px solid var(--cds-border, #e8e8e6);
+  background: var(--cds-surface-1, #fcfcfb);
+}
+
+.zn-shell-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 48px 16px;
+  text-align: center;
+}
+
+/* 旧工作台的渲染兜底（error-boundary.tsx）用的类名，入口改走新壳后
+ * 仍保留，保证渲染崩溃时仍有可读的 Reload 兜底，而不是白屏。 */
+.zn-render-fallback {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100vh;
+  padding: 24px;
+}
+
+.zn-render-fallback-card {
+  max-width: 480px;
+}
