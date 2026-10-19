@@ -43,9 +43,12 @@ stays cheap to import; the default fetcher shells out to ``git`` (only ever
 called after approval).
 """
 
+import os
 import re
 import shutil
+import stat
 import subprocess
+import sys
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
@@ -378,6 +381,32 @@ def poll_gap_approval(store: Any, proposal: SkillGapProposal) -> SkillGapProposa
     return proposal
 
 
+def _on_rmtree_error(func, path, _exc):
+    """Retry a failed ``shutil.rmtree`` step after clearing read-only.
+
+    git marks ``.git/objects`` entries read-only; on Windows unlinking a
+    read-only file raises ``PermissionError`` ([WinError 5]), so clear the
+    flag and retry that single step. Called with the ``onexc`` (3.12+) /
+    ``onerror`` (<=3.11) signatures, both of which pass exactly three
+    positional arguments.
+    """
+    os.chmod(path, stat.S_IWRITE)
+    func(path)
+
+
+def _remove_tree(path: Path) -> None:
+    """Remove a directory tree, tolerating read-only files.
+
+    Plain ``shutil.rmtree`` fails on Windows when the tree contains
+    read-only files (git-cloned ``.git/objects`` are read-only). A removal
+    that still fails after the retry raises, as before.
+    """
+    if sys.version_info >= (3, 12):
+        shutil.rmtree(path, onexc=_on_rmtree_error)
+    else:
+        shutil.rmtree(path, onerror=_on_rmtree_error)
+
+
 def default_fetch_plugin(source: str, sha: str, dest: Path) -> None:
     """Fetch a plugin repo at an exact SHA. Called only after approval.
 
@@ -419,8 +448,10 @@ def default_fetch_plugin(source: str, sha: str, dest: Path) -> None:
     if git_dir.is_dir():
         # Explicit: a leftover .git would ship remote URLs and history
         # objects inside the installed bundle, so a removal failure is an
-        # install failure, not a silent skip.
-        shutil.rmtree(git_dir)
+        # install failure, not a silent skip. git marks .git/objects
+        # read-only, which breaks plain rmtree on Windows -- retry with the
+        # flag cleared instead of weakening the failure contract.
+        _remove_tree(git_dir)
 
 
 def _frontmatter_version(text: str) -> str:
