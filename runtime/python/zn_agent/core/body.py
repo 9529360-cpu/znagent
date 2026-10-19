@@ -79,7 +79,7 @@ class NativeBody:
         self.resident = resident
         self.store = store or (resident.store if resident is not None else None)
         # Extension handlers live INSIDE this Body, never as a second tool runner.
-        # Only explicitly admitted MCP/REST tools may use these entry points: read
+        # Only explicitly admitted MCP/REST/CLI tools may use these entry points: read
         # tools via the read handlers, explicitly approved write tools via
         # the write handlers (M-7 contract: per-tool approval + replay
         # identity + postcondition verification).
@@ -99,7 +99,7 @@ class NativeBody:
     ) -> None:
         """Bind one approved read-only tool to the existing audited Body path."""
         normalized = str(kind or "").strip().lower()
-        if not re.fullmatch(r"zn_(mcp|rest)_read_[a-f0-9]{24}", normalized):
+        if not re.fullmatch(r"zn_(mcp|rest|cli)_read_[a-f0-9]{24}", normalized):
             raise ValueError(
                 "external Body kind must be a stable namespaced read kind"
             )
@@ -127,7 +127,7 @@ class NativeBody:
         have a per-tool verifier wired before the action can verify.
         """
         normalized = str(kind or "").strip().lower()
-        if not re.fullmatch(r"zn_(mcp|rest)_write_[a-f0-9]{24}", normalized):
+        if not re.fullmatch(r"zn_(mcp|rest|cli)_write_[a-f0-9]{24}", normalized):
             raise ValueError(
                 "external Body kind must be a stable namespaced write kind"
             )
@@ -1562,6 +1562,70 @@ class NativeBody:
             result_record["output"] = ""
             result_record["error"] = (
                 "approved MCP write failed" if result.error else None
+            )
+            result_record["data"] = {
+                "external_write_redacted": True,
+                "provider_id": str(raw_data.get("provider_id") or "")[:80],
+                "tool": str(raw_data.get("tool") or "")[:100],
+                "replay_identity": str(raw_data.get("replay_identity") or "")[:64],
+                "replayed": bool(raw_data.get("replayed")),
+                "result_chars": len(digest_source),
+                "result_sha256": hashlib.sha256(
+                    digest_source.encode("utf-8")
+                ).hexdigest(),
+                "truncated": bool(raw_data.get("truncated")),
+            }
+        if action.kind.startswith("zn_cli_read_"):
+            # CLI arguments can embed secrets (tokens in flags, paths with
+            # personal context). Same redaction rule as MCP reads: the
+            # audit history keeps a digest, never the raw argv or output.
+            encoded = json.dumps(
+                action.args, ensure_ascii=False, sort_keys=True, default=str,
+                separators=(",", ":"),
+            )
+            action_record["args"] = {
+                "redacted": True,
+                "names": sorted(str(name) for name in action.args),
+                "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+            }
+            raw_output = str(result.output or "")
+            raw_data = dict(result.data or {})
+            returned_text = str(raw_data.pop("text", "") or "")
+            digest_source = returned_text or raw_output
+            result_record["output"] = ""
+            result_record["error"] = (
+                "approved CLI read failed" if result.error else None
+            )
+            result_record["data"] = {
+                "external_read_redacted": True,
+                "provider_id": str(raw_data.get("provider_id") or "")[:80],
+                "tool": str(raw_data.get("tool") or "")[:100],
+                "result_chars": len(digest_source),
+                "result_sha256": hashlib.sha256(
+                    digest_source.encode("utf-8")
+                ).hexdigest(),
+                "truncated": bool(raw_data.get("truncated")),
+            }
+        if action.kind.startswith("zn_cli_write_"):
+            # CLI write arguments can contain the very payload being
+            # effected. Keep the replay identity and a digest, never the
+            # raw argv or the process output.
+            encoded = json.dumps(
+                action.args, ensure_ascii=False, sort_keys=True, default=str,
+                separators=(",", ":"),
+            )
+            action_record["args"] = {
+                "redacted": True,
+                "names": sorted(str(name) for name in action.args),
+                "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+            }
+            raw_output = str(result.output or "")
+            raw_data = dict(result.data or {})
+            returned_text = str(raw_data.pop("text", "") or "")
+            digest_source = returned_text or raw_output
+            result_record["output"] = ""
+            result_record["error"] = (
+                "approved CLI write failed" if result.error else None
             )
             result_record["data"] = {
                 "external_write_redacted": True,
