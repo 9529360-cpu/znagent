@@ -96,7 +96,17 @@ from .models import utc_now
 from .permission_model import PermissionPolicy, PermissionVerdict
 
 
-APPROVAL_KINDS = ("send", "publish", "purchase", "delete", "production_change")
+APPROVAL_KINDS = (
+    "send",
+    "publish",
+    "purchase",
+    "delete",
+    "production_change",
+    # M-12: ZN self-assembles a parallel specialist team only inside its
+    # approval/budget envelope; outside it (sensitive / over budget) the
+    # decision goes to the user as an approval card of this kind.
+    "team_assembly",
+)
 
 APPROVAL_SOURCES = (
     "user_chat",
