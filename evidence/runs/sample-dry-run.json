@@ -1,0 +1,91 @@
+{
+  "finished_at": "2026-10-19T19:33:18+0000",
+  "gate": {
+    "reason": "未设置 ZN_E2E_LIVE=1：opt-in 闸门关闭，真实模型调用被跳过"
+  },
+  "harness_version": "0.1.0",
+  "mode": "dry",
+  "model": "deepseek-chat",
+  "run_id": "20261019-193318",
+  "schema": "zn-e2e-evidence/v1",
+  "started_at": "2026-10-19T19:33:18+0000",
+  "summary": {
+    "by_failure_class": {
+      "none": 1,
+      "tool_environment": 5
+    },
+    "by_verdict": {
+      "rejected": 5,
+      "skipped": 1
+    },
+    "total": 6
+  },
+  "tasks": [
+    {
+      "domain": "research",
+      "duration_s": 0.0,
+      "evidence_excerpts": [],
+      "failure_class": "tool_environment",
+      "missing_items": [],
+      "notes": "模型调用抛异常：RuntimeError：dry-run：opt-in 闸门关闭，未做真实模型调用",
+      "task_id": "research-01",
+      "title": "从给定资料中提炼三个关键事实",
+      "verdict": "rejected"
+    },
+    {
+      "domain": "browser",
+      "duration_s": 0.0,
+      "evidence_excerpts": [],
+      "failure_class": "none",
+      "missing_items": [],
+      "notes": "http_observation 检查需要 live 模式（真实抓取），闸门关闭时跳过",
+      "task_id": "browser-01",
+      "title": "真实页面抓取交叉验证",
+      "verdict": "skipped"
+    },
+    {
+      "domain": "file",
+      "duration_s": 0.0,
+      "evidence_excerpts": [],
+      "failure_class": "tool_environment",
+      "missing_items": [],
+      "notes": "模型调用抛异常：RuntimeError：dry-run：opt-in 闸门关闭，未做真实模型调用",
+      "task_id": "file-01",
+      "title": "按规范写出 JSON 配置文件",
+      "verdict": "rejected"
+    },
+    {
+      "domain": "file",
+      "duration_s": 0.0,
+      "evidence_excerpts": [],
+      "failure_class": "tool_environment",
+      "missing_items": [],
+      "notes": "模型调用抛异常：RuntimeError：dry-run：opt-in 闸门关闭，未做真实模型调用",
+      "task_id": "file-02",
+      "title": "改写已有文本：追加条目",
+      "verdict": "rejected"
+    },
+    {
+      "domain": "coding",
+      "duration_s": 0.0,
+      "evidence_excerpts": [],
+      "failure_class": "tool_environment",
+      "missing_items": [],
+      "notes": "模型调用抛异常：RuntimeError：dry-run：opt-in 闸门关闭，未做真实模型调用",
+      "task_id": "coding-01",
+      "title": "修复一个小 bug 并通过运行验证",
+      "verdict": "rejected"
+    },
+    {
+      "domain": "cross_domain",
+      "duration_s": 0.0,
+      "evidence_excerpts": [],
+      "failure_class": "tool_environment",
+      "missing_items": [],
+      "notes": "模型调用抛异常：RuntimeError：dry-run：opt-in 闸门关闭，未做真实模型调用",
+      "task_id": "cross-01",
+      "title": "研究 + 文件：读资料写摘要文件",
+      "verdict": "rejected"
+    }
+  ]
+}
