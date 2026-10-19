@@ -16,11 +16,16 @@ checkout: per plan it creates a branch from origin/main, bumps only
 that plugin's SHA in the lockfile, commits, pushes, and opens a PR via
 ``gh``. ``--dry-run`` prints the planned git/gh commands without running
 them. No secrets are read or written: the lockfile holds SHAs, never keys.
+
+The script is standard-library-only: it loads ``skill_lock.py`` straight
+from its file instead of importing the ``zn_agent.core`` package, so it
+runs on a bare runner with no third-party dependencies installed.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import subprocess
 import sys
@@ -28,16 +33,39 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "runtime" / "python"))
-
-from zn_agent.core.skill_lock import (  # noqa: E402
-    LOCKFILE_NAME,
-    SkillLock,
-    check_plugin_updates,
-    plan_upgrades,
-)
-
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+# Stdlib-only by design: load skill_lock.py straight from its file instead
+# of ``from zn_agent.core.skill_lock import ...``. A package import would
+# execute ``zn_agent/core/__init__.py`` and its heavy import chain
+# (action_execution -> action_authority -> body -> psutil, ...), which is
+# not installed on a bare runner and broke the nightly workflow 4 days
+# running. skill_lock.py itself imports only the standard library, so the
+# nightly script must stay runnable with zero third-party dependencies.
+# (The resident still imports the same module through the package, where
+# the heavy dependencies are already present.)
+_SKILL_LOCK_PATH = REPO_ROOT / "runtime" / "python" / "zn_agent" / "core" / "skill_lock.py"
+
+
+def _load_skill_lock() -> Any:
+    spec = importlib.util.spec_from_file_location("_zn_skill_lock_standalone", _SKILL_LOCK_PATH)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load skill lock module from {_SKILL_LOCK_PATH}")
+    module = importlib.util.module_from_spec(spec)
+    # Register BEFORE exec: @dataclass(slots=True) resolves string
+    # annotations via sys.modules[cls.__module__]; without this the
+    # module executes but dataclass decoration crashes with AttributeError.
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+_skill_lock = _load_skill_lock()
+LOCKFILE_NAME = _skill_lock.LOCKFILE_NAME
+SkillLock = _skill_lock.SkillLock
+check_plugin_updates = _skill_lock.check_plugin_updates
+plan_upgrades = _skill_lock.plan_upgrades
+
 DEFAULT_LOCKFILE = REPO_ROOT / LOCKFILE_NAME
 
 
