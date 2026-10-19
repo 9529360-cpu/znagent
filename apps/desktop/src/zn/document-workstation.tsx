@@ -95,7 +95,7 @@ export function ZnDocumentWorkstation({ artifact }: Props) {
 
   if (!spec) {
     return (
-      <main className="zn-document-workstation zn-document-invalid">
+      <main className="flex flex-col gap-1 p-4">
         <strong>{t('workstation.documentUnavailable')}</strong>
         <span>{t('workstation.documentInvalid')}</span>
       </main>
@@ -117,19 +117,19 @@ export function ZnDocumentWorkstation({ artifact }: Props) {
   }
 
   return (
-    <main className="zn-document-workstation" aria-label={t('workstation.documentWorkspace')}>
-      <aside className="zn-document-outline" aria-label={t('workstation.documentOutline')}>
-        <div className="zn-document-outline-head">
+    <main className="flex gap-3" aria-label={t('workstation.documentWorkspace')}>
+      <aside className="flex w-44 shrink-0 flex-col gap-2" aria-label={t('workstation.documentOutline')}>
+        <div className="flex flex-col gap-0.5 border-b border-[var(--cds-border)] pb-2">
           <span>{t('workstation.document')}</span>
           <strong title={spec.title}>{spec.title}</strong>
           <small>{t('workstation.sectionCount', { count: spec.sections.length })}</small>
         </div>
-        <div className="zn-document-outline-list">
+        <div className="flex flex-col gap-1">
           {spec.sections.map((section, index) => (
             <button
               type="button"
               key={section.id}
-              className={'zn-document-outline-item' + (section.id === selectedSectionId ? ' active' : '')}
+              className={'flex items-start gap-2 rounded-lg px-2 py-1.5 text-left text-sm ' + (section.id === selectedSectionId ? 'bg-[var(--cds-fill-ghost-selected)] text-[var(--cds-text-primary)]' : 'text-[var(--cds-text-secondary)] hover:bg-[var(--cds-fill-ghost-hover)]')}
               aria-label={t('workstation.sectionLabel', { index: index + 1, heading: section.heading })}
               onClick={() => selectSection(section.id)}
             >
@@ -140,32 +140,32 @@ export function ZnDocumentWorkstation({ artifact }: Props) {
         </div>
       </aside>
 
-      <section className="zn-document-stage">
-        <header className="zn-document-stage-head">
+      <section className="min-w-0 flex-1">
+        <header className="mb-2 flex items-baseline justify-between gap-2">
           <div>
             <span>{t('workstation.nativeDocument')}</span>
             <strong>{spec.sections[selectedIndex]?.heading || spec.title}</strong>
           </div>
           <small>{t('workstation.documentVersion')}</small>
         </header>
-        <div className="zn-document-canvas-wrap">
-          <article className="zn-document-paper" ref={paperRef}>
-            <header className="zn-document-paper-title">
-              <h1>{spec.title}</h1>
-              {spec.subtitle ? <p>{spec.subtitle}</p> : null}
+        <div className="max-h-[60vh] overflow-y-auto pr-1">
+          <article className="rounded-xl bg-[var(--cds-surface-2)] px-6 py-5 shadow-[var(--cds-shadow-sm)]" ref={paperRef}>
+            <header className="mb-4 border-b border-[var(--cds-border)] pb-3">
+              <h1 className="text-xl font-semibold text-[var(--cds-text-primary)]">{spec.title}</h1>
+              {spec.subtitle ? <p className="mt-1 text-sm text-[var(--cds-text-secondary)]">{spec.subtitle}</p> : null}
             </header>
             {spec.sections.map(section => (
               <section
-                className={'zn-document-section' + (section.id === selectedSectionId ? ' selected' : '')}
+                className={'mb-4 ' + (section.id === selectedSectionId ? '' : '')}
                 data-document-section={section.id}
                 key={section.id}
               >
-                <h2>{section.heading}</h2>
+                <h2 className="mb-1 mt-2 text-base font-semibold text-[var(--cds-text-primary)]">{section.heading}</h2>
                 {section.paragraphs.map((paragraph, index) => (
-                  <p key={`${section.id}-p-${index}`}>{paragraph}</p>
+                  <p key={`${section.id}-p-${index}`} className="mb-2 text-sm leading-relaxed text-[var(--cds-text-primary)]">{paragraph}</p>
                 ))}
                 {section.bullets.length ? (
-                  <ul>
+                  <ul className="mb-2 list-disc pl-5 text-sm text-[var(--cds-text-primary)]">
                     {section.bullets.map((bullet, index) => (
                       <li key={`${section.id}-b-${index}`}>{bullet}</li>
                     ))}

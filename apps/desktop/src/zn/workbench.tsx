@@ -2,29 +2,16 @@ import type { TFunction } from 'i18next'
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
-  ArrowLeft,
-  ArrowUp,
-  ArrowsInSimple,
-  ArrowsOutSimple,
-  Brain,
-  CaretDown,
-  CheckCircle,
-  ImageSquare,
-  CircleNotch,
-  ClockCounterClockwise,
-  Desktop,
-  FileText,
-  FolderSimple,
-  GearSix,
-  MagnifyingGlass,
-  Plus,
-  Pulse,
-  PushPin,
-  SidebarSimple,
-  Sparkle,
-  Stop,
-  X
-} from '@phosphor-icons/react'
+  CdsButton,
+  ClaudeDesktopHeader,
+  CodeBlock,
+  PulseRunningDot,
+  QuietDotsWave,
+  SegmentedControl,
+  StatusDot,
+  ThinkingAccordion,
+  UserMessageBubble
+} from './cds'
 
 import {
   applyZnUpdate,
@@ -57,6 +44,7 @@ import {
 } from './i18n'
 import type { ZnLocalePreference } from '../../localization/zn-localization'
 import { ZnMissingRestoreControls } from './restore-controls'
+import { ZnAssistantMessage } from './zn-assistant-message'
 import { RoutinesPanel } from './routines-panel'
 import { ZnSlidesWorkstation } from './slides-workstation'
 import { ZnDocumentWorkstation } from './document-workstation'
@@ -832,37 +820,38 @@ export function ZnWorkbench() {
 
   const showActiveWork = workProgress && activeThread && workProgress.threadId === activeThread.id && !workProgress.finalized
   const firstResult = activeArtifacts[0] || null
-
   return (
     <div className={'zn-app ' + windowMode + (sidebarCollapsed ? ' sidebar-collapsed' : '') + (contextOpen ? ' details-open' : ' context-closed') + (artifactOpen && selectedWorkstationArtifact && view === 'work' ? ' artifact-open' : '') + (view === 'settings' ? ' settings-open' : '')}>
-      <aside className="zn-sidebar">
-        <div className="zn-brand-row">
-          <div className="zn-mark" aria-hidden="true">ZN</div>
-          <div className="zn-brand-copy">
-            <div className="zn-brand">ZN</div>
-            <div className="zn-muted zn-small">{t('sidebar.alwaysHere')}</div>
+      {!sidebarCollapsed ? (
+      <aside className="zn-sidebar" aria-label={t('sidebar.navigation')}>
+        <div className="flex items-center gap-2 px-3 pb-2 pt-3">
+          <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-[var(--cds-clay)] text-sm font-semibold text-white" aria-hidden="true">ZN</span>
+          <div className="min-w-0">
+            <div className="truncate text-sm font-semibold text-[var(--cds-text-primary)]">ZN</div>
+            <div className="truncate text-xs text-[var(--cds-text-secondary)]">{t('sidebar.alwaysHere')}</div>
           </div>
         </div>
 
-        <button className="zn-primary zn-new-work" type="button" onClick={openNewWork}>
-          <Plus size={16} weight="bold" />
-          <span>{t('sidebar.newWork')}</span>
-        </button>
+        <div className="px-3 pb-2">
+          <CdsButton variant="brand" className="w-full" type="button" onClick={openNewWork}>
+            + {t('sidebar.newWork')}
+          </CdsButton>
+        </div>
 
-        <nav className="zn-primary-nav" aria-label={t('sidebar.navigation')}>
-          <button className="zn-nav-link" type="button" onClick={() => {
+        <div className="px-3 pb-2">
+          <CdsButton variant="ghost" className="w-full justify-start" type="button" onClick={() => {
             openNewWork()
             setDraft(t('sidebar.imagePrompt'))
             window.requestAnimationFrame(focusComposerInput)
           }}>
-            <ImageSquare size={17} /><span>{t('sidebar.images')}</span>
-          </button>
-        </nav>
+            {t('sidebar.images')}
+          </CdsButton>
+        </div>
 
-        <label className="zn-search-shell">
-          <MagnifyingGlass size={15} />
+        <label className="mx-3 mb-2 flex items-center gap-2 rounded-lg bg-[var(--cds-surface-2)] px-2.5 py-1.5">
+          <span aria-hidden="true" className="text-xs text-[var(--cds-text-secondary)]">⌕</span>
           <input
-            className="zn-search"
+            className="w-full bg-transparent text-sm text-[var(--cds-text-primary)] outline-none placeholder:text-[var(--cds-text-muted)]"
             aria-label={t('sidebar.searchRecent')}
             placeholder={t('sidebar.searchRecent')}
             value={query}
@@ -870,64 +859,64 @@ export function ZnWorkbench() {
           />
         </label>
 
-        <nav className="zn-nav" aria-label={t('topbar.recentWork')}>
-          <button className="zn-section-toggle" type="button" aria-expanded={pinnedExpanded} onClick={() => setPinnedExpanded(value => !value)}>
-            <CaretDown className={pinnedExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.pinned')}</span>
+        <nav className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2 pb-2" aria-label={t('topbar.recentWork')}>
+          <button className="flex items-center gap-1 px-2 py-1 text-left text-xs font-medium text-[var(--cds-text-secondary)]" type="button" aria-expanded={pinnedExpanded} onClick={() => setPinnedExpanded(value => !value)}>
+            <span aria-hidden="true">{pinnedExpanded ? '▾' : '▸'}</span><span>{t('sidebar.pinned')}</span>
           </button>
           {pinnedExpanded && pinnedThreads.length > 0 ? (
-            <div className="zn-thread-list zn-pinned-thread-list">
+            <div>
               {pinnedThreads.map(thread => (
-                <div className="zn-thread-row" key={thread.id}>
-                  <button className={'zn-thread-link' + (thread.id === activeThread?.id && view === 'work' ? ' active' : '')} type="button" onClick={() => {
+                <div className="group flex items-center gap-1" key={thread.id}>
+                  <button className={'min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-left text-sm ' + (thread.id === activeThread?.id && view === 'work' ? 'bg-[var(--cds-fill-ghost-selected)] text-[var(--cds-text-primary)]' : 'text-[var(--cds-text-secondary)] hover:bg-[var(--cds-fill-ghost-hover)]')} type="button" onClick={() => {
                     setActiveThreadId(thread.id)
                     setView('work')
                     setContextOpen(false)
                     setArtifactOpen(false)
                     void refreshRestorePoints(thread.id)
                   }}>
-                    <span>{threadDisplayTitle(thread.title, t)}</span>
-                    <span className="zn-thread-time">{timeLabel(thread.updatedAt, localeState.resolvedLocale)}</span>
+                    <span className="block truncate">{threadDisplayTitle(thread.title, t)}</span>
+                    <span className="block text-xs text-[var(--cds-text-muted)]">{timeLabel(thread.updatedAt, localeState.resolvedLocale)}</span>
                   </button>
-                  <button className="zn-thread-pin active" type="button" aria-label={t('sidebar.unpin')} title={t('sidebar.unpin')} onClick={() => togglePinnedThread(thread.id)}><PushPin size={14} weight="fill" /></button>
+                  <button className="shrink-0 px-1 text-xs" type="button" aria-label={t('sidebar.unpin')} title={t('sidebar.unpin')} onClick={() => togglePinnedThread(thread.id)}>📌</button>
                 </div>
               ))}
             </div>
           ) : null}
-          {pinnedExpanded && pinnedThreads.length === 0 ? <div className="zn-sidebar-empty">{t('sidebar.noPinned')}</div> : null}
-          <button className="zn-section-toggle zn-section-spaced" type="button" aria-expanded={projectsExpanded} onClick={() => setProjectsExpanded(value => !value)}>
-            <CaretDown className={projectsExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.workspaces')}</span>
+          {pinnedExpanded && pinnedThreads.length === 0 ? <div className="px-2 py-1 text-xs text-[var(--cds-text-muted)]">{t('sidebar.noPinned')}</div> : null}
+          <button className="mt-1 flex items-center gap-1 px-2 py-1 text-left text-xs font-medium text-[var(--cds-text-secondary)]" type="button" aria-expanded={projectsExpanded} onClick={() => setProjectsExpanded(value => !value)}>
+            <span aria-hidden="true">{projectsExpanded ? '▾' : '▸'}</span><span>{t('sidebar.workspaces')}</span>
           </button>
           {projectsExpanded ? (
           <>
-          <div className="zn-workspace-card">
-            <FolderSimple size={17} />
-            <div className="zn-workspace-copy">
-              <div>{activeWorkspace?.name || t('sidebar.localWork')}</div>
-              <div className="zn-muted zn-small zn-workspace-path" title={activeWorkspace?.path}>
+          <div className="mx-1 flex items-center gap-2 rounded-lg bg-[var(--cds-surface-2)] px-2 py-2">
+            <span aria-hidden="true" className="text-sm">📁</span>
+            <div className="min-w-0">
+              <div className="truncate text-sm text-[var(--cds-text-primary)]">{activeWorkspace?.name || t('sidebar.localWork')}</div>
+              <div className="truncate text-xs text-[var(--cds-text-muted)]" title={activeWorkspace?.path}>
                 {activeWorkspace?.path || t('sidebar.noFolder')}
               </div>
             </div>
           </div>
-          <div className="zn-workspace-actions">
-            <button type="button" disabled={workspaceBusy || workActive || !activeThread} onClick={() => void attachWorkspace()}>
+          <div className="flex gap-1 px-1 pt-1">
+            <CdsButton size="sm" type="button" disabled={workspaceBusy || workActive || !activeThread} onClick={() => void attachWorkspace()}>
               {workspaceBusy ? t('common.working') : activeWorkspace ? t('sidebar.changeFolder') : t('sidebar.attachFolder')}
-            </button>
+            </CdsButton>
             {activeWorkspace ? (
-              <button type="button" disabled={workspaceBusy || workActive} onClick={() => void detachWorkspace()}>
+              <CdsButton size="sm" type="button" disabled={workspaceBusy || workActive} onClick={() => void detachWorkspace()}>
                 {t('sidebar.detach')}
-              </button>
+              </CdsButton>
             ) : null}
           </div>
           </>
           ) : null}
-          <button className="zn-section-toggle zn-section-spaced" type="button" aria-expanded={recentExpanded} onClick={() => setRecentExpanded(value => !value)}>
-            <CaretDown className={recentExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.recent')}</span>
+          <button className="mt-1 flex items-center gap-1 px-2 py-1 text-left text-xs font-medium text-[var(--cds-text-secondary)]" type="button" aria-expanded={recentExpanded} onClick={() => setRecentExpanded(value => !value)}>
+            <span aria-hidden="true">{recentExpanded ? '▾' : '▸'}</span><span>{t('sidebar.recent')}</span>
           </button>
-          {recentExpanded ? <div className="zn-thread-list">
+          {recentExpanded ? <div>
             {recentThreads.map(thread => (
-              <div className="zn-thread-row" key={thread.id}>
+              <div className="group flex items-center gap-1" key={thread.id}>
                 <button
-                  className={'zn-thread-link' + (thread.id === activeThread?.id && view === 'work' ? ' active' : '')}
+                  className={'min-w-0 flex-1 truncate rounded-lg px-2 py-1.5 text-left text-sm ' + (thread.id === activeThread?.id && view === 'work' ? 'bg-[var(--cds-fill-ghost-selected)] text-[var(--cds-text-primary)]' : 'text-[var(--cds-text-secondary)] hover:bg-[var(--cds-fill-ghost-hover)]')}
                   type="button"
                   onClick={() => {
                     setActiveThreadId(thread.id)
@@ -937,110 +926,65 @@ export function ZnWorkbench() {
                     void refreshRestorePoints(thread.id)
                   }}
                 >
-                  <span>{threadDisplayTitle(thread.title, t)}</span>
-                  <span className="zn-thread-time">{timeLabel(thread.updatedAt, localeState.resolvedLocale)}</span>
+                  <span className="block truncate">{threadDisplayTitle(thread.title, t)}</span>
+                  <span className="block text-xs text-[var(--cds-text-muted)]">{timeLabel(thread.updatedAt, localeState.resolvedLocale)}</span>
                 </button>
-                <button className="zn-thread-pin" type="button" aria-label={t('sidebar.pin')} title={t('sidebar.pin')} onClick={() => togglePinnedThread(thread.id)}><PushPin size={14} /></button>
+                <button className="shrink-0 px-1 text-xs opacity-0 group-hover:opacity-100" type="button" aria-label={t('sidebar.pin')} title={t('sidebar.pin')} onClick={() => togglePinnedThread(thread.id)}>📌</button>
               </div>
             ))}
           </div> : null}
-          <button className="zn-section-toggle zn-section-spaced" type="button" aria-expanded={routinesExpanded} onClick={() => setRoutinesExpanded(value => !value)}>
-            <CaretDown className={routinesExpanded ? '' : 'collapsed'} size={14} /><span>{t('sidebar.scheduled')}</span>
+          <button className="mt-1 flex items-center gap-1 px-2 py-1 text-left text-xs font-medium text-[var(--cds-text-secondary)]" type="button" aria-expanded={routinesExpanded} onClick={() => setRoutinesExpanded(value => !value)}>
+            <span aria-hidden="true">{routinesExpanded ? '▾' : '▸'}</span><span>{t('sidebar.scheduled')}</span>
           </button>
           {routinesExpanded ? <RoutinesPanel /> : null}
-
-
         </nav>
 
-        <div className="zn-sidebar-footer">
-          <button className="zn-nav-button" type="button" onClick={openSettings}>
-            <GearSix size={16} />
-            <span>{t('settings.title')}</span>
-          </button>
+        <div className="border-t border-[var(--cds-border)] p-2">
+          <CdsButton variant="ghost" className="w-full justify-start" type="button" onClick={openSettings}>
+            ⚙ {t('settings.title')}
+          </CdsButton>
         </div>
       </aside>
+      ) : null}
 
       <section className="zn-main-column">
-        <header className="zn-topbar">
-          <div className="zn-topbar-brand">
-            <div className="zn-mark zn-mark-small" aria-hidden="true">ZN</div>
-            <div>
-              <div className="zn-brand">ZN</div>
-              <div className="zn-topbar-presence">
-                <span className={'zn-health-dot ' + residentHealth} />
-                {residentHealth === 'live' ? t('common.ready') : residentHealth === 'connecting' ? t('common.connecting') : t('common.offline')}
-              </div>
-            </div>
-          </div>
-
-          <div className="zn-topbar-copy">
-            <div className="zn-topbar-title">{view === 'settings' ? t('settings.title') : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}</div>
-            <div className="zn-muted zn-small">{view === 'settings' ? `ZN · ${t('topbar.thisComputer')}` : activeWorkspace?.name || t('topbar.thisComputer')}</div>
-          </div>
-
-          {view === 'work' ? (
-            <div className="zn-mode-switch" role="tablist" aria-label={t('topbar.workDetails')}>
-              <button className={!contextOpen ? 'active' : ''} role="tab" aria-selected={!contextOpen} type="button" onClick={() => setContextOpen(false)}>
-                {t('topbar.chat')}
-              </button>
-              <button className={contextOpen ? 'active' : ''} role="tab" aria-selected={contextOpen} type="button" onClick={openDetails}>
-                {t('topbar.work')}
-              </button>
-            </div>
-          ) : null}
-
-          <div className="zn-topbar-actions">
-            <button type="button" aria-label={t('topbar.recentWork')} title={t('topbar.recentWork')} onClick={() => requestWindowMode('expanded')}>
-              <ClockCounterClockwise size={17} />
-            </button>
-            <button type="button" aria-label={t('topbar.toggleSidebar')} title={t('topbar.toggleSidebar')} aria-pressed={sidebarCollapsed} onClick={() => setSidebarCollapsed(value => !value)}>
-              <SidebarSimple size={17} />
-            </button>
-            <button type="button" aria-label={t('topbar.openSettings')} title={t('settings.title')} onClick={openSettings}>
-              <GearSix size={17} />
-            </button>
-            <button
-              type="button"
-              aria-label={windowMode === 'compact' ? t('topbar.expandZn') : t('topbar.compactZn')}
-              title={windowMode === 'compact' ? t('topbar.expand') : t('topbar.compact')}
-              onClick={toggleWindowMode}
-            >
-              {windowMode === 'compact' ? <ArrowsOutSimple size={17} /> : <ArrowsInSimple size={17} />}
-            </button>
-          </div>
-        </header>
+        <ClaudeDesktopHeader title={view === 'settings' ? t('settings.title') : activeThread ? threadDisplayTitle(activeThread.title, t) : t('sidebar.newWork')}>
+          <StatusDot kind={residentHealth === 'live' ? 'ready' : residentHealth === 'connecting' ? 'running' : 'error'} label={residentHealth === 'live' ? t('common.ready') : residentHealth === 'connecting' ? t('common.connecting') : t('common.offline')} />
+          <CdsButton size="icon" type="button" aria-label={t('topbar.toggleSidebar')} title={t('topbar.toggleSidebar')} aria-pressed={sidebarCollapsed} onClick={() => setSidebarCollapsed(value => !value)}>
+            ☰
+          </CdsButton>
+          <CdsButton size="icon" type="button" aria-label={t('topbar.openSettings')} title={t('settings.title')} onClick={openSettings}>
+            ⚙
+          </CdsButton>
+          <CdsButton size="icon" type="button" aria-label={windowMode === 'compact' ? t('topbar.expandZn') : t('topbar.compactZn')} title={windowMode === 'compact' ? t('topbar.expand') : t('topbar.compact')} onClick={toggleWindowMode}>
+            {windowMode === 'compact' ? '⤢' : '⤡'}
+          </CdsButton>
+        </ClaudeDesktopHeader>
 
         {view === 'settings' ? (
           <main className="zn-settings">
-            <div className="zn-settings-layout">
-              <nav className="zn-settings-nav" aria-label={t('settings.title')}>
-                <button className="zn-settings-back" type="button" onClick={() => setView('work')}>
-                  <ArrowLeft size={17} />
-                  <span>{t('workstation.returnToConversation')}</span>
-                </button>
-                <div className="zn-settings-nav-group">
-                  <div className="zn-settings-nav-label">{t('settings.nav.personal')}</div>
-                  <button className={settingsSection === 'language' ? 'active' : ''} type="button" aria-current={settingsSection === 'language' ? 'page' : undefined} onClick={() => focusSettingsSection('language')}><Desktop size={17} /><span>{t('settings.language.title')}</span></button>
-                  <button className={settingsSection === 'models' ? 'active' : ''} type="button" aria-current={settingsSection === 'models' ? 'page' : undefined} onClick={() => focusSettingsSection('models')}><Brain size={17} /><span>{t('settings.models.title')}</span></button>
-                </div>
-                <div className="zn-settings-nav-group zn-settings-nav-group-spaced">
-                  <div className="zn-settings-nav-label">{t('settings.nav.app')}</div>
-                  <button className={settingsSection === 'background' ? 'active' : ''} type="button" aria-current={settingsSection === 'background' ? 'page' : undefined} onClick={() => focusSettingsSection('background')}><Pulse size={17} /><span>{t('settings.background.title')}</span></button>
-                  <button className={settingsSection === 'updates' ? 'active' : ''} type="button" aria-current={settingsSection === 'updates' ? 'page' : undefined} onClick={() => focusSettingsSection('updates')}><CheckCircle size={17} /><span>{t('settings.updates.title')}</span></button>
-                </div>
-              </nav>
-              <div className="zn-settings-content">
-            <div className="zn-page-intro">
-              <span className="zn-eyebrow">{t('settings.eyebrow')}</span>
-              <h1>{t(settingsSection === 'language' ? 'settings.language.title' : settingsSection === 'models' ? 'settings.models.title' : settingsSection === 'background' ? 'settings.background.title' : 'settings.updates.title')}</h1>
-              <p>{t(settingsSection === 'language' ? 'settings.language.description' : settingsSection === 'models' ? 'settings.models.description' : settingsSection === 'background' ? 'settings.background.description' : 'settings.updates.description')}</p>
-            </div>
-            <div className="zn-settings-grid" data-active-section={settingsSection}>
+            <div className="mx-auto flex max-w-3xl flex-col gap-4">
+              <div>
+                <div className="text-xs font-medium uppercase tracking-wide text-[var(--cds-text-accent)]">{t('settings.eyebrow')}</div>
+                <h1 className="mt-1 text-xl font-semibold text-[var(--cds-text-primary)]">{t(settingsSection === 'language' ? 'settings.language.title' : settingsSection === 'models' ? 'settings.models.title' : settingsSection === 'background' ? 'settings.background.title' : 'settings.updates.title')}</h1>
+                <p className="mt-1 text-sm text-[var(--cds-text-secondary)]">{t(settingsSection === 'language' ? 'settings.language.description' : settingsSection === 'models' ? 'settings.models.description' : settingsSection === 'background' ? 'settings.background.description' : 'settings.updates.description')}</p>
+              </div>
+              <SegmentedControl
+                tabs={[
+                  { id: 'language', label: t('settings.language.title') },
+                  { id: 'models', label: t('settings.models.title') },
+                  { id: 'background', label: t('settings.background.title') },
+                  { id: 'updates', label: t('settings.updates.title') }
+                ]}
+                value={settingsSection}
+                onChange={value => focusSettingsSection(String(value) as SettingsSection)}
+              />
+              {settingsSection === 'language' ? (
               <section className="zn-card" id="zn-settings-language">
-                <label className="zn-setting-field">
-                  <span className="zn-context-title">{t('settings.language.label')}</span>
+                <label className="block text-sm font-medium text-[var(--cds-text-primary)]">
+                  <span>{t('settings.language.label')}</span>
                   <select
-                    className="zn-search"
+                    className="mt-2 w-full rounded-lg bg-[var(--cds-surface-1)] px-2 py-2 text-sm text-[var(--cds-text-primary)]"
                     aria-label={t('settings.language.label')}
                     value={localeState.preference}
                     disabled={localeBusy}
@@ -1051,26 +995,29 @@ export function ZnWorkbench() {
                     <option value="en-US">{t('settings.language.enUS')}</option>
                   </select>
                 </label>
-                <p className="zn-muted zn-small">
+                <p className="mt-2 text-xs text-[var(--cds-text-secondary)]">
                   {t('settings.language.systemDetected', {
                     languages: localeState.preferredSystemLanguages.join(', ') || localeState.resolvedLocale
                   })}
                 </p>
               </section>
+              ) : null}
 
+              {settingsSection === 'background' ? (
               <section className="zn-card" id="zn-settings-background">
-                <button type="button" onClick={() => void refreshResident()}>{t('settings.background.refresh')}</button>
-                {residentError ? <div className="zn-error-text">{residentError}</div> : null}
-                <details>
-                  <summary className="zn-muted zn-small">{t('settings.background.technical')}</summary>
-                  <pre className="zn-compact-pre">{residentSnapshot ? renderUnknown(residentSnapshot) : t('settings.background.waiting')}</pre>
-                </details>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatusDot kind={residentHealth === 'live' ? 'ready' : residentHealth === 'connecting' ? 'running' : 'error'} label={residentHealth === 'live' ? t('common.ready') : residentHealth === 'connecting' ? t('common.connecting') : t('common.offline')} />
+                  <CdsButton type="button" onClick={() => void refreshResident()}>{t('settings.background.refresh')}</CdsButton>
+                </div>
+                {residentError ? <div className="mt-2 text-sm text-[var(--cds-fill-danger)]">{residentError}</div> : null}
               </section>
+              ) : null}
 
+              {settingsSection === 'models' ? (
               <section className="zn-card" id="zn-settings-models">
                 {providerSettings && !providerSettings.editable ? (
                   <>
-                    <div className="zn-setting-state">
+                    <div className="text-sm text-[var(--cds-text-primary)]">
                       {t('settings.models.advancedActive', {
                         mode: providerSettings.mode,
                         routes: providerSettings.routeCount
@@ -1078,117 +1025,124 @@ export function ZnWorkbench() {
                           : ''
                       })}
                     </div>
-                    <p className="zn-muted zn-small">{t('settings.models.advancedWarning')}</p>
+                    <p className="mt-1 text-xs text-[var(--cds-text-secondary)]">{t('settings.models.advancedWarning')}</p>
                   </>
                 ) : (
                   <form onSubmit={saveProvider}>
-                    <div className={'zn-api-connection-state ' + (providerReadiness.ready ? 'ready' : 'needs-setup')} role="status" aria-live="polite">
-                      <span className="zn-api-status-dot" />
-                      <span>{t(providerReadiness.ready ? 'settings.models.connectionReady' : 'settings.models.connectionNeedsSetup')}</span>
-                      <span className="zn-api-status-detail">{localizedProviderReadinessDetail}</span>
+                    <div className="flex flex-wrap items-center gap-2" role="status" aria-live="polite">
+                      <StatusDot kind={providerReadiness.ready ? 'ready' : 'error'} label={t(providerReadiness.ready ? 'settings.models.connectionReady' : 'settings.models.connectionNeedsSetup')} />
+                      <span className="text-xs text-[var(--cds-text-secondary)]">{localizedProviderReadinessDetail}</span>
                     </div>
-                    <div className="zn-api-fields">
-                      <label className="zn-api-field">
-                        <span>{t('settings.models.provider')}</span>
-                        <input className="zn-search" aria-label={t('settings.models.providerAria')} value={providerName} disabled={providerBusy} onChange={event => setProviderName(event.target.value)} placeholder="openai, anthropic, gemini, ollama..." />
-                        <small>{t('settings.models.providerHelp')}</small>
+                    <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                      <label className="block text-sm">
+                        <span className="text-[var(--cds-text-primary)]">{t('settings.models.provider')}</span>
+                        <input className="mt-1 w-full rounded-lg bg-[var(--cds-surface-1)] px-2 py-2 text-sm text-[var(--cds-text-primary)]" aria-label={t('settings.models.providerAria')} value={providerName} disabled={providerBusy} onChange={event => setProviderName(event.target.value)} placeholder="openai, anthropic, gemini, ollama..." />
+                        <small className="text-xs text-[var(--cds-text-secondary)]">{t('settings.models.providerHelp')}</small>
                       </label>
-                      <label className="zn-api-field">
-                        <span>{t('settings.models.model')}</span>
-                        <input className="zn-search" aria-label={t('settings.models.modelAria')} value={providerModel} disabled={providerBusy} onChange={event => setProviderModel(event.target.value)} placeholder={t('settings.models.modelPlaceholder')} />
-                        <small>{t('settings.models.modelHelp')}</small>
+                      <label className="block text-sm">
+                        <span className="text-[var(--cds-text-primary)]">{t('settings.models.model')}</span>
+                        <input className="mt-1 w-full rounded-lg bg-[var(--cds-surface-1)] px-2 py-2 text-sm text-[var(--cds-text-primary)]" aria-label={t('settings.models.modelAria')} value={providerModel} disabled={providerBusy} onChange={event => setProviderModel(event.target.value)} placeholder={t('settings.models.modelPlaceholder')} />
+                        <small className="text-xs text-[var(--cds-text-secondary)]">{t('settings.models.modelHelp')}</small>
                       </label>
-                      <label className="zn-api-field zn-api-field-wide">
-                        <span>{t('settings.models.baseUrl')}</span>
-                        <input className="zn-search" aria-label={t('settings.models.baseUrlAria')} type="url" autoComplete="url" value={providerBaseUrl} disabled={providerBusy} onChange={event => setProviderBaseUrl(event.target.value)} placeholder={t('settings.models.baseUrlPlaceholder')} />
-                        <small>{t('settings.models.baseUrlHelp')}</small>
+                      <label className="block text-sm sm:col-span-2">
+                        <span className="text-[var(--cds-text-primary)]">{t('settings.models.baseUrl')}</span>
+                        <input className="mt-1 w-full rounded-lg bg-[var(--cds-surface-1)] px-2 py-2 text-sm text-[var(--cds-text-primary)]" aria-label={t('settings.models.baseUrlAria')} type="url" autoComplete="url" value={providerBaseUrl} disabled={providerBusy} onChange={event => setProviderBaseUrl(event.target.value)} placeholder={t('settings.models.baseUrlPlaceholder')} />
+                        <small className="text-xs text-[var(--cds-text-secondary)]">{t('settings.models.baseUrlHelp')}</small>
                       </label>
-                      <label className="zn-api-field zn-api-field-wide">
-                        <span>{t('settings.models.credential')}</span>
-                        <input className="zn-search" aria-label={t('settings.models.credentialAria')} type="password" autoComplete="new-password" value={providerApiKey} disabled={providerBusy} onChange={event => setProviderApiKey(event.target.value)} placeholder={providerSettings?.credential.configured ? t('settings.models.keepCredential') : t('settings.models.optionalCredential')} />
-                        <small>{t(providerSettings?.credential.configured ? 'settings.models.credentialSaved' : 'settings.models.credentialHelp')}</small>
+                      <label className="block text-sm sm:col-span-2">
+                        <span className="text-[var(--cds-text-primary)]">{t('settings.models.credential')}</span>
+                        <input className="mt-1 w-full rounded-lg bg-[var(--cds-surface-1)] px-2 py-2 text-sm text-[var(--cds-text-primary)]" aria-label={t('settings.models.credentialAria')} type="password" autoComplete="new-password" value={providerApiKey} disabled={providerBusy} onChange={event => setProviderApiKey(event.target.value)} placeholder={providerSettings?.credential.configured ? t('settings.models.keepCredential') : t('settings.models.optionalCredential')} />
+                        <small className="text-xs text-[var(--cds-text-secondary)]">{t(providerSettings?.credential.configured ? 'settings.models.credentialSaved' : 'settings.models.credentialHelp')}</small>
                       </label>
                     </div>
-                    <details className="zn-api-security-details">
-                      <summary>{t('settings.models.securityDetails')}</summary>
-                      <p>{credentialLabel(providerSettings, t)}</p>
-                      {providerSettings ? <p>{t('settings.models.secureStore', {
+                    <details className="mt-3 text-sm">
+                      <summary className="cursor-pointer text-[var(--cds-text-secondary)]">{t('settings.models.securityDetails')}</summary>
+                      <p className="mt-1 text-xs text-[var(--cds-text-secondary)]">{credentialLabel(providerSettings, t)}</p>
+                      {providerSettings ? <p className="text-xs text-[var(--cds-text-secondary)]">{t('settings.models.secureStore', {
                         status: providerSettings.credential.secureStore.available ? t('common.available') : t('common.unavailable'),
                         backend: providerSettings.credential.secureStore.backend
                       })}</p> : null}
                     </details>
-                    {providerSettings?.configurationError ? <div className="zn-error-text" role="alert">{providerSettings.configurationError}</div> : null}
-                    {providerNotice ? <div className="zn-setting-state" role="status" aria-live="polite">{providerNotice}</div> : null}
-                    <div className="zn-inline-actions zn-settings-actions">
-                      <button className="zn-primary" type="submit" disabled={providerBusy || !providerName.trim() || !providerModel.trim()}>{providerBusy ? t('common.applying') : t('settings.models.save')}</button>
-                      {showClearCredential ? <button type="button" disabled={providerBusy} onClick={() => void clearProviderCredential()}>{t('settings.models.clearCredential')}</button> : null}
-                      <button type="button" disabled={providerBusy} onClick={() => void refreshProviderSettings()}>{t('common.refresh')}</button>
+                    {providerSettings?.configurationError ? <div className="mt-2 text-sm text-[var(--cds-fill-danger)]" role="alert">{providerSettings.configurationError}</div> : null}
+                    {providerNotice ? <div className="mt-2 text-sm text-[var(--cds-text-primary)]" role="status" aria-live="polite">{providerNotice}</div> : null}
+                    <div className="mt-3 flex flex-wrap gap-2">
+                      <CdsButton variant="brand" type="submit" disabled={providerBusy || !providerName.trim() || !providerModel.trim()}>{providerBusy ? t('common.applying') : t('settings.models.save')}</CdsButton>
+                      {showClearCredential ? <CdsButton type="button" disabled={providerBusy} onClick={() => void clearProviderCredential()}>{t('settings.models.clearCredential')}</CdsButton> : null}
+                      <CdsButton type="button" disabled={providerBusy} onClick={() => void refreshProviderSettings()}>{t('common.refresh')}</CdsButton>
                     </div>
                   </form>
                 )}
               </section>
+              ) : null}
 
+              {settingsSection === 'updates' ? (
               <section className="zn-card" id="zn-settings-updates">
-                <div className="zn-inline-actions">
-                  <button type="button" disabled={updateBusy} onClick={() => void checkUpdates()}>{updateBusy ? t('common.checking') : t('settings.updates.check')}</button>
-                  {updateStatus?.updateAvailable ? <button className="zn-primary" type="button" disabled={updateBusy} onClick={() => void applyUpdate()}>{t('settings.updates.apply', { version: updateStatus.availableVersion || t('settings.updates.updateFallback') })}</button> : null}
+                <div className="flex flex-wrap gap-2">
+                  <CdsButton type="button" disabled={updateBusy} onClick={() => void checkUpdates()}>{updateBusy ? t('common.checking') : t('settings.updates.check')}</CdsButton>
+                  {updateStatus?.updateAvailable ? <CdsButton variant="brand" type="button" disabled={updateBusy} onClick={() => void applyUpdate()}>{t('settings.updates.apply', { version: updateStatus.availableVersion || t('settings.updates.updateFallback') })}</CdsButton> : null}
                 </div>
-                {updateStatus ? <pre className="zn-compact-pre">{renderUnknown(updateStatus)}</pre> : null}
+                {updateStatus ? (
+                  <div className="mt-2 text-sm text-[var(--cds-text-secondary)]">
+                    {updateStatus.updateAvailable
+                      ? t('settings.updates.apply', { version: updateStatus.availableVersion || t('settings.updates.updateFallback') })
+                      : updateStatus.message || t('common.ready')}
+                    {updateStatus.message ? <div className="text-xs">{updateStatus.message}</div> : null}
+                  </div>
+                ) : null}
               </section>
-            </div>
-            </div>
+              ) : null}
+              <div>
+                <CdsButton variant="ghost" type="button" onClick={() => setView('work')}>
+                  ← {t('workstation.returnToConversation')}
+                </CdsButton>
+              </div>
             </div>
           </main>
         ) : (
           <>
             <main className="zn-thread-surface">
               {residentHealth === 'offline' ? (
-                <div className="zn-connection-recovery" role="alert" aria-live="polite">
-                  <div className="zn-connection-recovery-copy">
-                    <strong>{t('error.residentUnavailableTitle')}</strong>
-                    <span>{t('error.residentUnavailableHint')}</span>
-                  </div>
-                  <button type="button" onClick={() => void refreshResident()}>{t('error.reconnect')}</button>
+                <div className="mx-auto mb-3 flex max-w-3xl flex-wrap items-center gap-2 rounded-xl border border-[var(--cds-border)] bg-[var(--cds-surface-2)] px-4 py-3" role="alert" aria-live="polite">
+                  <StatusDot kind="error" label={t('error.residentUnavailableTitle')} />
+                  <span className="flex-1 text-sm text-[var(--cds-text-secondary)]">{t('error.residentUnavailableHint')}</span>
+                  <CdsButton size="sm" type="button" onClick={() => void refreshResident()}>{t('error.reconnect')}</CdsButton>
                 </div>
               ) : null}
               {deepLinkNotice ? (
-                <div className="zn-notice">
-                  <strong>{t('deepLink.received')}</strong> {t('deepLink.safe')}
-                  <button type="button" onClick={() => setDeepLinkNotice(null)}>{t('deepLink.dismiss')}</button>
+                <div className="mx-auto mb-3 flex max-w-3xl flex-wrap items-center gap-2 rounded-xl border border-[var(--cds-border)] bg-[var(--cds-surface-2)] px-4 py-3">
+                  <strong className="text-sm text-[var(--cds-text-primary)]">{t('deepLink.received')}</strong>
+                  <span className="flex-1 text-sm text-[var(--cds-text-secondary)]">{t('deepLink.safe')}</span>
+                  <CdsButton size="sm" type="button" onClick={() => setDeepLinkNotice(null)}>{t('deepLink.dismiss')}</CdsButton>
                 </div>
               ) : null}
 
               {activeThread && activeThread.messages.length === 0 && !showActiveWork ? (
-                <section className="zn-home">
-                  <div className="zn-home-hero">
-                    <span className="zn-home-orbit"><Sparkle size={18} weight="fill" /></span>
-                    <span className="zn-eyebrow">{t('home.eyebrow')}</span>
-                    <h1>{t('home.title')}</h1>
-                    <p>{t('home.description')}</p>
+                <section className="mx-auto flex max-w-3xl flex-col gap-5 px-4">
+                  <div className="flex flex-col gap-2">
+                    <span className="text-xs font-medium uppercase tracking-wide text-[var(--cds-text-accent)]">{t('home.eyebrow')}</span>
+                    <h1 className="text-2xl font-semibold text-[var(--cds-text-primary)]">{t('home.title')}</h1>
+                    <p className="text-sm text-[var(--cds-text-secondary)]">{t('home.description')}</p>
                   </div>
 
-                  <div className="zn-home-quick-starts" aria-label={t('home.quickStartsAria')}>
-                    {ZN_HOME_QUICK_STARTS.map((action, index) => (
-                      <button key={action.labelKey} type="button" onClick={() => chooseHomePrompt(t(action.promptKey))}>
-                        {index === 0 ? <Desktop size={17} /> : index === 1 ? <FileText size={17} /> : <Brain size={17} />}
-                        <span>{t(action.labelKey)}</span>
-                      </button>
+                  <div className="flex flex-wrap gap-2" aria-label={t('home.quickStartsAria')}>
+                    {ZN_HOME_QUICK_STARTS.map(action => (
+                      <CdsButton key={action.labelKey} type="button" onClick={() => chooseHomePrompt(t(action.promptKey))}>
+                        {t(action.labelKey)}
+                      </CdsButton>
                     ))}
                     {activeWorkspace ? (
-                      <button type="button" onClick={() => chooseHomePrompt(t('home.prompt.reviewWorkspace'))}>
-                        <FolderSimple size={17} />
-                        <span>{t('home.reviewWorkspace')}</span>
-                      </button>
+                      <CdsButton type="button" onClick={() => chooseHomePrompt(t('home.prompt.reviewWorkspace'))}>
+                        {t('home.reviewWorkspace')}
+                      </CdsButton>
                     ) : (
-                      <button type="button" disabled={workspaceBusy || workActive || !activeThread} onClick={() => void attachWorkspace()}>
-                        <FolderSimple size={17} />
-                        <span>{workspaceBusy ? t('home.attaching') : t('sidebar.attachFolder')}</span>
-                      </button>
+                      <CdsButton type="button" disabled={workspaceBusy || workActive || !activeThread} onClick={() => void attachWorkspace()}>
+                        {workspaceBusy ? t('home.attaching') : t('sidebar.attachFolder')}
+                      </CdsButton>
                     )}
                   </div>
 
-                  <div className="zn-home-status" aria-label={t('home.readinessAria')}>
-                    <span><i className={'zn-health-dot ' + residentHealth} />{residentHealth === 'live' ? t('home.residentReady') : residentHealth === 'connecting' ? t('home.residentConnecting') : t('home.residentOffline')}</span>
+                  <div className="flex flex-wrap gap-4 text-xs text-[var(--cds-text-secondary)]" aria-label={t('home.readinessAria')}>
+                    <StatusDot kind={residentHealth === 'live' ? 'ready' : residentHealth === 'connecting' ? 'running' : 'error'} label={residentHealth === 'live' ? t('home.residentReady') : residentHealth === 'connecting' ? t('home.residentConnecting') : t('home.residentOffline')} />
                     <span>{activeWorkspace ? t('home.workspace', { name: activeWorkspace.name }) : t('topbar.thisComputer')}</span>
                     <span title={localizedProviderReadinessDetail}>{providerReadiness.ready ? t('home.cognitionAvailable') : t('home.cognitionSetupNeeded')}</span>
                   </div>
@@ -1196,52 +1150,79 @@ export function ZnWorkbench() {
               ) : null}
 
               {activeThread && activeThread.messages.length > 0 ? (
-                <div className="zn-messages">
+                <div className="mx-auto flex max-w-3xl flex-col gap-4 px-4">
                   {activeThread.messages.map(message => {
                     const executionEvidence = message.role === 'activity'
                       ? executionEvidenceFromDetail(message.detail)
                       : null
+                    if (message.role === 'user') {
+                      return (
+                        <UserMessageBubble
+                          key={message.id}
+                          text={message.text}
+                          time={timeLabel(message.at, localeState.resolvedLocale)}
+                          state={message.detail?.failed ? 'failed' : 'done'}
+                        />
+                      )
+                    }
+                    if (message.role === 'zn') {
+                      const firstArtifact = activeArtifacts[0]
+                      return (
+                        <ZnAssistantMessage
+                          key={message.id}
+                          text={message.text}
+                          time={timeLabel(message.at, localeState.resolvedLocale)}
+                          artifact={firstArtifact ? { title: firstArtifact.name, kind: firstArtifact.kind } : null}
+                          onOpenArtifact={() => {
+                            if (firstArtifact && (firstArtifact.kind === 'presentation' || firstArtifact.kind === 'document')) openArtifact(firstArtifact.id)
+                            else openDetails()
+                          }}
+                        />
+                      )
+                    }
                     return (
-                      <article className={'zn-message ' + message.role} key={message.id}>
-                        <div className="zn-message-label">{message.role === 'user' ? t('message.you') : message.role === 'zn' ? 'ZN' : t('message.activity')}</div>
-                        <div className="zn-message-body">{message.text}</div>
+                      <article className="rounded-xl border border-[var(--cds-border)] bg-[var(--cds-surface-2)] px-4 py-3" key={message.id}>
+                        <div className="text-xs font-medium text-[var(--cds-text-secondary)]">{t('message.activity')}</div>
+                        <div className="mt-1 whitespace-pre-wrap text-sm text-[var(--cds-text-primary)]">{message.text}</div>
                         {executionEvidence ? (
-                          <div className="zn-execution-evidence" aria-label={t('message.executionEvidence')}>
+                          <div className="mt-2 flex flex-wrap gap-3 text-xs text-[var(--cds-text-secondary)]" aria-label={t('message.executionEvidence')}>
                             <span>{executionPathLabel(executionEvidence.executionPath, t)}</span>
                             <span>{t('message.modelCalls', { count: executionEvidence.modelInvocations })}</span>
                           </div>
                         ) : null}
                         {message.detail && Object.keys(message.detail).length > 0 ? (
                           executionEvidence ? (
-                            <details className="zn-activity-technical">
-                              <summary>{t('message.technical')}</summary>
-                              <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
+                            <details className="mt-2">
+                              <summary className="cursor-pointer text-xs text-[var(--cds-text-secondary)]">{t('message.technical')}</summary>
+                              <pre className="mt-1 overflow-x-auto whitespace-pre-wrap text-xs text-[var(--cds-text-secondary)]">{renderUnknown(message.detail)}</pre>
                             </details>
-                          ) : <pre className="zn-activity-detail">{renderUnknown(message.detail)}</pre>
+                          ) : <pre className="mt-2 overflow-x-auto whitespace-pre-wrap text-xs text-[var(--cds-text-secondary)]">{renderUnknown(message.detail)}</pre>
                         ) : null}
                       </article>
                     )
                   })}
                   {showActiveWork && workProgress?.assistantResponse ? (
-                    <article className="zn-message zn zn-message-streaming" aria-live="polite">
-                      <div className="zn-message-label">ZN</div>
-                      <div className="zn-message-body">{workProgress.assistantResponse}<span className="zn-stream-caret" aria-hidden="true" /></div>
-                    </article>
+                    <div aria-live="polite">
+                      <ZnAssistantMessage
+                        text={workProgress.assistantResponse}
+                      />
+                      <div className="mt-1 pl-1"><QuietDotsWave /></div>
+                    </div>
                   ) : null}
                 </div>
               ) : null}
 
               {teamTimeline && teamTimeline.entries.length > 0 ? (
-                <section className="zn-team-timeline" aria-label={t('team.timelineAria')}>
-                  <div className="zn-team-timeline-head">
-                    <strong>{t('team.timelineTitle')}</strong>
-                    <span className="zn-muted zn-small">
+                <section className="mx-auto mt-4 flex max-w-3xl flex-col gap-3 px-4" aria-label={t('team.timelineAria')}>
+                  <div className="flex flex-wrap items-baseline gap-2">
+                    <strong className="text-sm text-[var(--cds-text-primary)]">{t('team.timelineTitle')}</strong>
+                    <span className="text-xs text-[var(--cds-text-secondary)]">
                       {t('team.timelineReadOnly')} · {t('team.timelineCount', { count: teamTimeline.entries.length })}
                     </span>
                   </div>
                   {teamTimeline.entries.map(entry => (
-                    <article className={'zn-team-entry ' + entry.kind} key={entry.id}>
-                      <div className="zn-message-label">
+                    <article className="rounded-xl border border-[var(--cds-border)] bg-[var(--cds-surface-2)] px-4 py-3" key={entry.id}>
+                      <div className="text-xs font-medium text-[var(--cds-text-secondary)]">
                         {entry.author === 'user'
                           ? t('message.you')
                           : entry.author === 'coordinator'
@@ -1249,37 +1230,38 @@ export function ZnWorkbench() {
                             : entry.author}
                       </div>
                       {entry.kind === 'handoff' ? (
-                        <div className="zn-team-handoff">
-                          <span>{entry.fromAuthor} → {entry.toAuthor}</span>
-                          {entry.itemTitle ? <strong>{entry.itemTitle}</strong> : null}
-                          {entry.objective ? <span className="zn-muted">{entry.objective}</span> : null}
+                        <div className="mt-1 flex flex-wrap items-baseline gap-2 text-sm">
+                          <span className="text-[var(--cds-text-primary)]">{entry.fromAuthor} → {entry.toAuthor}</span>
+                          {entry.itemTitle ? <strong className="text-[var(--cds-text-primary)]">{entry.itemTitle}</strong> : null}
+                          {entry.objective ? <span className="text-[var(--cds-text-secondary)]">{entry.objective}</span> : null}
                         </div>
                       ) : null}
                       {entry.kind === 'assignment' ? (
-                        <div className="zn-team-assignment">
-                          <span>{t('team.assignTo', { specialist: entry.toAuthor })}</span>
-                          {entry.instruction ? <span>{entry.instruction}</span> : null}
-                          {entry.itemTitle ? <span className="zn-muted">{t('team.nextItem', { item: entry.itemTitle })}</span> : null}
+                        <div className="mt-1 flex flex-col gap-1 text-sm">
+                          <span className="text-[var(--cds-text-primary)]">{t('team.assignTo', { specialist: entry.toAuthor })}</span>
+                          {entry.instruction ? <span className="text-[var(--cds-text-primary)]">{entry.instruction}</span> : null}
+                          {entry.itemTitle ? <span className="text-[var(--cds-text-secondary)]">{t('team.nextItem', { item: entry.itemTitle })}</span> : null}
                         </div>
                       ) : null}
-                      <div className="zn-message-body">{entry.text}</div>
+                      <div className="mt-1 whitespace-pre-wrap text-sm text-[var(--cds-text-primary)]">{entry.text}</div>
                       {entry.evidence.length > 0 ? (
-                        <div className="zn-team-evidence" aria-label={t('team.evidence')}>
+                        <div className="mt-2 flex flex-wrap gap-2" aria-label={t('team.evidence')}>
                           {entry.evidence.map((item, index) => item.artifactId ? (
-                            <button
+                            <CdsButton
                               key={entry.id + '-evidence-' + index}
+                              size="sm"
                               type="button"
                               onClick={() => openTeamEvidence(item.artifactId as string)}
                             >
                               {t('team.evidenceLink', { label: item.label })}
-                            </button>
+                            </CdsButton>
                           ) : (
-                            <span key={entry.id + '-evidence-' + index}>{item.label} · {item.ref}</span>
+                            <span key={entry.id + '-evidence-' + index} className="text-xs text-[var(--cds-text-secondary)]">{item.label} · {item.ref}</span>
                           ))}
                         </div>
                       ) : null}
                       {entry.at ? (
-                        <div className="zn-muted zn-small">{timeLabel(entry.at, localeState.resolvedLocale)}</div>
+                        <div className="mt-1 text-xs text-[var(--cds-text-muted)]">{timeLabel(entry.at, localeState.resolvedLocale)}</div>
                       ) : null}
                     </article>
                   ))}
@@ -1287,36 +1269,36 @@ export function ZnWorkbench() {
               ) : null}
 
               {showActiveWork && workProgress ? (
-                <section className="zn-current-work" aria-live="polite">
-                  <div className="zn-current-work-head">
-                    <span className="zn-current-work-icon"><Pulse size={19} weight="bold" /></span>
-                    <div className="zn-current-work-copy">
-                      <div className="zn-eyebrow">{t('work.residentProgress', { status: statusLabel(workProgress.status, t) })}</div>
-                      <h2>{activeThread ? threadDisplayTitle(activeThread.title, t) : t('work.workingOnIt')}</h2>
-                      <p>{stageLabel(workProgress.stage, t)} · {workProgress.nextAction || t('work.continuing')}</p>
+                <section className="mx-auto mt-4 flex max-w-3xl flex-col gap-3 rounded-2xl border border-[var(--cds-border)] bg-[var(--cds-surface-2)] px-4 py-3" aria-live="polite">
+                  <div className="flex flex-wrap items-start gap-3">
+                    <PulseRunningDot />
+                    <div className="min-w-0 flex-1">
+                      <div className="text-xs font-medium uppercase tracking-wide text-[var(--cds-text-accent)]">{t('work.residentProgress', { status: statusLabel(workProgress.status, t) })}</div>
+                      <h2 className="mt-0.5 truncate text-base font-semibold text-[var(--cds-text-primary)]">{activeThread ? threadDisplayTitle(activeThread.title, t) : t('work.workingOnIt')}</h2>
+                      <p className="mt-0.5 text-sm text-[var(--cds-text-secondary)]">{stageLabel(workProgress.stage, t)} · {workProgress.nextAction || t('work.continuing')}</p>
                     </div>
-                    <button
+                    <CdsButton
                       className="zn-stop-button"
+                      variant="danger"
                       type="button"
                       disabled={stoppingWork}
                       onClick={() => void cancelCurrentWork()}
                     >
-                      {stoppingWork ? <CircleNotch className="zn-spin" size={15} /> : <Stop size={15} weight="fill" />}
-                      <span>{stoppingWork ? t('work.stopping') : t('work.stop')}</span>
-                    </button>
+                      {stoppingWork ? t('work.stopping') : t('work.stop')}
+                    </CdsButton>
                   </div>
 
-                  <div className="zn-work-steps" aria-label={t('work.statusAria')}>
-                    <div className="done"><CheckCircle size={17} weight="fill" /><span>{t('work.accepted')}</span></div>
-                    <div className="active"><CircleNotch className="zn-spin" size={17} /><span>{stageLabel(workProgress.stage, t)}</span></div>
-                    <div><CheckCircle size={17} /><span>{t('work.verify')}</span></div>
+                  <div className="flex flex-wrap items-center gap-4 text-xs text-[var(--cds-text-secondary)]" aria-label={t('work.statusAria')}>
+                    <span>✓ {t('work.accepted')}</span>
+                    <span className="flex items-center gap-1"><QuietDotsWave />{stageLabel(workProgress.stage, t)}</span>
+                    <span>○ {t('work.verify')}</span>
                   </div>
 
                   {workProgress.delegation ? (
-                    <div className="zn-work-detail" aria-label={t('work.delegatedProgressAria')}>
-                      <div><strong>{t('work.delegated')}</strong> · {statusLabel(workProgress.delegation.status, t)}</div>
+                    <div className="flex flex-col gap-1 border-t border-[var(--cds-border)] pt-2" aria-label={t('work.delegatedProgressAria')}>
+                      <div className="text-sm text-[var(--cds-text-primary)]"><strong>{t('work.delegated')}</strong> · {statusLabel(workProgress.delegation.status, t)}</div>
                       {workProgress.delegation.phases.map((phase, index) => (
-                        <div key={phase.kind + '-' + phase.status + '-' + (phase.updatedAt || 0) + '-' + index}>
+                        <div key={phase.kind + '-' + phase.status + '-' + (phase.updatedAt || 0) + '-' + index} className="text-sm text-[var(--cds-text-secondary)]">
                           {delegatedStatusMarker(phase.status)} {delegatedKindLabel(phase.kind, t)} · {delegatedStageLabel(phase.stage, t)}
                         </div>
                       ))}
@@ -1324,31 +1306,33 @@ export function ZnWorkbench() {
                   ) : null}
 
                   {workProgress.recovery?.replayBlocked ? (
-                    <div className="zn-recovery-warning">
-                      <strong>{t('work.outsideUncertain')}</strong>
-                      <span>{t('work.noReplay')}</span>
-                      {workProgress.recovery.reason ? <span>{workProgress.recovery.reason}</span> : null}
+                    <div className="rounded-lg bg-[var(--cds-fill-brand-subtle)] px-3 py-2">
+                      <strong className="block text-sm text-[var(--cds-text-primary)]">{t('work.outsideUncertain')}</strong>
+                      <span className="block text-xs text-[var(--cds-text-secondary)]">{t('work.noReplay')}</span>
+                      {workProgress.recovery.reason ? <span className="block text-xs text-[var(--cds-text-secondary)]">{workProgress.recovery.reason}</span> : null}
                     </div>
                   ) : null}
 
-                  <details className="zn-progress-technical">
-                    <summary>{t('work.whatDoing')}</summary>
+                  <details className="border-t border-[var(--cds-border)] pt-2">
+                    <summary className="cursor-pointer text-sm text-[var(--cds-text-secondary)]">{t('work.whatDoing')}</summary>
                     {workProgress.thought ? (
-                      <div className="zn-muted zn-small">
-                        {workProgress.thought.action || workProgress.thought.focus}
-                        {workProgress.thought.reason ? ' — ' + workProgress.thought.reason : ''}
+                      <div className="mt-2">
+                        <ThinkingAccordion
+                          thoughtText={[workProgress.thought.action, workProgress.thought.focus, workProgress.thought.reason].filter(Boolean).join(' — ')}
+                          isThinkingLive={true}
+                        />
                       </div>
                     ) : null}
                     {workProgress.investigation ? (
-                      <div className="zn-muted zn-small">
+                      <div className="mt-2 text-xs text-[var(--cds-text-secondary)]">
                         {t('work.investigationRound', { round: workProgress.investigation.rounds, status: statusLabel(workProgress.investigation.status, t) })}
                         {workProgress.investigation.nextProbe ? t('work.next', { next: workProgress.investigation.nextProbe }) : ''}
                       </div>
                     ) : null}
                     {workProgress.bodyActions.length > 0 ? (
-                      <div className="zn-work-detail">
+                      <div className="mt-2 flex flex-col gap-1">
                         {workProgress.bodyActions.map((action, index) => (
-                          <div key={action.at + '-' + action.kind + '-' + index}>
+                          <div key={action.at + '-' + action.kind + '-' + index} className="text-xs text-[var(--cds-text-secondary)]">
                             {action.kind} · {action.success ? t('work.ok') : t('work.failed')}{action.summary ? ' · ' + action.summary : ''}
                           </div>
                         ))}
@@ -1356,35 +1340,35 @@ export function ZnWorkbench() {
                     ) : null}
                   </details>
 
-                  <div className="zn-current-work-actions">
-                    <button type="button" onClick={openDetails}>{t('work.viewDetails')}</button>
-                    <span>{t('work.updated', { time: timeLabel(workProgress.updatedAt, localeState.resolvedLocale) })}</span>
+                  <div className="flex flex-wrap items-center gap-3">
+                    <CdsButton size="sm" type="button" onClick={openDetails}>{t('work.viewDetails')}</CdsButton>
+                    <span className="text-xs text-[var(--cds-text-muted)]">{t('work.updated', { time: timeLabel(workProgress.updatedAt, localeState.resolvedLocale) })}</span>
                   </div>
                 </section>
               ) : null}
 
               {!showActiveWork && firstResult ? (
-                <section className="zn-result-summary">
-                  <span className="zn-result-icon"><CheckCircle size={22} weight="fill" /></span>
-                  <div className="zn-result-copy">
-                    <span className="zn-eyebrow">{t('result.title')}</span>
-                    <strong>{firstResult.name}</strong>
-                    <span>{t('result.ready', { count: activeArtifacts.length })}</span>
+                <section className="mx-auto mt-4 flex max-w-3xl flex-wrap items-center gap-3 rounded-2xl border border-[var(--cds-border)] bg-[var(--cds-surface-2)] px-4 py-3">
+                  <StatusDot kind="ready" />
+                  <div className="min-w-0 flex-1">
+                    <span className="block text-xs font-medium uppercase tracking-wide text-[var(--cds-text-accent)]">{t('result.title')}</span>
+                    <strong className="block truncate text-sm text-[var(--cds-text-primary)]">{firstResult.name}</strong>
+                    <span className="block text-xs text-[var(--cds-text-secondary)]">{t('result.ready', { count: activeArtifacts.length })}</span>
                   </div>
-                  <button type="button" onClick={() => activeWorkstationArtifact ? openArtifact(activeWorkstationArtifact.id) : openDetails()}>{t('result.view')}</button>
+                  <CdsButton type="button" onClick={() => activeWorkstationArtifact ? openArtifact(activeWorkstationArtifact.id) : openDetails()}>{t('result.view')}</CdsButton>
                 </section>
               ) : null}
             </main>
 
             {teamNotice ? (
-              <div className="zn-team-notice" role="status" aria-live="polite">
-                <span>{teamNotice}</span>
-                <button type="button" aria-label={t('deepLink.dismiss')} onClick={() => setTeamNotice(null)}>×</button>
+              <div className="mx-auto flex w-full max-w-3xl items-center gap-2 px-4 pb-2" role="status" aria-live="polite">
+                <span className="flex-1 text-sm text-[var(--cds-text-secondary)]">{teamNotice}</span>
+                <CdsButton size="sm" type="button" aria-label={t('deepLink.dismiss')} onClick={() => setTeamNotice(null)}>×</CdsButton>
               </div>
             ) : null}
 
-            <form className="zn-composer-wrap" onSubmit={submit}>
-              <div className="zn-composer">
+            <form className="zn-composer-wrap px-4 pb-3 pt-1" onSubmit={submit}>
+              <div className="zn-composer mx-auto max-w-3xl px-3 pb-2 pt-3">
                 <textarea
                   aria-label={t('composer.messageAria')}
                   placeholder={t('composer.placeholder')}
@@ -1398,41 +1382,39 @@ export function ZnWorkbench() {
                     }
                   }}
                 />
-                <div className="zn-composer-toolbar">
-                  <div className="zn-composer-tools">
-                    <button
-                      className="zn-composer-tool"
+                <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <CdsButton
+                      size="icon"
                       type="button"
                       aria-label={activeWorkspace ? t('composer.changeAttachedFolder') : t('composer.attachFolder')}
                       title={activeWorkspace ? t('composer.changeFolder') : t('composer.attachFolder')}
                       disabled={workspaceBusy || workActive || !activeThread}
                       onClick={() => void attachWorkspace()}
                     >
-                      <Plus size={18} />
-                    </button>
-                    <span className="zn-context-chip" title={activeWorkspace?.path}>
-                      <FolderSimple size={14} />
-                      {activeWorkspace?.name || t('topbar.thisComputer')}
+                      +
+                    </CdsButton>
+                    <span className="flex items-center gap-1 text-xs text-[var(--cds-text-secondary)]" title={activeWorkspace?.path}>
+                      📁 {activeWorkspace?.name || t('topbar.thisComputer')}
                     </span>
                   </div>
-                  <div className="zn-composer-tools">
-                    <span className="zn-model-chip" title={localizedProviderReadinessDetail}>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="rounded-full bg-[var(--cds-surface-1)] px-2 py-1 text-xs text-[var(--cds-text-secondary)]" title={localizedProviderReadinessDetail}>
                       {providerSettings?.model || 'ZN'}
                     </span>
-                    <button
+                    <CdsButton
                       className="zn-send"
+                      variant="brand"
                       type="submit"
                       aria-label={t('composer.sendAria')}
                       disabled={submissionBusy || stoppingWork || !draft.trim()}
                     >
-                      {submissionBusy
-                        ? <CircleNotch className="zn-spin" size={17} />
-                        : <ArrowUp size={18} weight="bold" />}
-                    </button>
+                      {submissionBusy ? '…' : '↑'}
+                    </CdsButton>
                   </div>
                 </div>
               </div>
-              <div className="zn-composer-caption">
+              <div className="mx-auto mt-1 max-w-3xl text-center text-xs text-[var(--cds-text-muted)]">
                 {teamTimeline && teamTimeline.members.length > 0 ? t('team.assignHint') : ''}
                 {workActive ? t('composer.background') : ''}{t('composer.shortcut')}
               </div>
@@ -1443,16 +1425,16 @@ export function ZnWorkbench() {
 
       {artifactOpen && selectedWorkstationArtifact && view === 'work' ? (
         <aside className="zn-artifact-pane" aria-label={t('artifact.preview')}>
-          <div className="zn-artifact-pane-header">
-            <div>
-              <span>{artifactKindLabel(selectedWorkstationArtifact.kind, t)}</span>
-              <strong>{selectedWorkstationArtifact.name}</strong>
+          <div className="flex items-start justify-between gap-2 border-b border-[var(--cds-border)] px-4 py-3">
+            <div className="min-w-0">
+              <span className="block text-xs text-[var(--cds-text-secondary)]">{artifactKindLabel(selectedWorkstationArtifact.kind, t)}</span>
+              <strong className="block truncate text-sm text-[var(--cds-text-primary)]">{selectedWorkstationArtifact.name}</strong>
             </div>
-            <button type="button" aria-label={t('artifact.closePreview')} onClick={() => setArtifactOpen(false)}>
-              <X size={18} />
-            </button>
+            <CdsButton size="icon" type="button" aria-label={t('artifact.closePreview')} onClick={() => setArtifactOpen(false)}>
+              ×
+            </CdsButton>
           </div>
-          <div className="zn-artifact-pane-body">
+          <div className="p-3">
             {selectedWorkstationArtifact.kind === 'document' ? (
               <ZnDocumentWorkstation artifact={selectedWorkstationArtifact} />
             ) : (
@@ -1462,48 +1444,48 @@ export function ZnWorkbench() {
         </aside>
       ) : null}
 
-      {contextOpen ? <button className="zn-details-backdrop" type="button" aria-label={t('details.closeWorkAria')} onClick={() => setContextOpen(false)} /> : null}
+      {contextOpen ? <button className="fixed inset-0 bg-black/30" type="button" aria-label={t('details.closeWorkAria')} onClick={() => setContextOpen(false)} /> : null}
 
       {contextOpen ? (
         <aside className="zn-context-panel" aria-label={t('details.panelAria')}>
-          <div className="zn-context-header">
-            <div>
-              <div className="zn-section-label">{t('details.title')}</div>
-              <strong>{selectedArtifact ? artifactKindLabel(selectedArtifact.kind, t) : t('details.currentWork')}</strong>
+          <div className="flex items-start justify-between gap-2 border-b border-[var(--cds-border)] px-4 py-3">
+            <div className="min-w-0">
+              <div className="text-xs text-[var(--cds-text-secondary)]">{t('details.title')}</div>
+              <strong className="block truncate text-sm text-[var(--cds-text-primary)]">{selectedArtifact ? artifactKindLabel(selectedArtifact.kind, t) : t('details.currentWork')}</strong>
             </div>
-            <button type="button" aria-label={t('details.closePanelAria')} onClick={() => setContextOpen(false)}>
-              <X size={18} />
-            </button>
+            <CdsButton size="icon" type="button" aria-label={t('details.closePanelAria')} onClick={() => setContextOpen(false)}>
+              ×
+            </CdsButton>
           </div>
 
-          <section className="zn-context-section">
-            <div className="zn-context-title">{t('details.workspace')}</div>
+          <section className="border-b border-[var(--cds-border)] px-4 py-3">
+            <div className="text-xs font-medium text-[var(--cds-text-secondary)]">{t('details.workspace')}</div>
             {activeWorkspace ? (
               <>
-                <div className="zn-context-value"><FolderSimple size={16} />{activeWorkspace.name}</div>
-                <div className="zn-context-path" title={activeWorkspace.path}>{activeWorkspace.path}</div>
-                <div className="zn-inline-actions zn-context-actions">
-                  <button type="button" disabled={workspaceBusy || workActive} onClick={() => void attachWorkspace()}>{t('details.change')}</button>
-                  <button type="button" disabled={workspaceBusy || workActive} onClick={() => void detachWorkspace()}>{t('details.detach')}</button>
+                <div className="mt-1 flex items-center gap-1 text-sm text-[var(--cds-text-primary)]">📁 {activeWorkspace.name}</div>
+                <div className="mt-0.5 break-all text-xs text-[var(--cds-text-muted)]" title={activeWorkspace.path}>{activeWorkspace.path}</div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <CdsButton size="sm" type="button" disabled={workspaceBusy || workActive} onClick={() => void attachWorkspace()}>{t('details.change')}</CdsButton>
+                  <CdsButton size="sm" type="button" disabled={workspaceBusy || workActive} onClick={() => void detachWorkspace()}>{t('details.detach')}</CdsButton>
                 </div>
               </>
             ) : (
               <>
-                <p className="zn-muted zn-small">{t('details.noFolder')}</p>
-                <div className="zn-context-actions">
-                  <button type="button" disabled={workspaceBusy || workActive || !activeThread} onClick={() => void attachWorkspace()}>{t('details.attachFolder')}</button>
+                <p className="mt-1 text-xs text-[var(--cds-text-secondary)]">{t('details.noFolder')}</p>
+                <div className="mt-2">
+                  <CdsButton size="sm" type="button" disabled={workspaceBusy || workActive || !activeThread} onClick={() => void attachWorkspace()}>{t('details.attachFolder')}</CdsButton>
                 </div>
               </>
             )}
           </section>
 
           {activeArtifacts.length > 0 ? (
-            <section className="zn-context-section zn-context-grow zn-artifact-section">
-              <div className="zn-context-title">{t('details.results')}</div>
-              <div className="zn-artifact-list" aria-label={t('details.artifactsAria')}>
+            <section className="border-b border-[var(--cds-border)] px-4 py-3">
+              <div className="text-xs font-medium text-[var(--cds-text-secondary)]">{t('details.results')}</div>
+              <div className="mt-2 flex flex-col gap-1" aria-label={t('details.artifactsAria')}>
                 {activeArtifacts.map(artifact => (
                   <button
-                    className={'zn-artifact-link' + (artifact.id === selectedArtifact?.id ? ' active' : '')}
+                    className={'flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm ' + (artifact.id === selectedArtifact?.id ? 'bg-[var(--cds-fill-ghost-selected)] text-[var(--cds-text-primary)]' : 'text-[var(--cds-text-secondary)] hover:bg-[var(--cds-fill-ghost-hover)]')}
                     key={artifact.id}
                     type="button"
                     onClick={() => {
@@ -1511,68 +1493,69 @@ export function ZnWorkbench() {
                       if (artifact.kind === 'presentation' || artifact.kind === 'document') openArtifact(artifact.id)
                     }}
                   >
-                    <span className="zn-artifact-icon"><FileText size={15} /></span>
-                    <span className="zn-artifact-copy">
-                      <span className="zn-artifact-kind">{artifactKindLabel(artifact.kind, t)}</span>
-                      <span className="zn-artifact-name">{artifact.name}</span>
+                    <span aria-hidden="true" className="text-xs">📄</span>
+                    <span className="min-w-0">
+                      <span className="block text-xs text-[var(--cds-text-muted)]">{artifactKindLabel(artifact.kind, t)}</span>
+                      <span className="block truncate">{artifact.name}</span>
                     </span>
                   </button>
                 ))}
               </div>
               {selectedArtifact ? (
-                <div className="zn-artifact-preview">
-                  <div className="zn-artifact-preview-head">
-                    <strong>{selectedArtifact.name}</strong>
-                    {selectedArtifact.path ? <span title={selectedArtifact.path}>{selectedArtifact.path}</span> : null}
+                <div className="zn-artifact-preview mt-3">
+                  <div className="flex flex-col gap-0.5">
+                    <strong className="truncate text-sm text-[var(--cds-text-primary)]">{selectedArtifact.name}</strong>
+                    {selectedArtifact.path ? <span className="truncate text-xs text-[var(--cds-text-muted)]" title={selectedArtifact.path}>{selectedArtifact.path}</span> : null}
                   </div>
                   {selectedArtifact.kind === 'presentation' ? (
-                    <div className="zn-artifact-note">{selectedArtifact.name}</div>
+                    <div className="mt-2 text-sm text-[var(--cds-text-secondary)]">{selectedArtifact.name}</div>
                   ) : (
-                    <pre>{selectedArtifact.content || t('details.noPreview')}</pre>
+                    <div className="mt-2">
+                      <CodeBlock code={selectedArtifact.content || t('details.noPreview')} language={selectedArtifact.kind} filename={selectedArtifact.name} />
+                    </div>
                   )}
-                  {selectedArtifact.metadata?.truncated ? <div className="zn-artifact-note">{t('details.previewTruncated')}</div> : null}
+                  {selectedArtifact.metadata?.truncated ? <div className="mt-1 text-xs text-[var(--cds-text-secondary)]">{t('details.previewTruncated')}</div> : null}
                 </div>
               ) : null}
             </section>
           ) : (
-            <section className="zn-context-section">
-              <div className="zn-context-title">{t('details.results')}</div>
-              <p className="zn-muted zn-small">{t('details.noResults')}</p>
+            <section className="border-b border-[var(--cds-border)] px-4 py-3">
+              <div className="text-xs font-medium text-[var(--cds-text-secondary)]">{t('details.results')}</div>
+              <p className="mt-1 text-xs text-[var(--cds-text-secondary)]">{t('details.noResults')}</p>
             </section>
           )}
 
-          <section className="zn-context-section">
-            <div className="zn-context-title">{t('details.residentStatus')}</div>
-            <div className="zn-context-value">
-              <span className={'zn-health-dot ' + residentHealth} />
-              {residentHealth === 'live' ? t('common.ready') : residentHealth === 'connecting' ? t('common.connecting') : t('common.offline')}
+          <section className="border-b border-[var(--cds-border)] px-4 py-3">
+            <div className="text-xs font-medium text-[var(--cds-text-secondary)]">{t('details.residentStatus')}</div>
+            <div className="mt-1">
+              <StatusDot kind={residentHealth === 'live' ? 'ready' : residentHealth === 'connecting' ? 'running' : 'error'} label={residentHealth === 'live' ? t('common.ready') : residentHealth === 'connecting' ? t('common.connecting') : t('common.offline')} />
             </div>
-            {residentError ? <div className="zn-error-text">{residentError}</div> : null}
+            {residentError ? <div className="mt-1 text-sm text-[var(--cds-fill-danger)]">{residentError}</div> : null}
           </section>
 
-          <section className="zn-context-section">
-            <div className="zn-context-section-head">
-              <div className="zn-context-title">{t('details.restorePoints')}</div>
-              <button type="button" disabled={restoreBusy || !activeThread} onClick={() => activeThread && void refreshRestorePoints(activeThread.id)}>
+          <section className="px-4 py-3">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-xs font-medium text-[var(--cds-text-secondary)]">{t('details.restorePoints')}</div>
+              <CdsButton size="sm" type="button" disabled={restoreBusy || !activeThread} onClick={() => activeThread && void refreshRestorePoints(activeThread.id)}>
                 {restoreBusy ? t('common.checking') : t('common.refresh')}
-              </button>
+              </CdsButton>
             </div>
             {activeRestorePoints === undefined ? (
-              <p className="zn-muted zn-small">{t('details.restorePrompt')}</p>
+              <p className="mt-1 text-xs text-[var(--cds-text-secondary)]">{t('details.restorePrompt')}</p>
             ) : activeRestorePoints.length === 0 ? (
-              <p className="zn-muted zn-small">{t('details.noRestorePoints')}</p>
+              <p className="mt-1 text-xs text-[var(--cds-text-secondary)]">{t('details.noRestorePoints')}</p>
             ) : (
-              <div className="zn-restore-list" aria-label={t('details.restoreListAria')}>
+              <div className="mt-2 flex flex-col gap-2" aria-label={t('details.restoreListAria')}>
                 {activeRestorePoints.map(point => (
-                  <div className="zn-restore-row" key={point.id}>
-                    <div className="zn-restore-row-head">
+                  <div className="rounded-xl border border-[var(--cds-border)] bg-[var(--cds-surface-2)] px-3 py-2" key={point.id}>
+                    <div className="flex flex-wrap justify-between gap-2 text-xs text-[var(--cds-text-secondary)]">
                       <span>{restorePointStatusLabel(point.currentStatus, t)}</span>
                       <span>{timeLabel(point.currentObservedAt, localeState.resolvedLocale)}</span>
                     </div>
-                    <strong title={point.targetPath}>{point.targetPath}</strong>
-                    <span className="zn-muted zn-small">{t('details.retainedBytes', { count: point.sizeBytes })}</span>
+                    <strong className="mt-1 block break-all text-sm text-[var(--cds-text-primary)]" title={point.targetPath}>{point.targetPath}</strong>
+                    <span className="block text-xs text-[var(--cds-text-secondary)]">{t('details.retainedBytes', { count: point.sizeBytes })}</span>
                     {point.proposal ? (
-                      <span className="zn-muted zn-small">{t('details.restoreApproval', { proposal: restoreProposalStatusLabel(point.proposal.status, t) })}</span>
+                      <span className="block text-xs text-[var(--cds-text-secondary)]">{t('details.restoreApproval', { proposal: restoreProposalStatusLabel(point.proposal.status, t) })}</span>
                     ) : null}
                     {activeThread ? (
                       <ZnMissingRestoreControls
@@ -1586,7 +1569,7 @@ export function ZnWorkbench() {
                 ))}
               </div>
             )}
-            <p className="zn-muted zn-small">{t('details.restoreSafety')}</p>
+            <p className="mt-2 text-xs text-[var(--cds-text-secondary)]">{t('details.restoreSafety')}</p>
           </section>
         </aside>
       ) : null}

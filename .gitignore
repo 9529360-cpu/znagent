@@ -17,3 +17,6 @@ coverage/
 .zn-update-signing/
 *.egg-info/
 .venv_check/
+# Generated Tailwind utilities for the vendored open-claude-ui components.
+# Produced by apps/desktop/scripts/bundle-electron-main.mjs on every bundle.
+apps/desktop/src/zn/cds-tailwind.generated.css

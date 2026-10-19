@@ -226,12 +226,15 @@ export function createZnDesktopWindow(): BrowserWindow {
     minWidth: 420,
     minHeight: 480,
     show: false,
-    backgroundColor: '#0a0e18',
+    // CDS dark --cds-surface-0 (#0b0b0b): window canvas behind first paint.
+    backgroundColor: '#0b0b0b',
     backgroundMaterial: 'mica',
     titleBarStyle: 'hidden',
     titleBarOverlay: {
-      color: '#0a0e18',
-      symbolColor: '#8994aa',
+      // CDS dark --cds-surface-1 (#151515) header surface /
+      // --cds-text-secondary (#a3a3a3) overlay symbols.
+      color: '#151515',
+      symbolColor: '#a3a3a3',
       height: 62
     },
     roundedCorners: true,

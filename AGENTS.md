@@ -214,6 +214,8 @@ ZN 有具体需求
 
 不要为了通过测试恢复历史产品路径、兼容层或旧控制面。
 
+例外（用户 2026-10-19 亲指）：桌面表现层采用 `vendor/open-claude-ui/` 快照（MIT，见 `docs/ZN-SOURCE-EXTRACTION.md` §3a 豁免条款）。豁免仅限表现层组件/令牌；Electron main/preload/IPC、Resident、接线与状态仍是 ZN 所有，vendored 文件不得手改。
+
 ## 发布能力属于仓库，不属于某个模型
 
 GPT、Claude、Gemini、Codex、人类开发者等都只是可替换维护者。

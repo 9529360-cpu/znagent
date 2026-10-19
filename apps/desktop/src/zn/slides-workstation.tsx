@@ -154,7 +154,7 @@ function ArchitectureDiagram({ slide, label }: { slide: ZnPresentationSlide; lab
   const edges = slide.diagram?.edges || []
   const points = useMemo(() => diagramPoints(nodes), [nodes])
   return (
-    <div className="zn-slide-diagram" aria-label={label}>
+    <div className="relative h-64 w-full overflow-hidden rounded-xl border border-[var(--cds-border)] bg-[var(--cds-surface-1)]" aria-label={label}>
       <svg aria-hidden="true" viewBox="0 0 100 100" preserveAspectRatio="none">
         {edges.map((edge, index) => {
           const from = points.get(edge.from)
@@ -162,6 +162,8 @@ function ArchitectureDiagram({ slide, label }: { slide: ZnPresentationSlide; lab
           if (!from || !to) return null
           return (
             <line
+              stroke="var(--cds-clay)"
+              strokeWidth={1}
               key={`${edge.from}-${edge.to}-${index}`}
               x1={from.x}
               y1={from.y}
@@ -176,7 +178,7 @@ function ArchitectureDiagram({ slide, label }: { slide: ZnPresentationSlide; lab
         if (!point) return null
         return (
           <div
-            className="zn-slide-diagram-node"
+            className="absolute -translate-x-1/2 -translate-y-1/2 rounded-lg border border-[var(--cds-border)] bg-[var(--cds-surface-2)] px-2 py-1 text-xs text-[var(--cds-text-primary)]"
             key={node.id}
             style={{ left: `${point.x}%`, top: `${point.y}%` }}
           >
@@ -190,8 +192,8 @@ function ArchitectureDiagram({ slide, label }: { slide: ZnPresentationSlide; lab
 
 function SlideCopy({ slide }: { slide: ZnPresentationSlide }) {
   return (
-    <div className="zn-slide-copy">
-      {slide.body ? <p>{slide.body}</p> : null}
+    <div className="flex flex-col gap-2">
+      {slide.body ? <p className="text-sm opacity-80">{slide.body}</p> : null}
       {slide.bullets.length > 0 ? (
         <ul>
           {slide.bullets.map((bullet, index) => <li key={`${bullet}-${index}`}>{bullet}</li>)}
@@ -226,25 +228,25 @@ function SlidePage({
 }) {
   const imageSrc = referencedImage(imageArtifact)
   return (
-    <div className={`zn-slide-page theme-${theme}${thumbnail ? ' thumbnail' : ''}`} data-slide-id={slide.id}>
+    <div className={`flex min-h-[220px] flex-col gap-3 rounded-xl border border-[var(--cds-border)] px-5 py-4 ${theme === 'dark-tech' ? 'bg-[#151515] text-[#f5f5f5]' : 'bg-white text-neutral-900'} ${thumbnail ? 'scale-[0.92] opacity-90' : ''}`} data-slide-id={slide.id}>
       {slide.layout === 'title' ? (
-        <div className="zn-slide-title-cover">
-          <h1>{slide.title}</h1>
-          {slide.body ? <p>{slide.body}</p> : null}
-          <span className="zn-slide-accent" />
+        <div className="flex min-h-[220px] flex-col justify-center gap-2">
+          <h1 className="text-2xl font-semibold">{slide.title}</h1>
+          {slide.body ? <p className="text-sm opacity-80">{slide.body}</p> : null}
+          <span className="mt-1 block h-1 w-16 rounded-full bg-[var(--cds-clay)]" />
         </div>
       ) : (
         <>
           <header>
-            <h2>{slide.title}</h2>
-            <span />
+            <h2 className="text-lg font-semibold">{slide.title}</h2>
+            <span className="block h-px flex-1 bg-[var(--cds-border)]" />
           </header>
           {slide.layout === 'architecture' ? (
             <ArchitectureDiagram slide={slide} label={architectureLabel} />
           ) : slide.layout === 'image-right' ? (
-            <div className="zn-slide-split">
+            <div className="grid grid-cols-2 gap-4">
               <SlideCopy slide={slide} />
-              <div className="zn-slide-image-slot">
+              <div className="flex flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-[var(--cds-border)] px-3 py-4 text-center">
                 {imageSrc ? (
                   <img src={imageSrc} alt="" />
                 ) : (
@@ -298,8 +300,8 @@ export function ZnSlidesWorkstation({
 
   if (!spec || !selectedSlide) {
     return (
-      <main className="zn-slides-workstation">
-        <div className="zn-slides-invalid">
+      <main className="flex gap-3">
+        <div className="flex flex-col gap-1 p-4">
           <strong>{t('workstation.slidesUnavailable')}</strong>
           <span>{t('workstation.slidesInvalid')}</span>
         </div>
@@ -308,22 +310,22 @@ export function ZnSlidesWorkstation({
   }
 
   return (
-    <main className="zn-slides-workstation" aria-label={t('workstation.slidesWorkspace')}>
-      <aside className="zn-slides-rail" aria-label={t('workstation.slides')}>
-        <div className="zn-slides-rail-title">
+    <main className="flex gap-3" aria-label={t('workstation.slidesWorkspace')}>
+      <aside className="flex w-44 shrink-0 flex-col gap-2" aria-label={t('workstation.slides')}>
+        <div className="flex items-baseline justify-between border-b border-[var(--cds-border)] pb-2">
             <strong>{t('workstation.slides')}</strong>
           <span>{spec.slides.length}</span>
         </div>
-        <div className="zn-slides-thumbnails">
+        <div className="flex max-h-[60vh] flex-col gap-2 overflow-y-auto pr-1">
           {spec.slides.map((slide, index) => (
             <button
               type="button"
-              className={`zn-slide-thumbnail${slide.id === selectedSlide.id ? ' active' : ''}`}
+              className={`rounded-xl border p-1 text-left ${slide.id === selectedSlide.id ? 'border-[var(--cds-clay)]' : 'border-[var(--cds-border)]'}`}
               key={slide.id}
               onClick={() => setSelectedSlideId(slide.id)}
               aria-label={t('workstation.slideLabel', { index: index + 1, title: slide.title })}
             >
-              <span className="zn-slide-number">{index + 1}</span>
+              <span className="mb-1 block text-xs text-[var(--cds-text-muted)]">{index + 1}</span>
               <SlidePage
                 slide={slide}
                 theme={spec.theme}
@@ -338,15 +340,15 @@ export function ZnSlidesWorkstation({
         </div>
       </aside>
 
-      <section className="zn-slides-stage">
-        <div className="zn-slides-stage-head">
+      <section className="min-w-0 flex-1">
+        <div className="mb-2 flex items-baseline justify-between gap-2">
           <div>
             <span>{spec.theme}</span>
             <strong>{selectedSlide.title}</strong>
           </div>
           <span>{selectedSlide.id.replace('slide-', '')} / {spec.slides.length}</span>
         </div>
-        <div className="zn-slides-canvas-wrap">
+        <div className="max-h-[60vh] overflow-y-auto pr-1">
           <SlidePage
             slide={selectedSlide}
             theme={spec.theme}

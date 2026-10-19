@@ -66,6 +66,38 @@ Copying mature implementation is allowed. Cosmetic originality is not a goal. Ow
 
 Desktop/product UX has an additional boundary: external products may be studied for failure modes, interaction lessons, installer edge cases, or protocol behavior, but ZN does not adopt their desktop layout, navigation hierarchy, component tree, theme, renderer state model, or visual identity. Active desktop composition and styling remain ZN-owned under `apps/desktop/`; external desktop source is reference material only.
 
+### 3a. User-directed exemption: open-claude-ui desktop presentation (2026-10-19)
+
+The desktop boundary above is expressly exempted for one snapshot, by direct
+user instruction ("按 open-claude-ui 原样复原用作 ZN 桌面"):
+
+- **Snapshot:** `vendor/open-claude-ui/`, upstream
+  https://github.com/Caho1/open-claude-ui.git @ `4045ce76`, MIT license,
+  provenance recorded in `vendor/open-claude-ui/VENDOR.json`. All files
+  under `vendor/open-claude-ui/src/`, `code-examples/`, `docs/` and
+  `scripts/` are byte-identical to that commit; the only renames are the
+  three `UPSTREAM-*` prose files, contents untouched.
+- **Scope of the exemption:** desktop *presentation* only — the CDS design
+  tokens (`cds-theme.css`), the Tailwind theme in the vendored
+  `tailwind.config.js`, and the React presentation components composed by
+  `apps/desktop/src/zn/` wrappers. The exemption covers no other product,
+  no other directory, and no other layer.
+- **What stays ZN-owned (never exempted):** Electron main/preload/IPC,
+  Resident connection, workspace/update/protocol/tray/window-mode logic,
+  renderer wiring and state, identity/memory/lifecycle, and every data
+  call (`resident-client.ts`). Vendored components receive only real ZN
+  data through their props; components whose props cannot carry ZN data
+  (hardcoded demo sessions, Claude model menus, fake file mentions,
+  simulated tool execution) are *not* rendered — see `apps/desktop/src/zn/cds.ts`.
+- **No hand edits:** a vendored file is never edited to change its look.
+  When ZN needs different behaviour, the wrapper lives in
+  `apps/desktop/src/zn/`, not in `vendor/`. To update: re-copy from a
+  pinned upstream commit, update `VENDOR.json`, re-run the byte-diff
+  against upstream plus the TypeScript verification.
+- **Precedence:** the user instruction outranks this document. If this
+  exemption and any other clause of this file disagree, the exemption
+  wins for the snapshot above only, and the rest of the file still applies.
+
 ## 4. Forbidden regressions
 
 Do not reintroduce another product or agent framework as:
@@ -75,7 +107,10 @@ Do not reintroduce another product or agent framework as:
 - CLI or gateway brain;
 - provider/plugin control plane;
 - desktop main/preload/renderer shell;
-- desktop layout/navigation/component/theme owner;
+- desktop layout/navigation/component/theme owner — except the
+  open-claude-ui presentation snapshot expressly exempted in §3a, which
+  owns desktop presentation components/tokens only and never the shell,
+  wiring, state, or data layer;
 - Python distribution;
 - build/package/release dependency;
 - required checkout, submodule or source path.
@@ -95,6 +130,12 @@ external/upstream repository
 ```
 
 Any dedicated reference branch is quarry material for maintainers only. It must not be merged back wholesale, added as a submodule, included in packaging, or treated as a build/runtime dependency.
+
+The one exception is the open-claude-ui snapshot exempted in §3a: it lives
+in-tree at `vendor/open-claude-ui/` by explicit user direction, pinned to
+one upstream commit, byte-identical, MIT-licensed, and bundled only as
+desktop presentation. It is not a submodule, not a Resident dependency,
+and not a control plane.
 
 If a future investigation studies a mature mechanism, record only the durable result that matters to ZN: the need, chosen design, provenance/license obligation if applicable, tests and active caller. Do not recreate a permanent source quarry inside the active tree.
 
@@ -118,6 +159,10 @@ Steady-state CI and ownership tests must continue to prove:
 - root Node workspace is ZN-owned;
 - desktop build uses the ZN builder configuration;
 - active desktop layout/components/styles remain ZN-owned and do not depend on an external product desktop;
+- the open-claude-ui exemption (§3a) stays within scope: vendored files
+  byte-identical to the pinned upstream commit, ZN wrappers carry all
+  wiring, and no vendored component renders demo data or simulated
+  execution as if it were ZN reality;
 - package/runtime verifiers reject foreign product package/control-plane content;
 - zero-model resident boot remains valid;
 - no clean ZN build requires a reference source checkout;

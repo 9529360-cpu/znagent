@@ -6,6 +6,7 @@ import {
   approveZnMissingWorkRestore,
   prepareZnMissingWorkRestore
 } from './resident-client'
+import { CdsButton, ConfirmationDialog } from './cds'
 import type { ZnRestoreApplication, ZnRestorePoint } from './state'
 
 type Props = {
@@ -26,6 +27,7 @@ function statusLabel(application: ZnRestoreApplication, t: TFunction): string {
 export function ZnMissingRestoreControls({ threadId, point, disabled, onRealityChanged }: Props) {
   const { t } = useTranslation()
   const [application, setApplication] = useState<ZnRestoreApplication | null>(null)
+  const [confirmOpen, setConfirmOpen] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -54,6 +56,7 @@ export function ZnMissingRestoreControls({ threadId, point, disabled, onRealityC
 
   const approve = async () => {
     if (!application || busy || disabled || !application.requiresUserApproval) return
+    setConfirmOpen(false)
     setBusy(true)
     setError(null)
     try {
@@ -72,25 +75,36 @@ export function ZnMissingRestoreControls({ threadId, point, disabled, onRealityC
   }
 
   return (
-    <div className="zn-restore-controls">
-      <div className="zn-muted zn-small">
+    <div className="flex flex-col gap-2">
+      <div className="text-xs text-[var(--cds-text-secondary)]">
         {t('restore.controls.description')}
       </div>
       {!application ? (
-        <button type="button" disabled={busy || disabled} onClick={() => void prepare()}>
+        <CdsButton type="button" disabled={busy || disabled} onClick={() => void prepare()}>
           {busy ? t('restore.controls.preparing') : t('restore.controls.prepare')}
-        </button>
+        </CdsButton>
       ) : application.requiresUserApproval ? (
         <>
-          <div className="zn-muted zn-small">{statusLabel(application, t)}</div>
-          <button className="zn-primary" type="button" disabled={busy || disabled} onClick={() => void approve()}>
+          <div className="text-xs text-[var(--cds-text-secondary)]">{statusLabel(application, t)}</div>
+          <CdsButton variant="brand" type="button" disabled={busy || disabled} onClick={() => setConfirmOpen(true)}>
             {busy ? t('restore.controls.restoring') : t('restore.controls.approve')}
-          </button>
+          </CdsButton>
+          <ConfirmationDialog
+            isOpen={confirmOpen}
+            onClose={() => setConfirmOpen(false)}
+            onConfirm={() => void approve()}
+            title={t('restore.controls.approve')}
+            description={t('restore.controls.description')}
+            confirmLabel={t('restore.controls.approve')}
+            cancelLabel={t('routines.cancel')}
+            variant="danger"
+            size="md"
+          />
         </>
       ) : (
-        <div className="zn-muted zn-small">{statusLabel(application, t)}</div>
+        <div className="text-xs text-[var(--cds-text-secondary)]">{statusLabel(application, t)}</div>
       )}
-      {error ? <div className="zn-error-text">{error}</div> : null}
+      {error ? <div className="text-sm text-[var(--cds-fill-danger)]">{error}</div> : null}
     </div>
   )
 }

@@ -1,0 +1,16 @@
+/**
+ * Tailwind input for the open-claude-ui utility layer.
+ *
+ * The bundle script (apps/desktop/scripts/bundle-electron-main.mjs) runs the
+ * Tailwind CLI over this file with apps/desktop/tailwind.config.cjs (which
+ * extends the vendored upstream config) and writes the generated utilities
+ * to cds-tailwind.generated.css, imported by main.tsx. The generated file is
+ * build output: it is gitignored and never hand-edited.
+ *
+ * Design tokens themselves live in the vendored cds-theme.css, imported
+ * separately by main.tsx; this file only produces the utility classes the
+ * vendored components' classNames resolve to.
+ */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

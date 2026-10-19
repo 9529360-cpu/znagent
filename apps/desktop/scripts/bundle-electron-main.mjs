@@ -9,6 +9,7 @@
 //   dist/zn-shell-renderer.css   ZN workbench styles
 //   dist/zn-shell.html           ZN renderer document
 import { build } from 'esbuild'
+import { execFileSync } from 'node:child_process'
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -70,6 +71,32 @@ await build({
 })
 console.log(`bundled ${preloadOut}${isDev ? ' (dev)' : ''}`)
 
+// Generate the Tailwind utility layer for the vendored open-claude-ui
+// components (whose classNames are the styling contract) plus the thin ZN
+// wrappers. The vendored Tailwind config supplies the CDS theme; only the
+// content globs are ZN-overridden in tailwind.config.cjs. The output is
+// build output (gitignored) imported by src/zn/main.tsx alongside the
+// vendored cds-theme.css tokens.
+const tailwindInput = resolve(root, 'src/zn/cds-tailwind.css')
+const tailwindOutput = resolve(root, 'src/zn/cds-tailwind.generated.css')
+const tailwindConfig = resolve(root, 'tailwind.config.cjs')
+const tailwindCliCandidates = [
+  resolve(root, '../../node_modules/tailwindcss/lib/cli.js'),
+  resolve(root, 'node_modules/tailwindcss/lib/cli.js')
+]
+const tailwindCli = tailwindCliCandidates.find(candidate => existsSync(candidate))
+if (!tailwindCli) {
+  throw new Error(
+    'Tailwind CLI not found: run npm ci at the repository root before bundling the ZN desktop'
+  )
+}
+execFileSync(
+  process.execPath,
+  [tailwindCli, '-i', tailwindInput, '-o', tailwindOutput, '--config', tailwindConfig],
+  { stdio: 'inherit', cwd: root }
+)
+console.log(`generated ${tailwindOutput}`)
+
 await build({
   entryPoints: [shellRendererEntry],
   bundle: true,
@@ -78,7 +105,25 @@ await build({
   jsx: 'automatic',
   target: 'chrome132',
   outfile: shellRendererOut,
-  logLevel: 'info'
+  logLevel: 'info',
+  // The renderer bundle must contain exactly one React. Vendored files
+  // resolve 'react' from the repository root while ZN files resolve it
+  // from apps/desktop, so a second copy (e.g. React 18 hoisted for a
+  // peer range) would otherwise slip into the same bundle and break
+  // hooks at runtime (useContext dispatcher null). Root package.json
+  // overrides pin React 19.2.7; this alias is the build-side guarantee.
+  alias: (() => {
+    const candidates = [
+      resolve(root, '../../node_modules'),
+      resolve(root, 'node_modules')
+    ]
+    const modules = candidates.find(dir => existsSync(resolve(dir, 'react/package.json')))
+    if (!modules) throw new Error('React not found: run npm ci at the repository root before bundling the ZN desktop')
+    return {
+      react: resolve(modules, 'react'),
+      'react-dom': resolve(modules, 'react-dom')
+    }
+  })()
 })
 
 if (!existsSync(shellRendererCssOut)) {

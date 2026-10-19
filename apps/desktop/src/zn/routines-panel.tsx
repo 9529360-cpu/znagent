@@ -15,6 +15,7 @@ import {
   testRunZnRoutine
 } from './resident-client'
 import type { ZnRoutine, ZnRoutineDraft, ZnRoutineRun } from './resident-client'
+import { CdsButton, ConfirmationDialog } from './cds'
 
 type ScheduleEdit = {
   kind: string
@@ -247,9 +248,10 @@ export function RoutinesPanel() {
     setSchedule: (next: ScheduleEdit) => void,
     idPrefix: string
   ) => (
-    <div className="zn-routines-field">
+    <div className="flex flex-col gap-1 text-sm">
       <label htmlFor={`${idPrefix}-kind`}>{t('routines.schedule')}</label>
       <select
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)]"
         id={`${idPrefix}-kind`}
         value={schedule.kind}
         onChange={event => setSchedule({ ...schedule, kind: event.target.value })}
@@ -259,6 +261,7 @@ export function RoutinesPanel() {
       </select>
       {schedule.kind === 'interval' ? (
         <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
           aria-label={t('routines.scheduleInterval')}
           type="number"
           min={60}
@@ -267,6 +270,7 @@ export function RoutinesPanel() {
         />
       ) : (
         <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
           aria-label={t('routines.scheduleCron')}
           value={schedule.cronExpression}
           onChange={event => setSchedule({ ...schedule, cronExpression: event.target.value })}
@@ -275,6 +279,7 @@ export function RoutinesPanel() {
       )}
       <label htmlFor={`${idPrefix}-tz`}>{t('routines.timezone')}</label>
       <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
         id={`${idPrefix}-tz`}
         value={schedule.timezone}
         onChange={event => setSchedule({ ...schedule, timezone: event.target.value })}
@@ -284,10 +289,10 @@ export function RoutinesPanel() {
   )
 
   return (
-    <div className="zn-routines-panel">
-      <div className="zn-routines-create">
+    <div className="flex flex-col gap-3 px-1 py-1">
+      <div className="flex flex-col gap-2">
         <input
-          className="zn-routines-sentence"
+          className="w-full rounded-lg bg-[var(--cds-surface-2)] px-2 py-2 text-sm text-[var(--cds-text-primary)] outline-none placeholder:text-[var(--cds-text-muted)]"
           aria-label={t('routines.create')}
           placeholder={t('routines.newPlaceholder')}
           value={sentence}
@@ -296,62 +301,68 @@ export function RoutinesPanel() {
             if (event.key === 'Enter') void propose()
           }}
         />
-        <button type="button" disabled={proposing || !sentence.trim()} onClick={() => void propose()}>
+        <CdsButton type="button" disabled={proposing || !sentence.trim()} onClick={() => void propose()}>
           {proposing ? t('common.working') : t('routines.create')}
-        </button>
+        </CdsButton>
       </div>
 
       {draft && draftSchedule ? (
-        <div className="zn-routines-dialog">
-          <div className="zn-routines-dialog-title">{t('routines.confirmTitle')}</div>
-          <div className="zn-muted zn-small">{t('routines.confirmHint')}</div>
+        <div className="flex flex-col gap-2 rounded-xl border border-[var(--cds-border)] bg-[var(--cds-surface-2)] px-3 py-2">
+          <div className="text-sm font-medium text-[var(--cds-text-primary)]">{t('routines.confirmTitle')}</div>
+          <div className="text-xs text-[var(--cds-text-secondary)]">{t('routines.confirmHint')}</div>
           {draft.missing.includes('schedule') ? (
-            <div className="zn-routines-warning">{t('routines.missingSchedule')}</div>
+            <div className="rounded-lg bg-[var(--cds-fill-brand-subtle)] px-2 py-1.5 text-xs text-[var(--cds-text-primary)]">{t('routines.missingSchedule')}</div>
           ) : null}
-          <div className="zn-routines-field">
+          <div className="flex flex-col gap-1 text-sm">
             <label htmlFor="routine-draft-task">{t('routines.task')}</label>
             <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
               id="routine-draft-task"
               value={draft.task}
               onChange={event => setDraft({ ...draft, task: event.target.value })}
             />
           </div>
-          <div className="zn-routines-field">
+          <div className="flex flex-col gap-1 text-sm">
             <label htmlFor="routine-draft-owner">{t('routines.owner')}</label>
             <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
               id="routine-draft-owner"
               value={draft.owner}
               onChange={event => setDraft({ ...draft, owner: event.target.value })}
             />
           </div>
           {scheduleEditor(draftSchedule, setDraftSchedule, 'routine-draft')}
-          <div className="zn-routines-field">
+          <div className="flex flex-col gap-1 text-sm">
             <label htmlFor="routine-draft-input">{t('routines.inputSource')}</label>
             <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
               id="routine-draft-input"
               value={draft.inputSource}
               onChange={event => setDraft({ ...draft, inputSource: event.target.value })}
             />
           </div>
-          <div className="zn-routines-field">
+          <div className="flex flex-col gap-1 text-sm">
             <label htmlFor="routine-draft-expected">{t('routines.expectedResult')}</label>
             <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
               id="routine-draft-expected"
               value={draft.expectedResult}
               onChange={event => setDraft({ ...draft, expectedResult: event.target.value })}
             />
           </div>
-          <div className="zn-routines-field">
+          <div className="flex flex-col gap-1 text-sm">
             <label htmlFor="routine-draft-approval">{t('routines.approvalBoundary')}</label>
             <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
               id="routine-draft-approval"
               value={draft.approvalBoundary}
               onChange={event => setDraft({ ...draft, approvalBoundary: event.target.value })}
             />
           </div>
-          <div className="zn-routines-field">
+          <div className="flex flex-col gap-1 text-sm">
             <label htmlFor="routine-draft-missing">{t('routines.missingDataPolicy')}</label>
             <select
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)]"
               id="routine-draft-missing"
               value={draft.missingDataPolicy}
               onChange={event => setDraft({ ...draft, missingDataPolicy: event.target.value })}
@@ -361,9 +372,10 @@ export function RoutinesPanel() {
               <option value="use_last_known">{t('routines.missingDataUseLast')}</option>
             </select>
           </div>
-          <div className="zn-routines-field">
+          <div className="flex flex-col gap-1 text-sm">
             <label htmlFor="routine-draft-autopause">{t('routines.autoPause')}</label>
             <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
               id="routine-draft-autopause"
               type="number"
               min={0}
@@ -372,25 +384,25 @@ export function RoutinesPanel() {
               onChange={event => setDraft({ ...draft, autoPauseAfterDays: Number(event.target.value) })}
             />
           </div>
-          <div className="zn-routines-dialog-actions">
-            <button type="button" disabled={confirming} onClick={() => void confirmCreate()}>
+          <div className="flex flex-wrap gap-2">
+            <CdsButton type="button" disabled={confirming} onClick={() => void confirmCreate()}>
               {confirming ? t('common.working') : t('routines.confirmCreate')}
-            </button>
-            <button type="button" onClick={() => { setDraft(null); setDraftSchedule(null) }}>
+            </CdsButton>
+            <CdsButton type="button" onClick={() => { setDraft(null); setDraftSchedule(null) }}>
               {t('routines.cancel')}
-            </button>
+            </CdsButton>
           </div>
         </div>
       ) : null}
 
-      {error ? <div className="zn-routines-error" role="alert">{error}</div> : null}
+      {error ? <div className="text-sm text-[var(--cds-fill-danger)]" role="alert">{error}</div> : null}
 
       {loading ? (
-        <div className="zn-muted zn-small">{t('common.checking')}</div>
+        <div className="text-xs text-[var(--cds-text-secondary)]">{t('common.checking')}</div>
       ) : routines.length === 0 ? (
-        <div className="zn-muted zn-small">{t('routines.empty')}</div>
+        <div className="text-xs text-[var(--cds-text-secondary)]">{t('routines.empty')}</div>
       ) : (
-        <div className="zn-routines-list">
+        <div className="flex flex-col gap-2">
           {routines.map(routine => {
             const autoPaused = Boolean(
               routine.status === 'paused' &&
@@ -399,92 +411,98 @@ export function RoutinesPanel() {
             )
             const runs = runsById[routine.routineId] || routine.recentRuns
             return (
-              <div className="zn-routines-item" key={routine.routineId}>
-                <div className="zn-routines-item-head">
-                  <span className="zn-routines-item-title">{routine.title}</span>
-                  <span className={'zn-routines-badge ' + routine.status}>
+              <div className="flex flex-col gap-1 rounded-xl border border-[var(--cds-border)] bg-[var(--cds-surface-2)] px-3 py-2" key={routine.routineId}>
+                <div className="flex items-start justify-between gap-2">
+                  <span className="min-w-0 flex-1 truncate text-sm font-medium text-[var(--cds-text-primary)]">{routine.title}</span>
+                  <span className={'shrink-0 rounded-full px-2 py-0.5 text-xs ' + (routine.status === 'active' ? 'bg-[var(--cds-fill-brand-subtle)] text-[var(--cds-text-primary)]' : 'bg-[var(--cds-surface-1)] text-[var(--cds-text-secondary)]')}>
                     {routine.status === 'active' ? t('routines.statusActive') : t('routines.statusPaused')}
                   </span>
                 </div>
-                <div className="zn-muted zn-small">{routine.scheduleDescription} · {routine.timezone}</div>
+                <div className="text-xs text-[var(--cds-text-secondary)]">{routine.scheduleDescription} · {routine.timezone}</div>
                 {routine.pausedReason ? (
-                  <div className="zn-muted zn-small">{routine.pausedReason}</div>
+                  <div className="text-xs text-[var(--cds-text-secondary)]">{routine.pausedReason}</div>
                 ) : null}
-                <div className="zn-routines-actions">
+                <div className="flex flex-wrap gap-1">
                   {routine.status === 'active' ? (
-                    <button type="button" disabled={busyId === routine.routineId} onClick={() => void mutate(routine.routineId, () => pauseZnRoutine(routine.routineId))}>
+                    <CdsButton type="button" disabled={busyId === routine.routineId} onClick={() => void mutate(routine.routineId, () => pauseZnRoutine(routine.routineId))}>
                       {t('routines.pause')}
-                    </button>
+                    </CdsButton>
                   ) : (
-                    <button type="button" disabled={busyId === routine.routineId} onClick={() => void mutate(routine.routineId, () => resumeZnRoutine(routine.routineId))}>
+                    <CdsButton type="button" disabled={busyId === routine.routineId} onClick={() => void mutate(routine.routineId, () => resumeZnRoutine(routine.routineId))}>
                       {t('routines.resume')}
-                    </button>
+                    </CdsButton>
                   )}
-                  <button type="button" disabled={busyId === routine.routineId} onClick={() => setTestRunTarget(routine)}>
+                  <CdsButton type="button" disabled={busyId === routine.routineId} onClick={() => setTestRunTarget(routine)}>
                     {t('routines.testRun')}
-                  </button>
-                  <button type="button" disabled={busyId === routine.routineId} onClick={() => startEdit(routine)}>
+                  </CdsButton>
+                  <CdsButton type="button" disabled={busyId === routine.routineId} onClick={() => startEdit(routine)}>
                     {t('routines.edit')}
-                  </button>
-                  <button type="button" disabled={busyId === routine.routineId} onClick={() => setDeleteTarget(routine)}>
+                  </CdsButton>
+                  <CdsButton type="button" disabled={busyId === routine.routineId} onClick={() => setDeleteTarget(routine)}>
                     {t('routines.delete')}
-                  </button>
+                  </CdsButton>
                   {autoPaused ? (
-                    <button type="button" disabled={busyId === routine.routineId} onClick={() => void mutate(routine.routineId, () => acknowledgeZnRoutine(routine.routineId))}>
+                    <CdsButton type="button" disabled={busyId === routine.routineId} onClick={() => void mutate(routine.routineId, () => acknowledgeZnRoutine(routine.routineId))}>
                       {t('routines.acknowledge')}
-                    </button>
+                    </CdsButton>
                   ) : null}
-                  <button type="button" onClick={() => void toggleRuns(routine)}>
+                  <CdsButton type="button" onClick={() => void toggleRuns(routine)}>
                     {t('routines.runs')}
-                  </button>
+                  </CdsButton>
                 </div>
 
                 {editing?.routineId === routine.routineId && editSchedule ? (
-                  <div className="zn-routines-dialog">
-                    <div className="zn-routines-field">
+                  <div className="flex flex-col gap-2 rounded-xl border border-[var(--cds-border)] bg-[var(--cds-surface-2)] px-3 py-2">
+                    <div className="flex flex-col gap-1 text-sm">
                       <label htmlFor="routine-edit-task">{t('routines.task')}</label>
                       <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
                         id="routine-edit-task"
                         value={editFields.task || ''}
                         onChange={event => setEditFields({ ...editFields, task: event.target.value })}
                       />
                     </div>
-                    <div className="zn-routines-field">
+                    <div className="flex flex-col gap-1 text-sm">
                       <label htmlFor="routine-edit-owner">{t('routines.owner')}</label>
                       <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
                         id="routine-edit-owner"
                         value={editFields.owner || ''}
                         onChange={event => setEditFields({ ...editFields, owner: event.target.value })}
                       />
                     </div>
                     {scheduleEditor(editSchedule, setEditSchedule, 'routine-edit')}
-                    <div className="zn-routines-field">
+                    <div className="flex flex-col gap-1 text-sm">
                       <label htmlFor="routine-edit-input">{t('routines.inputSource')}</label>
                       <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
                         id="routine-edit-input"
                         value={editFields.input_source || ''}
                         onChange={event => setEditFields({ ...editFields, input_source: event.target.value })}
                       />
                     </div>
-                    <div className="zn-routines-field">
+                    <div className="flex flex-col gap-1 text-sm">
                       <label htmlFor="routine-edit-expected">{t('routines.expectedResult')}</label>
                       <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
                         id="routine-edit-expected"
                         value={editFields.expected_result || ''}
                         onChange={event => setEditFields({ ...editFields, expected_result: event.target.value })}
                       />
                     </div>
-                    <div className="zn-routines-field">
+                    <div className="flex flex-col gap-1 text-sm">
                       <label htmlFor="routine-edit-approval">{t('routines.approvalBoundary')}</label>
                       <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
                         id="routine-edit-approval"
                         value={editFields.approval_boundary || ''}
                         onChange={event => setEditFields({ ...editFields, approval_boundary: event.target.value })}
                       />
                     </div>
-                    <div className="zn-routines-field">
+                    <div className="flex flex-col gap-1 text-sm">
                       <label htmlFor="routine-edit-missing">{t('routines.missingDataPolicy')}</label>
                       <select
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)]"
                         id="routine-edit-missing"
                         value={editFields.missing_data_policy || 'skip'}
                         onChange={event => setEditFields({ ...editFields, missing_data_policy: event.target.value })}
@@ -494,9 +512,10 @@ export function RoutinesPanel() {
                         <option value="use_last_known">{t('routines.missingDataUseLast')}</option>
                       </select>
                     </div>
-                    <div className="zn-routines-field">
+                    <div className="flex flex-col gap-1 text-sm">
                       <label htmlFor="routine-edit-autopause">{t('routines.autoPause')}</label>
                       <input
+          className="rounded-lg bg-[var(--cds-surface-1)] px-2 py-1.5 text-sm text-[var(--cds-text-primary)] outline-none"
                         id="routine-edit-autopause"
                         type="number"
                         min={0}
@@ -505,65 +524,59 @@ export function RoutinesPanel() {
                         onChange={event => setEditFields({ ...editFields, auto_pause_after_days: event.target.value })}
                       />
                     </div>
-                    <div className="zn-routines-dialog-actions">
-                      <button type="button" disabled={busyId === routine.routineId} onClick={() => void saveEdit()}>
+                    <div className="flex flex-wrap gap-2">
+                      <CdsButton type="button" disabled={busyId === routine.routineId} onClick={() => void saveEdit()}>
                         {t('routines.confirmCreate')}
-                      </button>
-                      <button type="button" onClick={() => { setEditing(null); setEditSchedule(null) }}>
+                      </CdsButton>
+                      <CdsButton type="button" onClick={() => { setEditing(null); setEditSchedule(null) }}>
                         {t('routines.cancel')}
-                      </button>
+                      </CdsButton>
                     </div>
                   </div>
                 ) : null}
 
-                {testRunTarget?.routineId === routine.routineId ? (
-                  <div className="zn-routines-dialog">
-                    <div className="zn-routines-warning">{t('routines.testRunWarning')}</div>
-                    <div className="zn-routines-dialog-actions">
-                      <button type="button" disabled={busyId === routine.routineId} onClick={() => void confirmTestRun()}>
-                        {t('routines.testRunConfirm')}
-                      </button>
-                      <button type="button" onClick={() => setTestRunTarget(null)}>
-                        {t('routines.cancel')}
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
+                <ConfirmationDialog
+                  isOpen={testRunTarget?.routineId === routine.routineId}
+                  onClose={() => setTestRunTarget(null)}
+                  onConfirm={() => void confirmTestRun()}
+                  title={t('routines.testRun')}
+                  description={t('routines.testRunWarning')}
+                  confirmLabel={t('routines.testRunConfirm')}
+                  cancelLabel={t('routines.cancel')}
+                  variant="default"
+                />
 
-                {deleteTarget?.routineId === routine.routineId ? (
-                  <div className="zn-routines-dialog">
-                    <div className="zn-muted zn-small">{t('routines.deleteConfirm')}</div>
-                    <div className="zn-routines-dialog-actions">
-                      <button type="button" disabled={busyId === routine.routineId} onClick={() => void confirmDelete()}>
-                        {t('routines.delete')}
-                      </button>
-                      <button type="button" onClick={() => setDeleteTarget(null)}>
-                        {t('routines.cancel')}
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
+                <ConfirmationDialog
+                  isOpen={deleteTarget?.routineId === routine.routineId}
+                  onClose={() => setDeleteTarget(null)}
+                  onConfirm={() => void confirmDelete()}
+                  title={t('routines.delete')}
+                  description={t('routines.deleteConfirm')}
+                  confirmLabel={t('routines.delete')}
+                  cancelLabel={t('routines.cancel')}
+                  variant="danger"
+                />
 
                 {expanded[routine.routineId] ? (
-                  <div className="zn-routines-runs">
-                    <div className="zn-muted zn-small">{t('routines.runs')}</div>
+                  <div className="flex flex-col gap-1 border-t border-[var(--cds-border)] pt-1">
+                    <div className="text-xs text-[var(--cds-text-secondary)]">{t('routines.runs')}</div>
                     {runsLoading[routine.routineId] ? (
-                      <div className="zn-muted zn-small">{t('common.checking')}</div>
+                      <div className="text-xs text-[var(--cds-text-secondary)]">{t('common.checking')}</div>
                     ) : runs.length === 0 ? (
-                      <div className="zn-muted zn-small">{t('routines.noRuns')}</div>
+                      <div className="text-xs text-[var(--cds-text-secondary)]">{t('routines.noRuns')}</div>
                     ) : (
                       runs.map(run => (
-                        <div className="zn-routines-run" key={run.runId}>
-                          <span className={'zn-routines-badge ' + run.status}>{runStatusLabel(run, t)}</span>
-                          <span className="zn-muted zn-small">
+                        <div className="flex flex-col gap-0.5" key={run.runId}>
+                          <span className={'w-fit rounded-full px-2 py-0.5 text-xs ' + (run.status === 'succeeded' ? 'bg-[var(--cds-fill-brand-subtle)] text-[var(--cds-text-primary)]' : run.status === 'running' ? 'bg-[var(--cds-surface-1)] text-[var(--cds-text-secondary)]' : 'bg-[var(--cds-fill-danger)]/10 text-[var(--cds-fill-danger)]')}>{runStatusLabel(run, t)}</span>
+                          <span className="text-xs text-[var(--cds-text-secondary)]">
                             {run.triggerKind === 'test_run' ? t('routines.runTestRun') : t('routines.runScheduled')}
                             {' · '}
                             {timeLabel(run.startedAt)}
                           </span>
                           {run.failureReason ? (
-                            <div className="zn-routines-run-reason">{run.failureReason}</div>
+                            <div className="text-xs text-[var(--cds-fill-danger)]">{run.failureReason}</div>
                           ) : run.summary ? (
-                            <div className="zn-muted zn-small">{run.summary}</div>
+                            <div className="text-xs text-[var(--cds-text-secondary)]">{run.summary}</div>
                           ) : null}
                         </div>
                       ))

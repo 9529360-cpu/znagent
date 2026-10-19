@@ -21,8 +21,8 @@
     "builder": "node scripts/run-electron-builder.mjs --config electron-builder.zn.yml"
   },
   "dependencies": {
-    "@phosphor-icons/react": "^2.1.10",
     "electron-updater": "6.8.9",
+    "framer-motion": "^12.43.0",
     "i18next": "^25.10.10",
     "react": "19.2.7",
     "react-dom": "19.2.7",
@@ -36,6 +36,7 @@
     "electron-builder": "26.15.3",
     "electron-builder-squirrel-windows": "26.15.3",
     "esbuild": "0.28.1",
+    "tailwindcss": "^3.4.17",
     "typescript": "6.0.3",
     "vitest": "4.1.11"
   }
