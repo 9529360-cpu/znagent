@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 """ZN-owned semantic action discovery substrate.
 
@@ -135,6 +136,69 @@ class ActionAvailability:
 
 AvailabilityProbe = Callable[[ActionDescriptor], ActionAvailability]
 
+
+# Deterministic relevance retrieval (M-2): no vectors, no model. A task token
+# counts as matching a descriptor token on exact equality or substring in
+# either direction, so "volume" matches "volumes" and "调低音量" matches "音量".
+_RELEVANCE_STOPWORDS = frozenset(
+    {
+        "a", "an", "the", "to", "of", "for", "on", "in", "at", "by", "with",
+        "and", "or", "please", "help", "me", "my", "it", "is", "are", "was",
+        "were", "be", "do", "does", "did", "can", "could", "would", "should",
+        "want", "need", "let", "get", "make", "take", "put", "go",
+        "的", "了", "在", "是", "要", "请", "把", "给", "帮", "我", "你",
+        "他", "她", "它", "这", "那", "吗", "呢", "吧", "啊", "一下",
+    }
+)
+_TOKEN_SPLIT = re.compile(r"[^\w]+", re.UNICODE)
+
+
+def _relevance_tokens(text: str) -> tuple[str, ...]:
+    tokens = tuple(
+        dict.fromkeys(
+            token
+            for token in _TOKEN_SPLIT.split(str(text or "").lower())
+            if token and token not in _RELEVANCE_STOPWORDS
+        )
+    )
+    return tokens
+
+
+def _token_matches(task_token: str, candidate: str) -> bool:
+    return bool(task_token) and bool(candidate) and (
+        task_token == candidate
+        or task_token in candidate
+        or candidate in task_token
+    )
+
+
+def _availability_rank(state: ActionAvailabilityState) -> int:
+    # Usable evidence first; unknown availability never ranks ahead of
+    # available/restricted/unavailable evidence.
+    return {"available": 0, "restricted": 1, "unavailable": 2, "unknown": 3}[state]
+
+
+@dataclass(frozen=True, slots=True)
+class RelevantAction:
+    """One registry action scored against a task, for prompt subsetting."""
+
+    descriptor: ActionDescriptor
+    availability: ActionAvailability
+    score: int
+    matched_terms: tuple[str, ...] = ()
+    matched_tags: tuple[str, ...] = ()
+
+    @property
+    def action_id(self) -> str:
+        return self.descriptor.action_id
+
+    def prompt_line(self) -> str:
+        return (
+            f"{self.descriptor.action_id}: {self.descriptor.description}"
+            f" [{self.availability.state}]"
+        )
+
+
 class ActionFabricRegistry:
     """Deterministic registry of semantic actions and availability probes."""
 
@@ -223,6 +287,121 @@ class ActionFabricRegistry:
             self.availability(descriptor.action_id)
             for descriptor in self.descriptors(provider=provider, tags=tags)
         )
+
+    def relevant_actions(
+        self,
+        *,
+        task: str,
+        context_tags: tuple[str, ...] = (),
+        authority_domains: tuple[str, ...] = (),
+        max_actions: int = 12,
+        max_chars: int = 4000,
+    ) -> tuple[RelevantAction, ...]:
+        """Return the task-relevant action subset, best first, within caps.
+
+        Relevance is deterministic: task-term matches against a descriptor's
+        tags / action_id segments / description words, plus exact matches
+        against caller-provided ``context_tags``. A descriptor is included
+        only when its textual relevance reaches 4 (one caller-provided
+        context-tag match, or a tag match plus an action-id match, or two
+        independent term matches), so a single shared verb such as "set"
+        never admits an unrelated action. ``authority_domains`` only adjusts
+        the score (held authority > partial > none held; authority-free
+        actions get a small bonus) and never admits or excludes an action.
+        Availability orders the result: available first, then restricted,
+        unavailable, and unknown last. ``max_chars`` budgets
+        ``len(action_id) + 1 + len(description)`` per action; the first
+        relevant action is always kept even if it alone exceeds the budget.
+        Registration and execution paths are untouched.
+        """
+        if max_actions < 1:
+            raise ValueError("max_actions must be at least 1")
+        if max_chars < 1:
+            raise ValueError("max_chars must be at least 1")
+        task_terms = _relevance_tokens(task)
+        wanted_tags = tuple(
+            dict.fromkeys(
+                tag.lower()
+                for tag in (str(item or "").strip() for item in context_tags)
+                if tag
+            )
+        )
+        held_authority = {
+            value
+            for value in (str(item or "").strip().lower() for item in authority_domains)
+            if value
+        }
+        scored: list[RelevantAction] = []
+        for descriptor in self._descriptors.values():
+            descriptor_tags = tuple(tag.lower() for tag in descriptor.tags)
+            matched_tags = tuple(
+                tag for tag in descriptor_tags if tag in wanted_tags
+            )
+            matched_terms: list[str] = []
+            # Caller-provided context tags are an explicit signal and weigh
+            # more than a task term merely matching a descriptor tag.
+            text_score = 4 * len(matched_tags)
+            id_segments = tuple(
+                segment
+                for segment in _TOKEN_SPLIT.split(descriptor.action_id.lower())
+                if segment
+            )
+            description_words = _relevance_tokens(descriptor.description)
+            for term in task_terms:
+                matched = False
+                if any(_token_matches(term, tag) for tag in descriptor_tags):
+                    text_score += 3
+                    matched = True
+                if any(_token_matches(term, segment) for segment in id_segments):
+                    text_score += 2
+                    matched = True
+                if any(_token_matches(term, word) for word in description_words):
+                    text_score += 1
+                    matched = True
+                if matched:
+                    matched_terms.append(term)
+            if text_score < 4:
+                continue
+            required = {
+                str(item or "").strip().lower()
+                for item in descriptor.required_authority
+            }
+            if not required:
+                authority_bonus = 1
+            elif required <= held_authority:
+                authority_bonus = 2
+            elif required & held_authority:
+                authority_bonus = 1
+            else:
+                authority_bonus = 0
+            availability = self.availability(descriptor.action_id)
+            scored.append(
+                RelevantAction(
+                    descriptor=descriptor,
+                    availability=availability,
+                    score=text_score + authority_bonus,
+                    matched_terms=tuple(matched_terms),
+                    matched_tags=matched_tags,
+                )
+            )
+        scored.sort(
+            key=lambda item: (
+                _availability_rank(item.availability.state),
+                -item.score,
+                item.action_id,
+            )
+        )
+        selected: list[RelevantAction] = []
+        spent_chars = 0
+        for item in scored:
+            if len(selected) >= max_actions:
+                break
+            cost = len(item.action_id) + 1 + len(item.descriptor.description)
+            if selected and spent_chars + cost > max_chars:
+                break
+            selected.append(item)
+            spent_chars += cost
+        return tuple(selected)
 
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._descriptors))
