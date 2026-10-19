@@ -81,6 +81,13 @@ complete an item.
   always judged on both tracks. The team owner passes
   ``require_standing_dod=True`` at both adjudication points, so in the
   product path a missing DoD section is itself a missing track.
+
+M-5 reuses this same adjudicator for single (non-team) Work completion:
+the evidence-bound ledger gates ``accept_root_with_current_evidence``
+on a ``verified`` verdict here, with evidence entries built from the
+Root's completed current-plan children. There is deliberately no second
+adjudicator -- one verdict, two call sites (team owner, single-Work
+ledger), both with ``require_standing_dod=True``.
 """
 
 import json
@@ -128,6 +135,21 @@ STANDING_DOD_EVIDENCE_ANCHORED: tuple[str, ...] = (
 
 #: Accepted per-item DoD statuses. Anything else means "not yet attested".
 STANDING_DOD_STATUSES: tuple[str, ...] = ("satisfied", "not_applicable")
+
+
+class CompletionVerdictError(ValueError):
+    """A non-verified completion verdict, raised at a completion gate.
+
+    Carries the adjudicator's verdict so the caller can feed its reason
+    + missing list + actionable fix back to the claimant and count one
+    bounded retry, instead of parsing a message string. Raised by the
+    single-Work ledger gate; the team owner reads the verdict directly
+    and never sees this exception.
+    """
+
+    def __init__(self, verdict: CompletionVerdict) -> None:
+        super().__init__(verdict.feedback_text())
+        self.verdict = verdict
 
 
 @dataclass(frozen=True, slots=True)
@@ -591,6 +613,7 @@ def _signature_to_list(
 __all__ = [
     "MAX_VERDICT_ATTEMPTS",
     "REPORT_SHAPE_HINT",
+    "CompletionVerdictError",
     "STANDING_DOD_EVIDENCE_ANCHORED",
     "STANDING_DOD_ITEMS",
     "STANDING_DOD_KEYS",

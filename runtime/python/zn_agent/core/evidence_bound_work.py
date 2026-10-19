@@ -18,6 +18,10 @@ from contextlib import closing
 from dataclasses import dataclass, field
 from typing import Any
 
+from .completion_verdict import (
+    CompletionVerdictError,
+    adjudicate_completion,
+)
 from .models import ResidentRunResult, utc_now
 from .steerable_work import SteerableWorkLedger, WorkItem
 
@@ -46,6 +50,55 @@ class WorkerRun:
     @property
     def cognition_request_id(self) -> str:
         return f"cog-{self.worker_run_id}"
+
+
+def single_work_evidence_entries(children: list[WorkItem]) -> list[dict[str, Any]]:
+    """Build CP-3 adjudicator evidence from completed child WorkItems.
+
+    M-5: single (non-team) Work has no specialist WorkerRun evidence
+    ledger -- the Body-verified completed children ARE the evidence.
+    A child only lands ``completed`` after its Body postcondition
+    passed, so every entry is ``verified`` by construction. The
+    adjudicator matches an ``evidence_ref`` against the entry's
+    objective / result / relative path, so a claim cites real child
+    evidence, never prose. ``action_kind`` is derived from the child's
+    acceptance-criterion prefix (the same prefixes the ledger already
+    keys on): ``command_exit:`` / ``independent_python_verification:``
+    children actually ran Python, which is what the adjudicator's
+    test-run gate looks for.
+    """
+    entries: list[dict[str, Any]] = []
+    for child in children:
+        if child.status != "completed":
+            continue
+        relative_path = ""
+        action_kind = ""
+        for criterion in child.acceptance_criteria or []:
+            text = str(criterion or "").strip()
+            # Slice by prefix length, never split on ":" -- a page_read
+            # URL (https://...) contains its own colons.
+            if text.startswith("text_equals:"):
+                relative_path = relative_path or text[len("text_equals:"):].strip()
+            elif text.startswith("page_read:"):
+                relative_path = relative_path or text[len("page_read:"):].strip()
+            elif text.startswith("independent_python_verification:"):
+                action_kind = action_kind or "run_python"
+                rest = text[len("independent_python_verification:"):].strip()
+                relative_path = relative_path or rest.split(";")[0].strip()
+            elif text.startswith("command_exit:"):
+                action_kind = action_kind or "run_python"
+        entries.append(
+            {
+                "kind": "verified_body_step",
+                "objective": str(child.objective or ""),
+                "result": str(child.result or ""),
+                "relative_path": relative_path,
+                "action_kind": action_kind,
+                "verified": True,
+                "artifact_refs": [],
+            }
+        )
+    return entries
 
 
 @dataclass(slots=True, frozen=True)
@@ -1097,12 +1150,26 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
         *,
         verifier_work_item_id: str,
         verification_summary: str,
+        completion_report: str | None = None,
     ) -> WorkItem:
         """Accept one Root only from a completed verifier in the active plan.
 
         Concrete verification remains Resident/Body work. This ledger only owns
         the final identity/version/evidence gate, so neither model prose nor one
         executor success bit can complete criterion-bound Root Work directly.
+
+        M-5: the final gate is the same CP-3 adjudicator the team path
+        uses (``completion_verdict.adjudicate_completion``, not a second
+        copy). The claim must be a structured completion report citing
+        every Root acceptance criterion against the completed
+        current-plan children's Body-verified evidence, plus the
+        standing Definition of Done (``require_standing_dod=True``,
+        same as the team product path). A non-verified verdict raises
+        :class:`CompletionVerdictError` carrying the verdict -- the
+        caller feeds its reason + missing list + actionable fix back
+        to the claimant for a bounded retry. No report at all is a
+        ``rejected`` verdict: a verifier pass alone never accepts a
+        Root.
         """
 
         root = self.work_item_for_event(event_id)
@@ -1148,6 +1215,18 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
         completed = [item for item in children if item.status == "completed"]
         if len(completed) < 2:
             raise ValueError("independent acceptance requires prior completed work plus fresh verification")
+
+        # M-5 (CP-3 for single Work): the structured completion report is
+        # the last gate. Same adjudicator as the team path; evidence is
+        # the completed children's Body-verified steps, re-read here.
+        verdict = adjudicate_completion(
+            expected_output=list(root.acceptance_criteria),
+            evidence=single_work_evidence_entries(completed),
+            summary=str(completion_report or ""),
+            require_standing_dod=True,
+        )
+        if verdict.verdict != "verified":
+            raise CompletionVerdictError(verdict)
 
         now = utc_now()
         payload = {
