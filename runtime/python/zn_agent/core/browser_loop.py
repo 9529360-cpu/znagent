@@ -29,6 +29,7 @@ from .action_execution import (
     ActionRequest,
     ActionVerification,
 )
+from .action_fabric import ActionEffectClass
 from .browser import (
     BrowserAction,
     BrowserActionAuthority,
@@ -47,7 +48,7 @@ class BrowserLoopActionSpec:
     action_id: str
     kind: BrowserActionKind | None
     query_kind: BrowserTargetQueryKind | None
-    effect_class: str
+    effect_class: ActionEffectClass
     description: str
     required_args: tuple[str, ...] = ()
     optional_args: tuple[str, ...] = ()
@@ -322,7 +323,7 @@ def _build_execution(
         action_id=spec.action_id,
         provider="zn.browser",
         description=spec.description,
-        effect_class=spec.effect_class,  # type: ignore[arg-type]
+        effect_class=spec.effect_class,
     )
     return ActionExecution(
         execution_id=f"browser-{uuid.uuid4().hex[:12]}",

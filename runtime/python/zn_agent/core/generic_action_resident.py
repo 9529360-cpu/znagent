@@ -66,10 +66,7 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
             provider = build_managed_browser_adapter()
         except Exception:
             provider = None
-        try:
-            self._browser_loop_provider_cache = provider
-        except Exception:
-            pass
+        self._browser_loop_provider_cache = provider
         return provider
 
     def _browser_loop_permission(self, event):
