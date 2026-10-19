@@ -201,6 +201,54 @@ class SkillMatch:
     cue: str
 
 
+def _best_cue_for_header(normalized_query: str, header: SkillHeader) -> str:
+    cues = {_normalize(header.name), _normalize(header.description)}
+    words = _normalize(header.description).split()
+    for width in range(min(4, len(words)), 1, -1):
+        for index in range(len(words) - width + 1):
+            cues.add(" ".join(words[index : index + width]))
+    # Chinese has no word spaces, so a whole description is one
+    # "word" and word n-grams can never find a sub-phrase inside it.
+    # Add character n-grams (>= 4 chars) for CJK tokens so a phrase
+    # like "中文任务管理" can match inside a longer description.
+    # Longest-cue-wins keeps this precise.
+    for word in words:
+        if re.search(r"[\u4e00-\u9fff]", word):
+            for length in range(min(8, len(word)), 3, -1):
+                for index in range(len(word) - length + 1):
+                    cues.add(word[index : index + length])
+    best = ""
+    for cue in cues:
+        if _cue_occurs(normalized_query, cue) and len(cue) > len(best):
+            best = cue
+    return best
+
+
+def match_skill_headers(
+    headers: list[SkillHeader],
+    query: str,
+    *,
+    max_skills: int = _DEFAULT_MAX_SKILLS,
+) -> list[SkillMatch]:
+    """Trigger-match pre-built headers (frontmatter only; no body reads).
+
+    Shared by :meth:`SkillRouter.match` (single root) and layered callers
+    that match over already-resolved registry winners. Most-specific cue
+    wins; name breaks ties for determinism.
+    """
+    count = max(0, min(_MAX_ROUTE_SKILLS, int(max_skills)))
+    normalized = _normalize(query)
+    if not count or not normalized:
+        return []
+    scored: list[tuple[int, str, SkillHeader, str]] = []
+    for header in headers:
+        cue = _best_cue_for_header(normalized, header)
+        if cue:
+            scored.append((len(cue), header.name, header, cue))
+    scored.sort(key=lambda item: (-item[0], item[1]))
+    return [SkillMatch(header=header, cue=cue) for _, _, header, cue in scored[:count]]
+
+
 @dataclass(frozen=True, slots=True)
 class ActivatedSkill:
     """Activation-stage view: header + full body + on-demand asset names."""
@@ -355,40 +403,12 @@ class SkillRouter:
     # -- Matching (headers only; most specific cue first) -----------------
 
     def match(self, query: str, *, max_skills: int = _DEFAULT_MAX_SKILLS) -> list[SkillMatch]:
-        count = max(0, min(_MAX_ROUTE_SKILLS, int(max_skills)))
-        normalized = _normalize(query)
-        if not count or not normalized:
-            return []
-        scored: list[tuple[int, str, SkillHeader, str]] = []
-        for header in self.discover():
-            cue = self._best_cue(normalized, header)
-            if cue:
-                scored.append((len(cue), header.name, header, cue))
-        # Most-specific cue wins; name breaks ties for determinism.
-        scored.sort(key=lambda item: (-item[0], item[1]))
-        return [SkillMatch(header=header, cue=cue) for _, _, header, cue in scored[:count]]
+        return match_skill_headers(
+            self.discover(), query, max_skills=max_skills
+        )
 
     def _best_cue(self, normalized_query: str, header: SkillHeader) -> str:
-        cues = {_normalize(header.name), _normalize(header.description)}
-        words = _normalize(header.description).split()
-        for width in range(min(4, len(words)), 1, -1):
-            for index in range(len(words) - width + 1):
-                cues.add(" ".join(words[index : index + width]))
-        # Chinese has no word spaces, so a whole description is one
-        # "word" and word n-grams can never find a sub-phrase inside it.
-        # Add character n-grams (>= 4 chars) for CJK tokens so a phrase
-        # like "中文任务管理" can match inside a longer description.
-        # Longest-cue-wins keeps this precise.
-        for word in words:
-            if re.search(r"[\u4e00-\u9fff]", word):
-                for length in range(min(8, len(word)), 3, -1):
-                    for index in range(len(word) - length + 1):
-                        cues.add(word[index : index + length])
-        best = ""
-        for cue in cues:
-            if _cue_occurs(normalized_query, cue) and len(cue) > len(best):
-                best = cue
-        return best
+        return _best_cue_for_header(normalized_query, header)
 
     # -- Stage 2: Activation (read body of matched skills only) ----------
 

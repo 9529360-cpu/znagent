@@ -43,9 +43,10 @@ whatever the farther layers' ranks; inside one layer, the highest
 frontmatter ``rank`` wins. Directory and full text stay separate:
 :meth:`LayeredSkillRegistry.list` reads frontmatter only and never
 exposes a body, while :meth:`LayeredSkillRegistry.get` reads the full
-body of the winning entry on demand. This registry does not change
-CUR-1 two-stage binding or router ranking; it is the registration
-mechanism those paths can build on.
+body of the winning entry on demand. The Work cognition binding
+(:meth:`SkillStore.bind_cognition_context`) builds on this registry when
+the event carries an attached workspace with a ``skills`` directory
+(host + project layers); otherwise it keeps the host-only router path.
 """
 
 import fnmatch
@@ -59,7 +60,7 @@ import yaml
 from .home import get_zn_home
 from .models import AgentEvent, CognitionRequest
 from .skill_lock import SkillLock, content_sha256
-from .skill_routing import SkillRouter
+from .skill_routing import SkillHeader, SkillRouter, match_skill_headers
 
 MAX_SKILL_CONTEXT_BYTES = 8192
 MAX_SKILL_BODY_CHARS = 20000
@@ -404,14 +405,113 @@ class SkillStore:
             )
         return selected
 
-    def activate_skill(self, name: str) -> Skill | None:
+    @staticmethod
+    def project_skills_root(event: AgentEvent) -> Path | None:
+        """Project-layer skills root for a Work event, or None.
+
+        Convention: ``<workspace_path>/skills`` when the event carries an
+        attached workspace with such a directory. No workspace, or no
+        ``skills`` directory under it, means host layer only -- exactly
+        the previous behaviour.
+        """
+        payload = event.payload if isinstance(event.payload, dict) else {}
+        workspace = payload.get("workspace_path")
+        if not isinstance(workspace, str) or not workspace.strip():
+            return None
+        root = Path(workspace.strip()) / "skills"
+        return root if root.is_dir() else None
+
+    def layered_relevant_skills(
+        self,
+        query: str,
+        *,
+        project_root: Path,
+        max_skills: int = _DEFAULT_MAX_SKILLS,
+        max_skill_chars: int = 4000,
+        file_path: str | Path | None = None,
+        include_bodies: bool = False,
+    ) -> list[Skill]:
+        """Match skills over layered-registry winners (host + project).
+
+        Resolution first (nearest layer wins per :class:`LayeredSkillRegistry`),
+        then trigger matching over the winners' directory entries -- frontmatter
+        only, no body reads for matching. In resident-summary mode bodies are
+        never read at all; with ``include_bodies=True`` only matched winners'
+        bodies are loaded, via :meth:`LayeredSkillRegistry.get`.
+        """
+        count = max(0, min(10, int(max_skills)))
+        per_skill = max(1, min(12000, int(max_skill_chars)))
+        if not count or not _clean(query):
+            return []
+        registry = LayeredSkillRegistry(
+            layers=(
+                SkillLayer.single("host", self.root),
+                SkillLayer.single("project", Path(project_root)),
+            )
+        )
+        winners = registry.list()
+        by_name = {entry.name: entry for entry in winners}
+        headers = [
+            SkillHeader(
+                name=entry.name,
+                description=entry.description,
+                version=entry.version,
+                path=entry.path,
+                allowed_tools=(),
+                source=entry.layer,
+            )
+            for entry in winners
+        ]
+        selected: list[Skill] = []
+        for match in match_skill_headers(headers, query, max_skills=count):
+            entry = by_name.get(match.header.name)
+            if entry is None:
+                continue
+            if file_path is not None and not rule_applies_to_path(entry.globs, file_path):
+                continue
+            body = ""
+            if include_bodies:
+                full = registry.get(entry.name)
+                if full is None:
+                    continue
+                body = full.body[:per_skill].strip()
+                if not body:
+                    continue
+            selected.append(
+                Skill(
+                    name=entry.name,
+                    description=entry.description,
+                    version=entry.version,
+                    path=entry.path,
+                    body=body,
+                    globs=entry.globs,
+                )
+            )
+        return selected
+
+    def activate_skill(self, name: str, *, project_root: Path | str | None = None) -> Skill | None:
         """Activation stage: load one skill's full body on demand.
 
         Call only after the skill's trigger matched (see
         :meth:`relevant_skills` / :meth:`bind_cognition_context`, which
         bind resident summaries). Returns None for unknown or
         unactivatable skills. Never executes anything.
+
+        With ``project_root`` given, activation resolves through the
+        layered registry (host + project, nearest wins), so a
+        project-layer skill matched by layered binding can be loaded.
+        Without it, activation is host-layer only, as before.
         """
+        if project_root is not None:
+            root = Path(project_root)
+            if root.is_dir():
+                registry = LayeredSkillRegistry(
+                    layers=(
+                        SkillLayer.single("host", self.root),
+                        SkillLayer.single("project", root),
+                    )
+                )
+                return registry.get(_clean(name))
         router = SkillRouter(self.root)
         activated = router.activate(name)
         if activated is None:
@@ -452,6 +552,12 @@ class SkillStore:
         event payload carries ``file_path`` (or ``path``), ``globs``
         filtering applies: rules whose globs do not match that file are
         not bound at all.
+
+        Layered binding (M-1): when the event carries an attached workspace
+        with a ``skills`` directory, matching resolves through the layered
+        registry (host + project, nearest layer wins) instead of the
+        host-only router, so project skills participate in Work cognition.
+        Without a project layer the host-only path runs exactly as before.
         """
         context = dict(request.context or {})
         context.pop("resident_skills", None)
@@ -463,7 +569,16 @@ class SkillStore:
         file_path = payload.get("file_path") or payload.get("path")
         if not isinstance(file_path, str) or not file_path.strip():
             file_path = None
-        skills = self.relevant_skills(event.task, file_path=file_path)
+        project_root = self.project_skills_root(event)
+        if project_root is not None:
+            skills = self.layered_relevant_skills(
+                event.task,
+                project_root=project_root,
+                file_path=file_path,
+                include_bodies=include_bodies,
+            )
+        else:
+            skills = self.relevant_skills(event.task, file_path=file_path)
         if not skills:
             return request
         bundle: dict[str, Any] = {
@@ -484,6 +599,12 @@ class SkillStore:
             "skills": [],
             "truncated": False,
         }
+        if project_root is not None:
+            bundle["activation"] = (
+                "Call SkillStore.activate_skill(name, project_root="
+                f"{str(project_root)!r}) to load one matched skill's full "
+                "body on demand; unmatched skills' bodies are never read."
+            )
         for skill in skills:
             if include_bodies:
                 item: dict[str, Any] = {
