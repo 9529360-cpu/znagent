@@ -384,5 +384,176 @@ class MachineActionFabricTests(unittest.TestCase):
         self.assertFalse(result.available)
 
 
+class ActionRelevanceRetrievalTests(unittest.TestCase):
+    @staticmethod
+    def _registry() -> ActionFabricRegistry:
+        registry = ActionFabricRegistry()
+
+        def available(descriptor: ActionDescriptor) -> ActionAvailability:
+            return ActionAvailability(descriptor.action_id, "available")
+
+        def unknown(descriptor: ActionDescriptor) -> ActionAvailability:
+            return ActionAvailability(descriptor.action_id, "unknown")
+
+        registry.register(
+            ActionDescriptor(
+                action_id="windows.audio.volume.set",
+                provider="zn.windows",
+                description="Set the master volume of the default render endpoint.",
+                effect_class="reversible_side_effect",
+                required_authority=("body_action",),
+                tags=("windows", "audio", "volume"),
+            ),
+            availability_probe=available,
+        )
+        registry.register(
+            ActionDescriptor(
+                action_id="windows.audio.volume.read",
+                provider="zn.windows",
+                description="Read the master volume of the default render endpoint.",
+                effect_class="read_only",
+                tags=("windows", "audio", "volume"),
+            ),
+            availability_probe=unknown,
+        )
+        registry.register(
+            ActionDescriptor(
+                action_id="windows.display.brightness.set",
+                provider="zn.windows",
+                description="Set the brightness of the active monitor.",
+                effect_class="reversible_side_effect",
+                required_authority=("body_action",),
+                tags=("windows", "display", "brightness"),
+            ),
+            availability_probe=available,
+        )
+        registry.register(
+            ActionDescriptor(
+                action_id="windows.network.wifi.read",
+                provider="zn.windows",
+                description="Read enabled Wi-Fi interface state.",
+                effect_class="read_only",
+                tags=("windows", "network", "wifi"),
+            ),
+            availability_probe=available,
+        )
+        return registry
+
+    def test_task_returns_only_relevant_subset(self) -> None:
+        results = self._registry().relevant_actions(task="set the volume lower")
+
+        self.assertEqual(
+            tuple(item.action_id for item in results),
+            ("windows.audio.volume.set", "windows.audio.volume.read"),
+        )
+        self.assertNotIn(
+            "windows.display.brightness.set",
+            tuple(item.action_id for item in results),
+        )
+        self.assertNotIn(
+            "windows.network.wifi.read",
+            tuple(item.action_id for item in results),
+        )
+
+    def test_unrelated_task_returns_empty(self) -> None:
+        self.assertEqual(
+            self._registry().relevant_actions(task="bake a birthday cake"),
+            (),
+        )
+        self.assertEqual(self._registry().relevant_actions(task=""), ())
+        self.assertEqual(
+            self._registry().relevant_actions(task="the and of"),
+            (),
+        )
+
+    def test_single_description_word_match_alone_does_not_admit(self) -> None:
+        # "master" appears in the volume descriptions but in no tag or
+        # action-id segment: one weak word match stays below the threshold.
+        self.assertEqual(
+            self._registry().relevant_actions(task="master"),
+            (),
+        )
+        # Both volume actions match; the read action has unknown
+        # availability and must sort behind the available set action even
+        # though the read action is authority-free.
+        results = self._registry().relevant_actions(task="volume")
+
+        self.assertEqual(results[0].action_id, "windows.audio.volume.set")
+        self.assertEqual(results[0].availability.state, "available")
+        self.assertEqual(results[-1].availability.state, "unknown")
+
+    def test_context_tags_retrieve_without_task_text_match(self) -> None:
+        results = self._registry().relevant_actions(
+            task="do something on this machine",
+            context_tags=("wifi",),
+        )
+
+        self.assertEqual(
+            tuple(item.action_id for item in results),
+            ("windows.network.wifi.read",),
+        )
+        self.assertEqual(results[0].matched_tags, ("wifi",))
+
+    def test_authority_domains_reorder_same_availability_matches(self) -> None:
+        held = self._registry().relevant_actions(
+            task="volume", authority_domains=("body_action",)
+        )
+        unheld = self._registry().relevant_actions(task="volume")
+
+        # With body_action held, the set action's authority bonus raises its
+        # score; without it, the set action still ranks first because its
+        # availability is fresh while the read action's is unknown.
+        self.assertEqual(held[0].action_id, "windows.audio.volume.set")
+        self.assertEqual(unheld[0].action_id, "windows.audio.volume.set")
+        self.assertGreater(held[0].score, unheld[0].score)
+        self.assertEqual(unheld[-1].availability.state, "unknown")
+
+    def test_max_actions_caps_result(self) -> None:
+        results = self._registry().relevant_actions(task="windows", max_actions=2)
+
+        self.assertEqual(len(results), 2)
+
+    def test_max_chars_caps_total_budget(self) -> None:
+        results = self._registry().relevant_actions(task="windows", max_chars=60)
+
+        total = sum(
+            len(item.action_id) + 1 + len(item.descriptor.description)
+            for item in results
+        )
+        self.assertGreaterEqual(len(results), 1)
+        # First item is always kept; every further item must fit the budget.
+        self.assertLessEqual(
+            total - (len(results[0].action_id) + 1 + len(results[0].descriptor.description)),
+            60,
+        )
+
+    def test_invalid_caps_fail_closed(self) -> None:
+        registry = self._registry()
+        with self.assertRaisesRegex(ValueError, "max_actions"):
+            registry.relevant_actions(task="volume", max_actions=0)
+        with self.assertRaisesRegex(ValueError, "max_chars"):
+            registry.relevant_actions(task="volume", max_chars=0)
+
+    def test_retrieval_is_deterministic(self) -> None:
+        registry = self._registry()
+        first = registry.relevant_actions(task="set volume and brightness")
+        second = registry.relevant_actions(task="set volume and brightness")
+
+        self.assertEqual(
+            tuple(item.action_id for item in first),
+            tuple(item.action_id for item in second),
+        )
+        self.assertEqual(
+            tuple(item.score for item in first),
+            tuple(item.score for item in second),
+        )
+
+    def test_prompt_lines_carry_availability(self) -> None:
+        results = self._registry().relevant_actions(task="volume")
+
+        self.assertIn("[available]", results[0].prompt_line())
+        self.assertIn("windows.audio.volume.set", results[0].prompt_line())
+
+
 if __name__ == "__main__":
     unittest.main()

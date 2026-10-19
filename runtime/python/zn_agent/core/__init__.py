@@ -17,6 +17,7 @@ from .action_fabric import (
     ActionAvailability,
     ActionDescriptor,
     ActionFabricRegistry,
+    RelevantAction,
     build_machine_action_fabric,
 )
 from .app_competence import (
@@ -155,6 +156,7 @@ from .workspace_file_discipline import (
 __all__ = [
     "ActionAvailability",
     "ActionDescriptor",
+    "RelevantAction",
     "ActionExecution",
     "ActionExecutionRuntime",
     "ActionFabricRegistry",
