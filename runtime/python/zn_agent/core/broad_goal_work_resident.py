@@ -18,6 +18,7 @@ from .action import NativeActionIntent
 from .cognition import CognitiveIncrement
 from .evidence_bound_work import EvidenceBoundSteerableWorkLedger
 from .models import ExecutionPath, ResidentRunResult, utc_now
+from .plan_verify_reroute import STRATEGY_LEDGER_KEY, StrategyLedger
 from .user_browser_extension_resident import UserBrowserExtensionResidentRuntime
 from .steerable_work import WorkItem
 from .structured_proposal import parse_exact_json_payload
@@ -147,7 +148,213 @@ class BroadGoalWorkResidentRuntime(UserBrowserExtensionResidentRuntime):
             "completed_child_count": len(completed),
             "rolling_step_contract": "write_file/text_equals-v1",
         }
+        # M-3: the strategy ledger guides the next proposal (what already
+        # failed, why the loop switched). Layers above this one overwrite
+        # the question (coding) or replace it for non-step rounds (M-5
+        # claim, autonomous intake); the coding layer re-appends this
+        # same block after its overwrite so it survives to cognition.
+        ledger_block = self._strategy_ledger_prompt_block(event, root)
+        if ledger_block:
+            request.question = (
+                str(request.question or "") + "\n\n" + ledger_block
+            )
         return request
+
+    # -- M-3: generic plan -> verify -> reroute loop ----------------------
+    # The strategy ledger lives in durable working state, scoped to the
+    # current plan: steering / replan starts a fresh ledger for the new
+    # plan instead of carrying stale "do not repeat" guidance forward.
+
+    def _strategy_ledger(
+        self,
+        state,
+        *,
+        root: WorkItem | None = None,
+        plan_version: int | None = None,
+        root_work_item_id: str | None = None,
+    ) -> StrategyLedger:
+        if root is not None:
+            plan_version = root.plan_version
+            root_work_item_id = root.work_item_id
+        return StrategyLedger.from_state(
+            state.data.get(STRATEGY_LEDGER_KEY),
+            plan_version=plan_version,
+            root_work_item_id=root_work_item_id,
+        )
+
+    def _save_strategy_ledger(self, state, ledger: StrategyLedger) -> None:
+        state.data[STRATEGY_LEDGER_KEY] = ledger.to_dict()
+
+    def _strategy_ledger_prompt_block(self, event, root: WorkItem) -> str:
+        return self._strategy_ledger(
+            self.store.get_working_state(), root=root
+        ).prompt_block()
+
+    @staticmethod
+    def _strategy_for_rolling_step(
+        rolling: dict, child: WorkItem | None = None
+    ) -> str:
+        objective = str(rolling.get("objective") or "").strip()
+        kind = str(rolling.get("action_kind") or "").strip()
+        target = str(
+            rolling.get("relative_path")
+            or rolling.get("requested_relative_path")
+            or ""
+        ).strip()
+        if not kind and child is not None:
+            # Write-file rolling steps carry no action_kind; infer the
+            # step kind from the child's acceptance-criterion prefix.
+            for criterion in child.acceptance_criteria or []:
+                text = str(criterion or "").strip()
+                if text.startswith("text_equals:"):
+                    kind = "write_file"
+                    break
+                if text.startswith("command_exit:"):
+                    kind = "run_python"
+                    break
+                if text.startswith("independent_python_verification:"):
+                    kind = "verify_python"
+                    break
+        label = f"{kind or 'step'}:{target}" if target else (kind or "step")
+        return f"{label} :: {objective}" if objective else label
+
+    def _record_strategy_failure(
+        self,
+        event,
+        state,
+        *,
+        strategy: str,
+        failure: str,
+        child_work_item_id: str = "",
+        root: WorkItem | None = None,
+    ) -> str | None:
+        """Record one failed attempt; return the blocking reason, if any.
+
+        ``None`` means the loop continues: the next cognition round gets
+        the ledger block (tried strategies + diagnosed missing resource
+        + the resource bundle to switch to). A non-``None`` reason means
+        the budget is exhausted and the caller must terminal-fail with it
+        instead of asking cognition again.
+        """
+        ledger = self._strategy_ledger(state, root=root)
+        _decision, blocked = ledger.record_failure(
+            strategy,
+            failure,
+            child_work_item_id=child_work_item_id,
+        )
+        self._save_strategy_ledger(state, ledger)
+        self.store.save_working_state(state)
+        return blocked
+
+    def _record_strategy_success(
+        self,
+        state,
+        *,
+        root: WorkItem | None = None,
+        plan_version: int | None = None,
+        root_work_item_id: str | None = None,
+    ) -> None:
+        """One verified child: the loop made progress, reset the streak.
+
+        Callers save working state themselves after this (roll-forward
+        paths already do); no extra save here.
+        """
+        ledger = self._strategy_ledger(
+            state,
+            root=root,
+            plan_version=plan_version,
+            root_work_item_id=root_work_item_id,
+        )
+        if ledger.consecutive_failures or ledger.last_signature:
+            ledger.record_success()
+            self._save_strategy_ledger(state, ledger)
+
+    def _record_rolling_failure_if_any(self, event, state) -> str | None:
+        """Record the rolling step's execution failure, if this is one.
+
+        Every Body-step failure funnels into native_investigation with
+        ``local_failure`` set: a failed action (non-zero exit, timeout,
+        error), a failed postcondition verification, and the verifier's
+        fresh-read failure. This is the single recording point for all
+        three, so the loop does not need one hook per failure shape.
+
+        Attribution is strict: the rolling child must be blocked and its
+        blocker must carry this ``local_failure`` text. A proposal
+        rejection reuses the investigation stage, but its
+        ``local_failure`` is about the rejected proposal, not this
+        child -- the child's blocker still carries the child's own
+        execution failure, so a rejection is never mis-recorded as a
+        strategy attempt. Team specialist steps never set the rolling
+        key, and the M-5 completion-report round has no rolling step by
+        the time it runs, so neither is recorded here (the M-5 verdict
+        rejections keep the M-5 budget, not this one).
+
+        Returns the blocking reason when the reroute budget is
+        exhausted, else ``None``.
+        """
+        failure = str(state.data.get("local_failure") or "").strip()
+        if not failure:
+            return None
+        root = self._criterion_bound_root(event)
+        rolling = state.data.get(self._ROLLING_STEP_KEY)
+        if root is None or not isinstance(rolling, dict):
+            return None
+        if str(rolling.get("root_work_item_id") or "") != root.work_item_id:
+            return None
+        child_id = str(rolling.get("work_item_id") or "").strip()
+        if not child_id:
+            return None
+        child = next(
+            (
+                item
+                for item in self.work_ledger.list_work_items(
+                    root.work_thread_id
+                )
+                if item.work_item_id == child_id
+            ),
+            None,
+        )
+        if (
+            child is None
+            or child.status != "blocked"
+            or failure not in str(child.blocker or "")
+        ):
+            return None
+        return self._record_strategy_failure(
+            event,
+            state,
+            strategy=self._strategy_for_rolling_step(rolling, child),
+            failure=failure,
+            child_work_item_id=child_id,
+            root=root,
+        )
+
+    def _investigation_step(
+        self,
+        event,
+        state,
+        *,
+        readiness,
+        learning_evidence,
+        thought=None,
+    ):
+        # M-3: record the rolling step's failure before the base
+        # investigation runs, so the next cognition round gets the
+        # strategy-ledger block and the budget is enforced before
+        # another attempt. When the budget is exhausted, terminal-fail
+        # here instead of investigating further.
+        blocked = self._record_rolling_failure_if_any(event, state)
+        if blocked is not None:
+            return self._checkpoint_terminal_failure(
+                event, state, reason=blocked
+            )
+        return super()._investigation_step(
+            event,
+            state,
+            readiness=readiness,
+            learning_evidence=learning_evidence,
+            thought=thought,
+        )
 
     def _cognition_integration_step(
         self,
@@ -328,6 +535,14 @@ class BroadGoalWorkResidentRuntime(UserBrowserExtensionResidentRuntime):
                 }
             )
         state.data[self._ROLLING_HISTORY_KEY] = history[-12:]
+        # M-3: a verified child is real progress -- reset the reroute
+        # streak so failures spread across a long Work never exhaust
+        # the budget. The ledger entries stay for audit.
+        self._record_strategy_success(
+            state,
+            plan_version=plan_version,
+            root_work_item_id=str(rolling.get("root_work_item_id") or ""),
+        )
         state.data.pop(self._ROLLING_STEP_KEY, None)
         state.data.pop("native_completion", None)
         state.data.pop("cognitive_increment", None)

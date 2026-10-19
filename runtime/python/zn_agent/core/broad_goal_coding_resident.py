@@ -312,6 +312,18 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             "child_count": len(items),
             "latest_execution": latest_execution,
         }
+        # M-3: this layer overwrites the question built by the Work layer
+        # below, which drops the strategy-ledger block appended there.
+        # Re-append it here so the next proposal sees what already
+        # failed, why the loop switched, and what bundle to switch to.
+        # Research/Completion only append after this point; the M-5
+        # claim round and autonomous intake replace the question and
+        # correctly drop this step-strategy block.
+        ledger_block = self._strategy_ledger_prompt_block(event, root)
+        if ledger_block:
+            request.question = (
+                str(request.question or "") + "\n\n" + ledger_block
+            )
         # P1-3: a validated "/skill" reference injects the confirmed skill.
         # Layers above this one may overwrite the question (BroadGoalAutonomous
         # replaces it with the Root acceptance contract); each overwriting
@@ -568,7 +580,16 @@ class BroadGoalCodingResidentRuntime(BroadGoalWorkResidentRuntime):
             ),
             None,
         )
-        if child is None or child.status in {"completed", "superseded"}:
+        # M-3: first failure wins. Reconcile runs on every pulse while
+        # local_failure + the rolling step persist, and later pulses may
+        # carry a different local_failure (e.g. a proposal rejection
+        # reusing the investigation stage). Overwriting the blocker
+        # would replace the child's own execution failure with that
+        # unrelated text and destroy the attribution the strategy
+        # ledger relies on (blocked child's blocker must carry the
+        # child's own failure). A blocked child never executes again,
+        # so there is no second execution failure to record.
+        if child is None or child.status in {"completed", "superseded", "blocked"}:
             return
         raw_action = state.data.get("native_action_result")
         action = raw_action if isinstance(raw_action, dict) else {}
