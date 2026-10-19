@@ -782,7 +782,20 @@ class RoutineManager:
                     scheduled_at=str(held.get("scheduled_at") or ""),
                 )
             except Exception:
-                pass
+                # The run is already failed and the snapshot dropped, so
+                # the worst case is a later hook retry seeing the
+                # terminal run and voiding the occurrence then. Record
+                # the miss instead of swallowing it silently.
+                self._notify(
+                    "routine",
+                    f"Routine {routine.routine_id}: could not clear the "
+                    "pending stamp for a voided occurrence",
+                    features=("routine", "held_occurrence"),
+                    salience=0.4,
+                    valence=-0.1,
+                    arousal=0.2,
+                    metadata={"routine_id": routine.routine_id, "run_id": run_id},
+                )
 
     def _void_held_runs_of_routine(self, routine: Routine, reason: str) -> None:
         """Void every held occurrence of one routine.
