@@ -219,14 +219,15 @@ test('active ZN renderer root is content-first and independent of inherited shel
   // Vendor components come from vendor/ verbatim; the shell never edits them.
   assert.match(shell, /from '\.\.\/\.\.\/\.\.\/\.\.\/vendor\/open-claude-ui\/code-examples\//)
 
-  // Data hooks: the only seam between UI and backend. Stub returns
-  // loading + empty data, never fabricated sessions/messages/approvals.
+  // Data hooks: the only seam between UI and backend. Wired to the real
+  // backend via resident-client; starts from loading, never fabricates
+  // sessions/messages/approvals/todos.
   assert.match(hooks, /export function useZnShellData/)
-  assert.match(hooks, /connection: 'loading'/)
-  assert.match(hooks, /sessions: \[\]/)
-  assert.match(hooks, /messages: \[\]/)
-  assert.match(hooks, /approvals: \[\]/)
-  assert.match(hooks, /todos: \[\]/)
+  assert.match(hooks, /useState<ZnShellConnection>\('loading'\)/)
+  assert.match(hooks, /loadZnWorkThreads/)
+  assert.match(hooks, /startZnWork/)
+  assert.match(hooks, /loadZnApprovals/)
+  assert.match(hooks, /loadZnSuggestions/)
 
   // Old workbench stays on disk as the wiring reference: it still holds the
   // real resident-client calls the wiring worker maps onto the data hooks.

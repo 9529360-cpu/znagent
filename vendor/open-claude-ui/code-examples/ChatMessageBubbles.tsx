@@ -284,7 +284,7 @@ export function AssistantMessageBubble({
         <span className="size-5 rounded-md bg-clay text-white flex items-center justify-center text-[10px] shadow-2xs font-serif font-bold">
           ✦
         </span>
-        <span className="font-semibold text-neutral-900 dark:text-neutral-100">Claude</span>
+        <span className="font-semibold text-neutral-900 dark:text-neutral-100">ZN</span>
         <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-neutral-200/60 dark:bg-neutral-800 text-neutral-600 dark:text-neutral-300">
           {modelName}
         </span>

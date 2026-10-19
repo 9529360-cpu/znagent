@@ -19,11 +19,13 @@
  *    会模拟出假附件。这里原样用它的 UI，但回调只把用户输入的正文传出，
  *    模型/附件/思考开关不进入数据层（见下方 onSendMessage 适配）。
  *
- * 另有两处 vendor 原文行为原样保留、接线时注意（见注释）：
- * - AssistantMessageBubble 头部硬编码了 "Claude" 字样（ZN 身份口径待
- *   后续单独处理，本组装不擅自改 vendor）。
+ * 另有两处 vendor 原文行为由接线层处理（见注释）：
+ * - AssistantMessageBubble 头部曾硬编码 "Claude" 字样：接线时已把该
+ *   一个渲染字样改成 "ZN"（仅改字样，不动样式；这是 vendor 文件
+ *   唯一的例外改动，ZN 必须自称 ZN）。
  * - McpToolDecisionCard 在点“允许”后内部会模拟 1200ms 后翻成成功态，
- *   不代表后端真的执行了；真实执行状态以后端为准。
+ *   不代表后端真的执行了；接线层在决定发出后立刻把卡从托盘摘下
+ *   （卸载掉模拟态），真实执行状态以后端返回为准。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
