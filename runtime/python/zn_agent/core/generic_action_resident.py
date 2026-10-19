@@ -25,6 +25,15 @@ from .generic_action_loop import (
 )
 from .models import ExecutionPath, ResidentRunResult, utc_now
 from .research_information_resident import ResearchInformationResidentRuntime
+from .terminal_loop import (
+    TerminalPermissionContext,
+    check_terminal_permission,
+    execute_terminal_loop_step,
+    parse_terminal_permission,
+    terminal_loop_catalog,
+    terminal_loop_spec,
+    validate_terminal_loop_arguments,
+)
 
 
 class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
@@ -100,6 +109,40 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
         except (ValueError, TypeError):
             return False
         return True
+
+    def _terminal_loop_permission(self, event):
+        """Caller-owned terminal permission, or None when not supplied.
+
+        The permission comes from a resident-owned attribute or from the
+        event payload (``terminal_permission``). It is never model-supplied:
+        the model proposes only the command, workdir, and timeout.
+        """
+        candidate = getattr(self, "terminal_permission_context", None)
+        if isinstance(candidate, TerminalPermissionContext):
+            return candidate
+        payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
+        return parse_terminal_permission(payload.get("terminal_permission"))
+
+    def _resolve_terminal_loop(self, event):
+        body = getattr(getattr(self, "action_executor", None), "body", None)
+        if body is None:
+            body = getattr(self, "body", None)
+        if body is None:
+            raise ValueError("terminal loop has no Body for this event")
+        permission = self._terminal_loop_permission(event)
+        if permission is None:
+            raise ValueError(
+                "terminal loop requires a caller-supplied terminal_permission context; "
+                "the model cannot grant terminal permission itself"
+            )
+        return body, permission
+
+    def _terminal_loop_available(self, event) -> bool:
+        try:
+            _, permission = self._resolve_terminal_loop(event)
+        except (ValueError, TypeError):
+            return False
+        return bool(permission.allow_terminal)
 
     def _model_led_event_enabled(self, event) -> bool:
         """Explicitly selected model-led Work reuses the existing Resident loop.
@@ -223,6 +266,14 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
                 if isinstance(browser_state, dict)
                 else {"session_open": False, "url": "", "page_id": ""}
             )
+        if self._terminal_loop_available(event):
+            action_context["available_actions"].extend(terminal_loop_catalog())
+            _, terminal_permission = self._resolve_terminal_loop(event)
+            action_context["terminal_loop"] = {
+                "available": True,
+                "max_timeout_seconds": terminal_permission.max_timeout_seconds,
+                "allowed_workdirs": list(terminal_permission.allowed_workdirs),
+            }
         context["generic_action_loop"] = action_context
         request.context = context
 
@@ -256,6 +307,18 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
                 "to re-observe. Never invent a session id, page id, or target id; the loop owns the "
                 "session and pins the URL. After a URL-drift failure, decide again from the fresh "
                 "observation instead of reusing the stale page."
+            )
+        if self._terminal_loop_available(event):
+            protocol += (
+                " Terminal work uses the same envelopes with the terminal.run catalog action: "
+                "propose one non-interactive shell command with an explicit workdir inside the "
+                "permitted roots and a timeout in seconds. The command runs through ZN's existing "
+                "Body terminal authority; its real output and exit code come back as observation "
+                "evidence. A non-zero exit code is evidence to decide from, not a reason to assume "
+                "the command never ran. Never propose background, interactive, or long-running "
+                "commands; a command that exceeds its timeout is killed and fails. Commands "
+                "outside the caller-owned terminal permission (workdir, timeout cap, denylist, "
+                "approval policy) are rejected before execution and never run."
             )
         request.question = str(request.question or "") + protocol
         return request
@@ -402,6 +465,12 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
                 event, state, increment, proposal, browser_spec
             )
 
+        terminal_spec = terminal_loop_spec(proposal.action_id)
+        if terminal_spec is not None:
+            return self._admit_terminal_loop_proposal(
+                event, state, increment, proposal, terminal_spec
+            )
+
         descriptor = self.action_fabric.descriptor(proposal.action_id)
         if descriptor is None or not descriptor.body_action_kind:
             return self._reject_generic_action_cognition(
@@ -530,6 +599,79 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
         self.store.save_working_state(state)
         return None
 
+    def _admit_terminal_loop_proposal(self, event, state, increment, proposal, spec):
+        loop = self._generic_action_loop_state(state)
+        admitted = max(0, int(loop.get("actions_admitted") or 0))
+        if admitted >= self._GENERIC_ACTION_MAX_STEPS:
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason="generic Action Fabric loop reached its bounded action limit",
+            )
+        try:
+            normalized = validate_terminal_loop_arguments(spec, proposal.arguments)
+            _, permission = self._resolve_terminal_loop(event)
+            gate = check_terminal_permission(
+                permission,
+                command=str(normalized["command"]),
+                workdir=str(normalized["workdir"]),
+                timeout=float(normalized["timeout"]),
+            )
+            if gate is not None:
+                raise ValueError(gate)
+        except ValueError as exc:
+            return self._reject_generic_action_cognition(
+                event,
+                state,
+                f"terminal loop proposal rejected: {exc}",
+            )
+
+        invocations = self._accept_generic_action_increment(event, state, increment)
+        loop["model_invocations"] = max(0, int(loop.get("model_invocations") or 0)) + invocations
+        loop["actions_admitted"] = admitted + 1
+        loop["protocol_repairs"] = 0
+        proposal_id = f"terminal-loop-{uuid.uuid4().hex[:12]}"
+        loop["pending"] = {
+            "proposal_id": proposal_id,
+            "action_id": proposal.action_id,
+            "arguments": dict(normalized),
+            "increment_id": increment.increment_id,
+            "attempts": 0,
+            "uncertain_attempts": 0,
+            "admitted_at": utc_now(),
+            "terminal_action": True,
+        }
+        loop["status"] = "action_pending"
+        state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
+
+        # terminal.run is always a potential side effect: record the intent
+        # the same way the browser and fabric paths do, so the admitted
+        # command is durable before dispatch.
+        intent = NativeActionIntent(
+            intent_id=proposal_id,
+            event_id=event.event_id,
+            kind="command",
+            args=dict(normalized),
+            expected_outcome={
+                "kind": "terminal_loop",
+                "action_id": proposal.action_id,
+            },
+            reason=(
+                "external cognition proposed one bounded terminal command; "
+                "ZN retained terminal permission authority and the Body dispatch"
+            ),
+            source="external_cognition_terminal_proposal",
+        )
+        state.data["native_action_intent"] = intent.to_dict()
+
+        self._clear_generic_cognition_state(state)
+        state.stage = self._GENERIC_ACTION_STAGE
+        state.next_action = f"execute verified terminal command {proposal.action_id}"
+        state.blocked_by = None
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
+
     def _advance_event_step(
         self,
         event,
@@ -575,6 +717,9 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
 
         if pending.get("browser_action") is True:
             return self._generic_browser_action_step(event, state, loop, pending)
+
+        if pending.get("terminal_action") is True:
+            return self._generic_terminal_action_step(event, state, loop, pending)
 
         descriptor = self.action_fabric.descriptor(action_id)
         if descriptor is None or not descriptor.body_action_kind:
@@ -857,6 +1002,111 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
         )
         state.stage = "native_investigation"
         state.next_action = "inspect the failed browser semantic action before asking cognition for a repair"
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
+
+    def _generic_terminal_action_step(self, event, state, loop, pending):
+        """Execute one admitted terminal proposal exactly once, then decide.
+
+        Unlike the Action Fabric path there is no reverification re-entry
+        here: a dispatched, timed-out, or failed command is never
+        re-dispatched. A completed command with a non-zero exit code still
+        carries real output, so for a model-led event the failure (with that
+        output) goes back to cognition for the next decision instead of to
+        native investigation; timeouts and dispatch failures go to
+        investigation because they carry no trustworthy output.
+        """
+        action_id = str(pending.get("action_id") or "").strip()
+        arguments = pending.get("arguments")
+        proposal_id = str(pending.get("proposal_id") or "").strip()
+        spec = terminal_loop_spec(action_id)
+        if spec is None or not isinstance(arguments, dict):
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason="terminal loop pending proposal is malformed",
+            )
+        try:
+            body, permission = self._resolve_terminal_loop(event)
+        except ValueError as exc:
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason=f"terminal loop lost its Body or permission before execution: {exc}",
+            )
+        pending["attempts"] = max(0, int(pending.get("attempts") or 0)) + 1
+        pending["last_attempt_at"] = utc_now()
+        loop["pending"] = pending
+        loop["status"] = "executing"
+        state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
+        self.store.save_working_state(state)
+
+        result = execute_terminal_loop_step(
+            body,
+            permission=permission,
+            action_id=action_id,
+            arguments=arguments,
+            event_id=event.event_id,
+        )
+        summary = summarize_action_execution(result.execution)
+        summary["proposal_id"] = proposal_id
+        summary["recorded_at"] = utc_now()
+
+        if result.execution.success:
+            history = [
+                dict(item)
+                for item in loop.get("history") or ()
+                if isinstance(item, dict)
+                and str(item.get("proposal_id") or "") != proposal_id
+            ]
+            history.append(summary)
+            loop["history"] = history[-self._GENERIC_ACTION_MAX_STEPS :]
+            loop.pop("pending", None)
+            loop["status"] = "awaiting_next_cognition"
+            loop["last_verified_execution_id"] = summary["execution_id"]
+            state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
+            state.data.pop("native_action_intent", None)
+            state.data.pop("local_failure", None)
+            if loop.get("model_led") is True:
+                state.stage = "model_led_prepare"
+                state.next_action = "prepare model decision from verified terminal evidence"
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return self._begin_model_led_event(event, state)
+            self.investigator.reopen_after_external(
+                event.event_id,
+                f"verified terminal execution {summary['execution_id']} changed current reality",
+            )
+            state.stage = "native_deliberation"
+            state.next_action = "reassess the remaining user goal from verified terminal evidence"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+
+        loop.pop("pending", None)
+        loop["status"] = "action_failed"
+        loop["last_failure"] = summary
+        state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
+        state.data.pop("native_action_intent", None)
+        failure = (
+            result.execution.error
+            or result.execution.verification.reason
+            or f"terminal loop execution failed: {action_id}"
+        )
+        state.data["local_failure"] = str(failure)[:1600]
+        if loop.get("model_led") is True and result.completed_with_output:
+            state.stage = "model_led_prepare"
+            state.next_action = "reconsider terminal command from its real output"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._begin_model_led_event(event, state)
+        self.investigator.reopen_after_external(
+            event.event_id,
+            f"terminal loop execution failed after accepted cognition: {str(failure)[:900]}",
+        )
+        state.stage = "native_investigation"
+        state.next_action = "inspect the failed terminal command before asking cognition for a repair"
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return None
