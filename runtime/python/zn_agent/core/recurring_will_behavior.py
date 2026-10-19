@@ -72,6 +72,9 @@ class RecurringWillTriggers:
         # called with (trigger, occurrence_payload) just before a due
         # occurrence is handed to Will. The layer may record the occurrence
         # and add its own fields to the payload. Never set in this module.
+        # Return contract: None (or anything else) hands off as before;
+        # False holds the occurrence (pending stamp stays, next pulse
+        # retries); "void" drops it (pending stamp cleared, no handoff).
         self._on_handoff = None
         self._init_schema()
 
@@ -163,6 +166,14 @@ class RecurringWillTriggers:
         if cursor.rowcount <= 0:
             return None
         return self.get(intention_id)
+
+    def clear_pending_occurrence(self, intention_id: str, *, scheduled_at: str) -> None:
+        """Clear a stamped pending occurrence without handing it to Will.
+
+        Used by layers (routines) that void a held occurrence, e.g. when
+        its approval was denied: the occurrence must not be retried.
+        """
+        self._clear_pending(str(intention_id), activated_at=str(scheduled_at))
 
     def get(self, intention_id: str) -> RecurringWillTrigger | None:
         with closing(self._connect()) as conn:
@@ -358,11 +369,22 @@ class RecurringWillTriggers:
         # occurrence and add their own context before Will sees it. A hook
         # failure must not lose the occurrence: the trigger row already
         # stamped it, and the next pulse retries the handoff.
+        # The hook may veto the handoff: False holds the occurrence (the
+        # pending stamp stays so the next pulse retries the handoff and
+        # the hook re-evaluates), "void" drops the occurrence (the pending
+        # stamp is cleared without handing anything to Will, e.g. its
+        # approval was denied). Anything else hands off as before.
+        hold = None
         if self._on_handoff is not None:
             try:
-                self._on_handoff(trigger, occurrence_payload)
+                hold = self._on_handoff(trigger, occurrence_payload)
             except Exception:
                 pass
+        if hold is False:
+            return
+        if hold == "void":
+            self._clear_pending(trigger.intention_id, activated_at=scheduled_at)
+            return
         self.resident.will.set_next_step(
             trigger.intention_id,
             trigger.task,
