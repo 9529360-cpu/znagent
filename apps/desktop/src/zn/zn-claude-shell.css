@@ -8,6 +8,15 @@
  * 会话列表自身的宽度来自 vendor 的 w-72 类名，不在这里重复写。
  */
 
+/* No Tailwind preflight in this bundle (esbuild bundles plain CSS), so the
+ * UA default body margin (8px) would otherwise offset the 100vh shell:
+ * the whole shell starts at (8,8), its bottom 8px fall below the fold,
+ * and the page gains a scrollbar. The old workbench entry got this reset
+ * from styles.css; the new shell entry must carry its own. */
+body {
+  margin: 0;
+}
+
 .zn-shell {
   display: flex;
   flex-direction: column;

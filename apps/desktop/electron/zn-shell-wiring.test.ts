@@ -69,6 +69,17 @@ test('shell wiring: cross-zone drag dedupes reorder and keeps pin state in the h
   assert.match(hooks, /setSessionOrder/)
 })
 
+test('shell rendering: compat maps -z-10 to a negative z-index and the shell resets the UA body margin', () => {
+  const compat = read('src/zn/zn-vendor-compat.css')
+  // Tailwind -z-10 is z-index: -10. A positive value puts the CdsButton
+  // paint layer (opaque clay) above its label and renders the label invisible.
+  assert.match(compat, /\.-z-10 \{ z-index: -10; \}/)
+  const shellCss = read('src/zn/zn-claude-shell.css')
+  // No Tailwind preflight in this bundle, so without this reset the UA
+  // default 8px body margin offsets the 100vh shell and clips its bottom.
+  assert.match(shellCss, /body \{\s*margin: 0;/)
+})
+
 test('shell wiring: identity is ZN, and no fake data is invented', () => {
   const bubbles = read('../../vendor/open-claude-ui/code-examples/ChatMessageBubbles.tsx')
   // The vendor bubble's only identity word reads ZN now.
