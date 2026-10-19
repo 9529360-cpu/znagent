@@ -350,7 +350,10 @@ class TerminalLoopRealBodyTests(unittest.TestCase):
         self.assertFalse(result.execution.success)
         self.assertFalse(result.completed_with_output)
         self.assertTrue(result.execution.observations[0].data["timed_out"])
-        self.assertLess(elapsed, 10.0)
+        # A 0.2s timeout must return promptly, not after the 30s sleep.
+        # The bound is generous for slow CI runners; the post-kill drain
+        # itself is capped at 2s inside ZNLocalTerminal.
+        self.assertLess(elapsed, 15.0)
 
     def test_real_nonzero_exit_carries_output_for_the_next_decision(self):
         body = NativeBody()
