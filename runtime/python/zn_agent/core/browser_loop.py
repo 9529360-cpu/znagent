@@ -39,6 +39,10 @@ from .browser import (
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
+from .browser_multipage_context import (
+    load_multipage_context,
+    store_multipage_context,
+)
 from .browser_semantic_action import execute_fresh_semantic_action
 from .models import utc_now
 
@@ -117,6 +121,36 @@ BROWSER_LOOP_ACTIONS: tuple[BrowserLoopActionSpec, ...] = (
         description="Select exactly one option (by visible label or by value, not both) in one combobox found by exact accessible name on the currently pinned page.",
         required_args=("target_name",),
         optional_args=("label", "value", "expected_url_after"),
+    ),
+    BrowserLoopActionSpec(
+        action_id="browser.page.register",
+        kind=None,
+        query_kind=None,
+        effect_class="read_only",
+        description=(
+            "Record the current (or one named) browser page as serving one part of "
+            "this task: which task part lives on this page, plus a short note. "
+            "The page is freshly re-observed first; nothing is dispatched. "
+            "Register a page before leaving it so a later browser.page.return can "
+            "detect whether it changed while you were away."
+        ),
+        required_args=("task_role",),
+        optional_args=("note", "page_id"),
+    ),
+    BrowserLoopActionSpec(
+        action_id="browser.page.return",
+        kind=None,
+        query_kind=None,
+        effect_class="read_only",
+        description=(
+            "Return to a previously registered page: freshly re-observe it and "
+            "refresh the session pin to the fresh observation, together with the "
+            "task part recorded for that page. If the page changed while away, "
+            "the step fails explicitly with the fresh state; never continue from "
+            "the remembered state. No side effect is dispatched."
+        ),
+        required_args=("page_id",),
+        optional_args=(),
     ),
 )
 
@@ -270,6 +304,22 @@ def validate_browser_loop_arguments(
         if len(str(arguments.get("text"))) > _MAX_TEXT:
             raise ValueError("browser loop text is too long")
         normalized["text"] = str(arguments.get("text"))
+    if "task_role" in arguments:
+        normalized["task_role"] = _require_clean_string(
+            arguments.get("task_role"), label="task_role", max_len=256
+        )
+    if "note" in arguments:
+        raw_note = arguments.get("note")
+        if raw_note is None:
+            normalized["note"] = ""
+        else:
+            normalized["note"] = _require_clean_string(
+                raw_note, label="note", max_len=512
+            )
+    if "page_id" in arguments:
+        normalized["page_id"] = _require_clean_string(
+            arguments.get("page_id"), label="page_id", max_len=128
+        )
     if spec.action_id == "browser.semantic_select_option":
         has_label = "label" in arguments
         has_value = "value" in arguments
@@ -293,14 +343,25 @@ def _observation_summary(observation: Any) -> dict[str, Any]:
     }
 
 
-def _session_from_observation(session_id: str, observation: Any) -> dict[str, Any]:
+def _session_from_observation(
+    session_id: str,
+    observation: Any,
+    *,
+    previous: Mapping[str, Any] | None = None,
+) -> dict[str, Any]:
     summary = _observation_summary(observation)
-    return {
+    session = {
         "session_id": str(session_id),
         "url": summary["url"],
         "page_id": summary["page_id"],
         "last_observation": summary,
     }
+    # Multi-page retention context (M-10) survives every step: re-registering
+    # is only needed when the Work wants to (re)record a task part.
+    carried = (previous or {}).get("multipage_context")
+    if carried:
+        session["multipage_context"] = carried
+    return session
 
 
 def _build_execution(
@@ -417,6 +478,24 @@ def execute_browser_loop_step(
                 session=current,
                 session_id=session_id,
             )
+        if spec.action_id == "browser.page.register":
+            return _execute_page_register(
+                provider,
+                spec=spec,
+                normalized=normalized,
+                permission=permission,
+                session=current,
+                session_id=session_id,
+            )
+        if spec.action_id == "browser.page.return":
+            return _execute_page_return(
+                provider,
+                spec=spec,
+                normalized=normalized,
+                permission=permission,
+                session=current,
+                session_id=session_id,
+            )
         return _execute_semantic(
             provider,
             spec=spec,
@@ -516,7 +595,7 @@ def _execute_navigate(
             reason=f"browser post-step verification observe failed after navigation: {type(exc).__name__}: {exc}",
             evidence={"browser_effect": _effect_dict(evidence)},
         )
-    fresh_session = _session_from_observation(session_id, post)
+    fresh_session = _session_from_observation(session_id, post, previous=session)
     if str(post.url or "") != expected_url:
         return _failed_step(
             spec=spec,
@@ -566,7 +645,7 @@ def _execute_observe(
             session=session,
             reason=f"browser observe failed: {type(exc).__name__}: {exc}",
         )
-    fresh_session = _session_from_observation(session_id, observed)
+    fresh_session = _session_from_observation(session_id, observed, previous=session)
     return BrowserLoopStepResult(
         execution=_build_execution(
             spec=spec,
@@ -575,6 +654,196 @@ def _execute_observe(
             reason="browser page freshly observed",
             evidence={"post_verification": _observation_summary(observed)},
             observation_data=_observation_summary(observed),
+        ),
+        session=fresh_session,
+    )
+
+
+def _require_loop_session_id(session_id: str, action_id: str) -> str:
+    clean = str(session_id or "").strip()
+    if not clean:
+        raise ValueError(
+            f"browser loop {action_id} requires an open loop session; propose browser.navigate first"
+        )
+    return clean
+
+
+def _execute_page_register(
+    provider: Any,
+    *,
+    spec: BrowserLoopActionSpec,
+    normalized: Mapping[str, Any],
+    permission: BrowserPermissionContext,
+    session: Mapping[str, Any],
+    session_id: str,
+) -> BrowserLoopStepResult:
+    """Record which task part the current (or one named) page serves.
+
+    Read-only on the page: one fresh targeted observation, then the
+    retention context in the loop session is updated. Nothing is
+    dispatched, so there is nothing to replay.
+    """
+    try:
+        clean_session_id = _require_loop_session_id(session_id, spec.action_id)
+    except ValueError as exc:
+        return _failed_step(
+            spec=spec,
+            arguments=normalized,
+            session=session,
+            reason=str(exc),
+        )
+    page_id = str(normalized.get("page_id") or session.get("page_id") or "").strip()
+    if not page_id:
+        return _failed_step(
+            spec=spec,
+            arguments=normalized,
+            session=session,
+            reason="browser.page.register needs a page_id argument or a pinned page in the loop session",
+        )
+    try:
+        observed = provider.observe(clean_session_id, page_id=page_id)
+    except Exception as exc:
+        return _failed_step(
+            spec=spec,
+            arguments=normalized,
+            session=session,
+            reason=f"browser.page.register could not freshly observe the page: {type(exc).__name__}: {exc}",
+        )
+    try:
+        context = load_multipage_context(session)
+        record = context.register_page(
+            page_id,
+            task_role=str(normalized["task_role"]),
+            note=str(normalized.get("note") or ""),
+            observation=observed,
+        )
+    except ValueError as exc:
+        return _failed_step(
+            spec=spec,
+            arguments=normalized,
+            session=session,
+            reason=str(exc),
+        )
+    fresh_session = _session_from_observation(
+        clean_session_id, observed, previous=session
+    )
+    store_multipage_context(fresh_session, context)
+    return BrowserLoopStepResult(
+        execution=_build_execution(
+            spec=spec,
+            arguments=normalized,
+            success=True,
+            reason=(
+                "browser page freshly re-observed and recorded for its task part; "
+                "return later with browser.page.return to detect drift"
+            ),
+            evidence={
+                "page": {
+                    "page_id": record.page_id,
+                    "task_role": record.task_role,
+                    "note": record.note,
+                    "url": record.url,
+                },
+                "pages": context.describe(),
+            },
+            observation_data=_observation_summary(observed),
+        ),
+        session=fresh_session,
+    )
+
+
+def _execute_page_return(
+    provider: Any,
+    *,
+    spec: BrowserLoopActionSpec,
+    normalized: Mapping[str, Any],
+    permission: BrowserPermissionContext,
+    session: Mapping[str, Any],
+    session_id: str,
+) -> BrowserLoopStepResult:
+    """Return to a registered page: re-observe it fresh, handle drift.
+
+    The session pin is refreshed to the fresh observation either way, so a
+    later semantic action always runs against the fresh URL pin -- never the
+    remembered one. When the page drifted while the Work was away, the step
+    fails explicitly with the fresh state instead of continuing from the
+    remembered state. No side effect is dispatched by the return itself.
+    """
+    try:
+        clean_session_id = _require_loop_session_id(session_id, spec.action_id)
+    except ValueError as exc:
+        return _failed_step(
+            spec=spec,
+            arguments=normalized,
+            session=session,
+            reason=str(exc),
+        )
+    page_id = str(normalized.get("page_id") or "").strip()
+    try:
+        context = load_multipage_context(session)
+        outcome = context.return_to_page(
+            provider,
+            session_id=clean_session_id,
+            page_id=page_id,
+        )
+    except ValueError as exc:
+        return _failed_step(
+            spec=spec,
+            arguments=normalized,
+            session=session,
+            reason=str(exc),
+        )
+    fresh = outcome.fresh_observation
+    fresh_session = _session_from_observation(
+        clean_session_id,
+        fresh if fresh is not None else session.get("last_observation") or {},
+        previous=session,
+    )
+    store_multipage_context(fresh_session, context)
+    record = outcome.record
+    page_summary = {
+        "page_id": record.page_id,
+        "task_role": record.task_role,
+        "note": record.note,
+        "url": record.url,
+        "title": record.title,
+        "reobservations": record.reobservations,
+    }
+    if outcome.drifted:
+        return _failed_step(
+            spec=spec,
+            arguments=normalized,
+            session=fresh_session,
+            reason=(
+                "browser page drifted while away and was re-observed fresh: "
+                f"{outcome.drift_reason}; refusing to continue from the remembered "
+                "state. Session pin refreshed to the fresh observation; decide "
+                "again from the fresh state."
+            ),
+            evidence={
+                "drifted": True,
+                "drift_reason": outcome.drift_reason,
+                "page": page_summary,
+                "pages": context.describe(),
+            },
+            observation_data=_observation_summary(fresh) if fresh is not None else {},
+        )
+    assert fresh is not None
+    return BrowserLoopStepResult(
+        execution=_build_execution(
+            spec=spec,
+            arguments=normalized,
+            success=True,
+            reason=(
+                "browser page returned: freshly re-observed with no drift; "
+                f"continuing its recorded task part {record.task_role!r}"
+            ),
+            evidence={
+                "drifted": False,
+                "page": page_summary,
+                "pages": context.describe(),
+            },
+            observation_data=_observation_summary(fresh),
         ),
         session=fresh_session,
     )
@@ -658,7 +927,7 @@ def _execute_semantic(
                         f"re-observation also failed: {type(observe_exc).__name__}: {observe_exc}"
                     ),
                 )
-            fresh_session = _session_from_observation(session_id, fresh)
+            fresh_session = _session_from_observation(session_id, fresh, previous=session)
             return _failed_step(
                 spec=spec,
                 arguments=normalized,
@@ -702,7 +971,7 @@ def _execute_semantic(
             evidence={"browser_effect": _effect_dict(effect), "regrounds": result.regrounds},
             observation_data=_observation_summary(result.observation),
         )
-    fresh_session = _session_from_observation(session_id, post)
+    fresh_session = _session_from_observation(session_id, post, previous=session)
     if str(post.url or "") != expected_url_after:
         return _failed_step(
             spec=spec,
