@@ -8,6 +8,7 @@ from pathlib import Path
 from zn_agent.core.broad_goal_completion_resident import BroadGoalCompletionResidentRuntime
 from zn_agent.core.budget import CognitiveBudgetManager
 from zn_agent.core.cognitive_resource import CognitiveIncrement, CognitiveResourceWorkerFactory
+from zn_agent.core.completion_verdict import render_completion_report
 from zn_agent.core.models import ModelRoute
 from zn_agent.core.provider_bridge import build_runtime
 from zn_agent.core.recovery_bounded_work import RecoveryBoundedWorkLedger
@@ -22,8 +23,58 @@ class _CompletionCognition:
         self.weaken_final = weaken_final
         self.step_calls = 0
         self.step_questions: list[str] = []
+        self.report_calls = 0
+        self.report_questions: list[str] = []
+
+    @staticmethod
+    def _report(criteria: list[str]) -> str:
+        """A valid M-5 completion report: every criterion cited against
+        real child evidence, plus the standing DoD."""
+        return render_completion_report(
+            conclusion="可运行产物已独立验证通过。",
+            evidence=[
+                (criteria[0], "probe.py"),
+                (criteria[1], "READY"),
+            ],
+            files=["probe.py", "state.json"],
+            unfinished=[],
+            standing_dod={
+                "no_regression": {
+                    "status": "satisfied",
+                    "detail": "只新增 probe.py / state.json，未动其他文件。",
+                    "evidence_ref": "probe.py",
+                },
+                "runtime_verified": {
+                    "status": "satisfied",
+                    "detail": "独立验证器进程实际运行并输出 READY。",
+                    "evidence_ref": "READY",
+                },
+                "docs": {
+                    "status": "satisfied",
+                    "detail": "小探针无面向用户的文档面，结果记在 Work 线程。",
+                },
+                "rollback": {
+                    "status": "satisfied",
+                    "detail": "删除 probe.py 与 state.json 即可回退。",
+                },
+                "approval": {
+                    "status": "satisfied",
+                    "detail": "仅本地工作区写入，无需审批。",
+                },
+            },
+        )
 
     def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
+        # M-5: once the verifier passed, the resident asks for ONLY a
+        # structured completion report -- not another work step.
+        if "completion_report" in question:
+            self.report_calls += 1
+            self.report_questions.append(question)
+            return CognitiveIncrement(
+                text=self._report(self.criteria),
+                provider="fixture",
+                model="completion-fixture",
+            )
         if self._BROAD_MARKER not in question:
             return CognitiveIncrement(
                 text="Continue the durable workspace objective.",
@@ -157,6 +208,9 @@ class BroadGoalIndependentCompletionV2Tests(unittest.TestCase):
                 self.assertTrue(terminal.success)
                 self.assertEqual(terminal.execution_path.value, "body")
                 self.assertGreaterEqual(cognition.step_calls, 3)
+                # M-5: the verifier pass alone no longer accepts the
+                # Root -- a structured completion report round happened.
+                self.assertGreaterEqual(cognition.report_calls, 1)
                 self.assertIn("READY", (workspace / "state.json").read_text(encoding="utf-8"))
 
                 root_after = ledger.work_item_for_event(event.event_id)

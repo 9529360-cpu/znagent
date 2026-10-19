@@ -19,6 +19,12 @@ from typing import Any
 from .action import NativeActionIntent
 from .broad_goal_research_resident import BroadGoalResearchResidentRuntime
 from .cognition import CognitiveIncrement
+from .completion_verdict import (
+    REPORT_SHAPE_HINT,
+    CompletionVerdictError,
+    record_verdict_attempt,
+)
+from .evidence_bound_work import single_work_evidence_entries
 from .models import ExecutionPath, ResidentRunResult, utc_now
 from .steerable_work import WorkItem
 from .structured_proposal import parse_exact_json_payload
@@ -29,6 +35,15 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
     """Finish Root Work only from independently verified current-plan evidence."""
 
     _MODEL_INVOCATION_TOTAL_KEY = "broad_goal_model_invocations"
+    # M-5 (CP-3 for single Work): once the independent verifier passed,
+    # the Root waits for a structured completion report instead of being
+    # accepted on the verifier pass alone. The pending claim carries the
+    # verifier identity + verification summary for the ledger gate; the
+    # verdict retry tracking mirrors the team owner's
+    # ``record_verdict_attempt`` budget (identical rejection escalates at
+    # once, distinct rejections escalate past the budget).
+    _SINGLE_CLAIM_KEY = "single_work_completion_claim"
+    _SINGLE_VERDICT_KEY = "single_work_completion_verdict"
     def _promote_external_completion(self, event, state, run):
         result = super()._promote_external_completion(event, state, run)
         state.data[self._MODEL_INVOCATION_TOTAL_KEY] = max(
@@ -38,10 +53,78 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         self.store.save_working_state(state)
         return result
 
+    def _pending_single_claim(self, event, root) -> dict[str, Any] | None:
+        """The pending single-Work completion claim for this event/Root.
+
+        Returns None when there is no claim or the stored claim belongs
+        to a different event / Root (stale after steering / replan).
+        Read-only: callers that own the state decide whether to drop a
+        stale claim.
+        """
+        state = self.store.get_working_state()
+        raw = state.data.get(self._SINGLE_CLAIM_KEY)
+        if not isinstance(raw, dict):
+            return None
+        if str(raw.get("event_id") or "") != str(event.event_id or ""):
+            return None
+        if str(raw.get("root_work_item_id") or "") != str(
+            root.work_item_id or ""
+        ):
+            return None
+        return dict(raw)
+
     def _build_cognition_request(self, event, impasse, required, deliberation=None):
         request = super()._build_cognition_request(event, impasse, required, deliberation)
         root = self._criterion_bound_root(event)
         if root is None:
+            return request
+        claim = self._pending_single_claim(event, root)
+        if claim is not None:
+            # M-5: the verifier already passed; this round asks for
+            # ONLY the structured completion report. It replaces the
+            # step-proposal question from the layers below -- a new
+            # work step here would not advance completion.
+            completed = [
+                item
+                for item in self.work_ledger.list_work_items(
+                    root.work_thread_id, limit=256
+                )
+                if item.parent_work_item_id == root.work_item_id
+                and item.plan_version == root.plan_version
+                and item.status == "completed"
+            ]
+            evidence_lines = []
+            for entry in single_work_evidence_entries(completed):
+                evidence_lines.append(
+                    "- objective: "
+                    + str(entry.get("objective") or "")[:300]
+                    + " | evidence_ref candidate: "
+                    + (
+                        str(entry.get("relative_path") or "")
+                        or str(entry.get("result") or "")[:300]
+                    )
+                )
+            feedback = str(claim.get("last_feedback") or "").strip()
+            request.question = (
+                "You are a bounded cognitive resource assisting one durable ZN Work. "
+                "The independent verifier already passed and ZN freshly reread the persisted state. "
+                "Do NOT propose another work step. Return ONLY one JSON object with this shape: "
+                f"{REPORT_SHAPE_HINT} "
+                "Cite EVERY Root acceptance criterion exactly once in evidence, each with an evidence_ref "
+                "that matches one listed verified-evidence entry below (a file path, an objective, or a "
+                "distinctive result excerpt). A criterion with no matching evidence, or listed in "
+                "unfinished, does not complete. The standing_dod section must attest all five items: "
+                "no_regression and runtime_verified (when satisfied) MUST cite a real evidence entry; "
+                "docs / rollback / approval need a concrete detail, or not_applicable with a reason. "
+                f"Root acceptance criteria: {json.dumps(root.acceptance_criteria, ensure_ascii=False)}. "
+                "Verified evidence (only these may be cited): "
+                + (" ".join(evidence_lines) if evidence_lines else "none")
+                + (" Previous completion verdict (fix this, do not repeat it): " + feedback if feedback else "")
+            )
+            request.context = {
+                **dict(request.context or {}),
+                "single_work_completion_claim": "completion_report-v1",
+            }
             return request
         completed = [
             item
@@ -82,6 +165,22 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
             )
 
         increment = CognitiveIncrement.from_dict(raw)
+        # M-5: a pending completion claim means this round was asked for
+        # a completion report -- any output is a claim attempt, judged
+        # by the same CP-3 adjudicator as the team path.
+        raw_claim = state.data.get(self._SINGLE_CLAIM_KEY)
+        if isinstance(raw_claim, dict):
+            claim = self._pending_single_claim(event, root)
+            if claim is None:
+                # Stale claim (steering / replan moved the Root): drop
+                # it and fall through to the normal step handling.
+                state.data.pop(self._SINGLE_CLAIM_KEY, None)
+                state.data.pop(self._SINGLE_VERDICT_KEY, None)
+            else:
+                return self._attempt_single_work_claim(
+                    event, state, root, increment, claim
+                )
+
         proposal = self._parse_verify_python_step(event, root, increment.content)
         if proposal is not None:
             return self._begin_root_verification(event, state, root, increment, proposal)
@@ -101,6 +200,80 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
 
         return super()._cognition_integration_step(
             event, state, readiness=readiness, thought=thought
+        )
+
+    def _attempt_single_work_claim(
+        self, event, state, root, increment, claim: dict[str, Any]
+    ):
+        """Judge one single-Work completion report at the ledger gate.
+
+        M-5: the report goes through ``accept_root_with_current_evidence``,
+        whose final gate is the same CP-3 adjudicator as the team path.
+        ``verified`` accepts the Root. ``partial`` / ``rejected`` raise
+        :class:`CompletionVerdictError` carrying the verdict: the reason
+        + missing list + actionable fix are fed back into the next
+        cognition call, with the same bounded retry budget as the team
+        owner (identical rejection escalates at once, distinct
+        rejections escalate past the budget -- then fail closed instead
+        of re-asking cognition).
+        """
+        self._accept_borrowed_increment(event, state, increment)
+        try:
+            accepted = self.work_ledger.accept_root_with_current_evidence(
+                event.event_id,
+                verifier_work_item_id=str(claim.get("verifier_work_item_id") or ""),
+                verification_summary=str(claim.get("verification_summary") or ""),
+                completion_report=increment.content,
+            )
+        except CompletionVerdictError as exc:
+            verdict = exc.verdict
+            tracking, escalate, escalate_reason = record_verdict_attempt(
+                state.data.get(self._SINGLE_VERDICT_KEY),
+                run_id=str(event.event_id or ""),
+                verdict=verdict,
+            )
+            if escalate:
+                state.data.pop(self._SINGLE_CLAIM_KEY, None)
+                state.data.pop(self._SINGLE_VERDICT_KEY, None)
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return self._checkpoint_terminal_failure(
+                    event,
+                    state,
+                    reason=escalate_reason or verdict.feedback_text(),
+                )
+            state.data[self._SINGLE_VERDICT_KEY] = tracking
+            updated_claim = dict(claim)
+            updated_claim["last_feedback"] = verdict.feedback_text()
+            state.data[self._SINGLE_CLAIM_KEY] = updated_claim
+            return self._return_to_investigation_after_rejection(
+                event,
+                state,
+                "单人 Work 完成裁决未通过："
+                + verdict.feedback_text(),
+            )
+        if accepted.status != "completed":
+            raise RuntimeError(
+                "single-Work completion gate returned without completing the Root"
+            )
+        state.data.pop(self._SINGLE_CLAIM_KEY, None)
+        state.data.pop(self._SINGLE_VERDICT_KEY, None)
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return ResidentRunResult(
+            event=event,
+            execution_path=ExecutionPath.BODY,
+            success=True,
+            response="Broad Work accepted from current-plan execution evidence, a fresh "
+            "persisted-state read, and a CP-3 verified completion report: "
+            + str(accepted.result or "")[:4000],
+            model_invocations=max(
+                0, int(state.data.get(self._MODEL_INVOCATION_TOTAL_KEY) or 0)
+            ),
+            reason="criterion-bound Root Work completed only after a separate verifier WorkItem "
+            "passed real Terminal execution, ZN freshly reread declared persisted state through "
+            "its Body, and the evidence ledger verified a structured completion report against "
+            "every Root acceptance criterion (CP-3 verdict)",
         )
 
     def _return_to_investigation_after_rejection(self, event, state, failure: str):
@@ -234,20 +407,36 @@ class BroadGoalCompletionResidentRuntime(BroadGoalResearchResidentRuntime):
         child.updated_at = utc_now()
         self.work_ledger._save_item(child)
         state.data["fresh_persisted_verification"] = {"path": persisted_relative, "success": True, "observed_chars": len(fresh_text), "contains": expected_fragments}
+        # M-5 (CP-3 for single Work): the verifier pass alone no longer
+        # accepts the Root. The next cognition round must submit a
+        # structured completion report citing every Root acceptance
+        # criterion against the completed children's verified evidence;
+        # the ledger gate adjudicates it with the same CP-3 verdict as
+        # the team path. Preserve any previous verdict feedback for this
+        # verifier across a crash-recovery re-roll.
+        previous_claim = state.data.get(self._SINGLE_CLAIM_KEY)
+        previous_feedback = (
+            str(previous_claim.get("last_feedback") or "")
+            if isinstance(previous_claim, dict)
+            and str(previous_claim.get("verifier_work_item_id") or "")
+            == child.work_item_id
+            else ""
+        )
+        state.data[self._SINGLE_CLAIM_KEY] = {
+            "event_id": event.event_id,
+            "root_work_item_id": root.work_item_id,
+            "verifier_work_item_id": child.work_item_id,
+            "verification_summary": str(child.result or result.response or "")[:4000],
+            "last_feedback": previous_feedback,
+        }
+        state.stage = "native_deliberation"
+        state.next_action = (
+            "submit a structured completion report citing every Root "
+            "acceptance criterion against verified child evidence"
+        )
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
-
-        accepted = self.work_ledger.accept_root_with_current_evidence(event.event_id, verifier_work_item_id=child.work_item_id, verification_summary=str(child.result or result.response or "")[:4000])
-        if accepted.status != "completed":
-            return result
-        return ResidentRunResult(
-            event=event,
-            execution_path=ExecutionPath.BODY,
-            success=True,
-            response="Broad Work accepted from current-plan execution evidence and a fresh persisted-state read: " + str(result.response or child.result or "verification passed"),
-            model_invocations=max(0, int(state.data.get(self._MODEL_INVOCATION_TOTAL_KEY) or 0)),
-            reason="criterion-bound Root Work completed only after a separate verifier WorkItem passed real Terminal execution, ZN freshly reread declared persisted state through its Body, and the evidence ledger revalidated current plan identity",
-        )
+        return None
 
     def _parse_verify_python_step(self, event, root: WorkItem, content: str) -> dict[str, Any] | None:
         raw = parse_exact_json_payload(content)
