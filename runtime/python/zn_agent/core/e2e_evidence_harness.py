@@ -488,7 +488,7 @@ def _run_http_observation(
     markers = [str(m) for m in check.get("markers", [])]
     request = urllib.request.Request(url, headers={"User-Agent": "ZN-e2e-harness/1"})
     try:
-        with urllib.request.urlopen(request, timeout=timeout_s) as response:  # noqa: S310
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:
             body = response.read(200_000).decode("utf-8", errors="replace")
             status = getattr(response, "status", 200)
     except Exception as exc:
@@ -771,8 +771,11 @@ def run_all(
     run_id = time.strftime("%Y%m%d-%H%M%S")
     invoke = model_invoke
     if invoke is None:
-        def invoke(question: str, context: str) -> str:  # noqa: F811
+
+        def _missing_invoke(question: str, context: str) -> str:
             raise RuntimeError("dry 模式未注入模型实现：只做任务集校验，不应走到这里")
+
+        invoke = _missing_invoke
 
     outcomes: list[TaskOutcome] = []
     for task in tasks:
