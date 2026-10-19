@@ -245,6 +245,33 @@ def _clean_text(value: Any, cap: int) -> str:
     return " ".join(str(scrubbed).split())[:cap]
 
 
+def quiet_save_working_state(store: Any, state: Any) -> bool:
+    """Best-effort working-state save; False when the save itself failed.
+
+    Used where a save failure must never break the Work path (the
+    in-memory record is already set for this pulse).
+    """
+    saver = getattr(store, "save_working_state", None)
+    if not callable(saver):
+        return False
+    try:
+        saver(state)
+    except Exception:
+        return False
+    return True
+
+
+def _try_consume_card(store: Any, request_id: str) -> bool:
+    """Best-effort consume of an approved card; never raises."""
+    consumer = getattr(store, "consume", None)
+    if not callable(consumer):
+        return False
+    try:
+        return bool(consumer(request_id))
+    except Exception:
+        return False
+
+
 def build_self_team_question(task: str) -> str:
     """The bounded cognition contract: assemble only on clear parallel benefit."""
     allowed = ", ".join(
@@ -533,26 +560,23 @@ class SelfTeamDriver:
     @staticmethod
     def _state_data(state: Any) -> dict[str, Any]:
         data = getattr(state, "data", None)
-        if not isinstance(data, dict):
-            data = {}
-            try:
-                state.data = data
-            except Exception:
-                pass
-        return data
+        if isinstance(data, dict):
+            return data
+        fresh: dict[str, Any] = {}
+        try:
+            state.data = fresh
+        except Exception:
+            # Exotic state object: decide for this pulse anyway; the
+            # record just won't be durable.
+            return {}
+        return fresh
 
     def _record(self, state: Any, data: dict[str, Any], decision: SelfTeamDecision) -> None:
         data[SELF_TEAM_STATE_KEY] = decision.to_record()
         self._save(state)
 
     def _save(self, state: Any) -> None:
-        store = self._store
-        saver = getattr(store, "save_working_state", None)
-        if callable(saver):
-            try:
-                saver(state)
-            except Exception:
-                pass
+        quiet_save_working_state(self._store, state)
 
     def _cognition_allowed(self, event: Any) -> tuple[bool, str]:
         budget = self._budget
@@ -668,12 +692,9 @@ class SelfTeamDriver:
             return decision
         status = str(getattr(request, "status", "") or "")
         if status in ("approved", "approved_once"):
-            consumer = getattr(store, "consume", None)
-            if callable(consumer):
-                try:
-                    consumer(request_id)
-                except Exception:
-                    pass
+            # Consume is bookkeeping: the approval itself stands even if
+            # the consume write fails, so the team still assembles.
+            _try_consume_card(store, request_id)
             return replace(
                 decision,
                 decision=DECIDE_ASSEMBLE,
@@ -710,4 +731,5 @@ __all__ = [
     "decide_self_team",
     "inject_self_team_request",
     "prescreen_self_team",
+    "quiet_save_working_state",
 ]

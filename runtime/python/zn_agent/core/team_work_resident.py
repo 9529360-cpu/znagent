@@ -82,6 +82,7 @@ from .self_team import (
     SELF_TEAM_STATE_KEY,
     SelfTeamDriver,
     SelfTeamWorkOwner,
+    quiet_save_working_state,
 )
 from .team_work_owner import (
     EVIDENCE_KEY,
@@ -632,10 +633,7 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                     f"（{type(exc).__name__}），单人继续"
                 ),
             }
-            try:
-                self.store.save_working_state(state)
-            except Exception:
-                pass
+            quiet_save_working_state(self.store, state)
             return "no_team"
 
     def _block_on_self_team_approval(self, event, state):
