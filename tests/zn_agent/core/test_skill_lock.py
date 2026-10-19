@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -186,6 +188,66 @@ class NightlyCheckTests(unittest.TestCase):
         self.assertEqual(results[0].status, "dry-run")
         self.assertEqual(called, [])
         self.assertEqual(SkillLock(self.root).entry_for("plug-c").sha, SHA_C)
+
+
+class ScriptBareRunnerTests(unittest.TestCase):
+    """Regression: the nightly script must run with stdlib only.
+
+    The nightly workflow (``zn-skill-plugin-updates.yml``) runs on a bare
+    runner with no third-party packages installed. The script previously
+    did ``from zn_agent.core.skill_lock import ...``, which executed the
+    heavy ``zn_agent.core`` package chain and died on ``import psutil``,
+    failing the nightly run 4 days straight. These tests spawn a fresh
+    interpreter with the heavy third-party imports blocked and prove the
+    script still works -- and never imports the ``zn_agent`` package.
+    """
+
+    BLOCKED = ("psutil", "yaml", "httpx", "requests", "pydantic", "playwright")
+
+    def _bare_env(self, extra_path: Path) -> dict[str, str]:
+        site_dir = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        (site_dir / "sitecustomize.py").write_text(
+            "import sys\n"
+            f"_BLOCKED = {self.BLOCKED!r}\n"
+            "class _Blocker:\n"
+            "    def find_spec(self, fullname, path=None, target=None):\n"
+            "        if fullname.split('.')[0] in _BLOCKED:\n"
+            "            raise ImportError(f'blocked for bare-runner test: {fullname}')\n"
+            "        return None\n"
+            "sys.meta_path.insert(0, _Blocker())\n",
+            encoding="utf-8",
+        )
+        env = dict(os.environ)
+        # Fresh PYTHONPATH: scripts dir + blocker only. Deliberately NOT
+        # the repo's runtime/python -- the script must not need it.
+        env["PYTHONPATH"] = os.pathsep.join([str(extra_path), str(site_dir)])
+        return env
+
+    def test_script_import_pulls_in_neither_zn_agent_nor_psutil(self):
+        scripts_dir = Path(__file__).resolve().parents[3] / "scripts"
+        proc = subprocess.run(
+            [sys.executable, "-c",
+             "import skill_plugin_updates, sys; "
+             "print('zn_agent' in sys.modules, 'psutil' in sys.modules)"],
+            capture_output=True, text=True, timeout=60,
+            env=self._bare_env(scripts_dir),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "False False")
+
+    def test_check_with_missing_lockfile_is_noop_exit_zero(self):
+        scripts_dir = Path(__file__).resolve().parents[3] / "scripts"
+        tmp = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        proc = subprocess.run(
+            [sys.executable, str(scripts_dir / "skill_plugin_updates.py"),
+             "check", "--lockfile", str(tmp / "skills.lock.json")],
+            capture_output=True, text=True, timeout=60,
+            env=self._bare_env(scripts_dir),
+        )
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        report = json.loads(proc.stdout)
+        self.assertEqual(report["plugins_checked"], 0)
+        self.assertEqual(report["update_available"], 0)
 
 
 if __name__ == "__main__":

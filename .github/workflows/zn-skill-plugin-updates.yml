@@ -28,6 +28,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      # No pip install step: scripts/skill_plugin_updates.py is stdlib-only
+      # (it loads skill_lock.py straight from its file, bypassing the
+      # zn_agent.core package import chain). Do NOT re-add a package
+      # import or a dependency install here without a regression test.
       - name: Check for plugin updates
         run: |
           python3 scripts/skill_plugin_updates.py check --lockfile skills.lock.json | tee /tmp/skill-plugin-check.json
