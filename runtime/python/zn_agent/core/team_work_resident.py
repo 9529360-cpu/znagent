@@ -77,6 +77,13 @@ from .structured_proposal import (
     parse_exact_json_payload,
 )
 from .team_disband import execute_disband, handles_disband
+from .self_team import (
+    DECIDE_PENDING_APPROVAL,
+    SELF_TEAM_STATE_KEY,
+    SelfTeamDriver,
+    SelfTeamWorkOwner,
+    quiet_save_working_state,
+)
 from .team_work_owner import (
     EVIDENCE_KEY,
     TEAM_CLAIM_STATE_KEY,
@@ -196,6 +203,16 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         if handles_disband(event):
             return self._handle_disband(event, state)
 
+        # M-12 self-team: ZN itself judges whether this task deserves a
+        # parallel specialist team. A positive decision injects the same
+        # team_request payload the user-triggered path uses, so the team
+        # branch below drives it with the existing owner/runner/CP-3
+        # machinery. Small/indivisible/opted-out tasks pass through
+        # untouched; an out-of-envelope decision waits on an approval card.
+        if not TeamWorkOwner.handles(event):
+            if self._self_team_step(event, state) == DECIDE_PENDING_APPROVAL:
+                return self._block_on_self_team_approval(event, state)
+
         if (
             not TeamWorkOwner.handles(event)
             or bool(state.data.get(TEAM_COMPLETE_STATE_KEY))
@@ -231,7 +248,7 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
                 ),
             )
 
-        owner = TeamWorkOwner(ledger=self.work_ledger, memory=self.memory)
+        owner = self._team_owner_for(event)
         # P3-8 sensitive handover: while a handover is pending, the event
         # stays blocked -- no cognition, no dispatch, no claim. The owner
         # resolves it (team_handover_done RPC / "做完了" message); the next
@@ -590,6 +607,61 @@ class TeamWorkResidentRuntime(BroadGoalCodingResidentRuntime):
         self._sync_execution_context(event, state)
         self.store.save_working_state(state)
         return None
+
+    # -- M-12 self-team ----------------------------------------------------
+
+    def _self_team_step(self, event, state) -> str:
+        """One durable self-team judgment per event; returns the decision.
+
+        The judgment itself must never break the normal Work path: on any
+        unexpected error the event stays solo and the reason is recorded.
+        """
+        try:
+            driver = SelfTeamDriver(
+                kernel=self.kernel, budget=self.budget, store=self.store
+            )
+            return driver.step(event, state)
+        except Exception as exc:
+            data = getattr(state, "data", None)
+            if not isinstance(data, dict):
+                data = {}
+                state.data = data
+            data[SELF_TEAM_STATE_KEY] = {
+                "decision": "no_team",
+                "reason": (
+                    "自主组队判断异常"
+                    f"（{type(exc).__name__}），单人继续"
+                ),
+            }
+            quiet_save_working_state(self.store, state)
+            return "no_team"
+
+    def _block_on_self_team_approval(self, event, state):
+        """Block the event alive while the team-assembly card is pending.
+
+        Mirrors the interrupt branch: the event stays alive, no cognition,
+        no dispatch; the next pulse re-polls the card and either assembles
+        or falls back to solo work.
+        """
+        state.blocked_by = "user_presence_required"
+        state.stage = "native_deliberation"
+        state.next_action = (
+            "等待主人审批：ZN 判断该任务值得组建并行专员团队，"
+            "批准后建队并行推进；拒绝则单人继续"
+        )
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
+
+    def _team_owner_for(self, event):
+        """Owner for the team branch: self-assembled teams get the
+        plan-shaping subclass; everything else keeps the exact existing
+        owner. No team state machine change either way."""
+        payload = getattr(event, "payload", None)
+        request = payload.get("team_request") if isinstance(payload, dict) else None
+        if isinstance(request, dict) and request.get("self_team"):
+            return SelfTeamWorkOwner(ledger=self.work_ledger, memory=self.memory)
+        return TeamWorkOwner(ledger=self.work_ledger, memory=self.memory)
 
     def _count_no_evidence_pulse(self, event, state, *, run_id: str) -> str | None:
         """Count one pulse with no new verified evidence for the live run.
