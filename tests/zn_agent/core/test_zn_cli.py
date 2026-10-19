@@ -5,7 +5,6 @@ import io
 import json
 import os
 import socket
-import subprocess
 import sys
 import tempfile
 import threading
@@ -21,7 +20,7 @@ from zn_agent.core.provider_bridge import (
     build_resident_runtime_from_existing_stack,
 )
 from zn_agent.core.resident_server import ResidentSocketService
-from zn_agent.core.zn_cli import ResidentClient, load_endpoint, run
+from zn_agent.core.zn_cli import ResidentClient, _pid_is_dead, load_endpoint, run
 
 _SECRET = "s" * 64
 
@@ -434,16 +433,16 @@ class ZnCliUnitTests(_CliHarness):
         connect.assert_not_called()
 
     def test_stale_pid_endpoint_is_refused_without_connecting(self):
-        proc = subprocess.Popen(
-            [sys.executable, "-c", "pass"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        proc.wait()
+        # Deterministic across platforms: a real dead-pid probe depends on
+        # OS kill() semantics (POSIX ESRCH vs Windows winerror 87) and on
+        # pid reuse, so simulate the OS reporting the pid dead.
         self.endpoint_path.write_text(
-            json.dumps(_endpoint_payload(pid=proc.pid)), encoding="utf-8"
+            json.dumps(_endpoint_payload(pid=424242)), encoding="utf-8"
         )
-        with mock.patch("socket.create_connection") as connect:
+        with (
+            mock.patch("os.kill", side_effect=ProcessLookupError("no such process")),
+            mock.patch("socket.create_connection") as connect,
+        ):
             stderr = io.StringIO()
             with contextlib.redirect_stderr(stderr):
                 code = run(
@@ -452,6 +451,22 @@ class ZnCliUnitTests(_CliHarness):
         self.assertEqual(code, 1)
         self.assertIn("stale", stderr.getvalue())
         connect.assert_not_called()
+
+    def test_pid_is_dead_maps_os_errors(self):
+        with mock.patch("os.kill", side_effect=ProcessLookupError("gone")):
+            self.assertTrue(_pid_is_dead(424242))
+        with mock.patch("os.kill", side_effect=PermissionError("denied")):
+            self.assertFalse(_pid_is_dead(424242))
+        dead_windows = OSError(87, "invalid parameter")
+        dead_windows.winerror = 87
+        with mock.patch("os.kill", side_effect=dead_windows):
+            self.assertTrue(_pid_is_dead(424242))
+        live_windows = OSError(5, "access denied")
+        live_windows.winerror = 5
+        with mock.patch("os.kill", side_effect=live_windows):
+            self.assertFalse(_pid_is_dead(424242))
+        with mock.patch("os.kill", return_value=None):
+            self.assertFalse(_pid_is_dead(424242))
 
     def test_load_endpoint_rejects_short_secret(self):
         self.endpoint_path.write_text(

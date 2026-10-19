@@ -72,16 +72,23 @@ def _default_endpoint_path() -> Path:
 
 
 def _pid_is_dead(pid: int) -> bool:
-    """True only when the OS positively reports the pid does not exist."""
+    """True only when the OS positively reports the pid does not exist.
+
+    POSIX reports a dead pid as ``ProcessLookupError`` (ESRCH). Windows
+    reports it as ``OSError`` with ``winerror == 87``
+    (ERROR_INVALID_PARAMETER from OpenProcess). Any other failure --
+    notably access denied for a live process owned by someone else -- is
+    inconclusive and treated as alive; the connect attempt below decides.
+    """
 
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
         return True
-    except OSError:
-        # Existence check inconclusive on this platform (e.g. another
-        # user's process): treat as alive and let the connect attempt decide.
+    except PermissionError:
         return False
+    except OSError as exc:
+        return getattr(exc, "winerror", None) == 87
     return False
 
 
@@ -227,6 +234,10 @@ class ResidentClient:
         if not raw:
             raise CliError(
                 f"resident closed the connection without a response to {what}"
+            )
+        if not isinstance(raw, (bytes, bytearray)):
+            raise CliError(
+                f"resident returned a non-bytes response to {what}"
             )
         try:
             parsed = json.loads(raw.decode("utf-8"))
