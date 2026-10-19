@@ -405,6 +405,27 @@ class SkillStore:
             )
         return selected
 
+    def detect_skill_gap(
+        self,
+        query: str,
+        *,
+        file_path: str | Path | None = None,
+        event: AgentEvent | None = None,
+    ):
+        """M-13: capability-gap detection on the Work skill path.
+
+        Runs the same host-layer matching as :meth:`relevant_skills`; when
+        nothing matches a non-empty query, returns a
+        :class:`skill_gap.SkillGap` instead of silently continuing without
+        the capability. Callers turn the gap into an acquisition proposal
+        (``skill_gap.build_proposal`` + approval card) -- detection itself
+        never fetches, buys, or installs anything.
+        """
+        from .skill_gap import detect_skill_gap_from_matches
+
+        matched = self.relevant_skills(query, file_path=file_path)
+        return detect_skill_gap_from_matches(query, matched, event=event)
+
     @staticmethod
     def project_skills_root(event: AgentEvent) -> Path | None:
         """Project-layer skills root for a Work event, or None.
