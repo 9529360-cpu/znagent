@@ -349,6 +349,8 @@ class BrowserLoopExecutorTests(unittest.TestCase):
                 "browser.semantic_check",
                 "browser.semantic_uncheck",
                 "browser.semantic_select_option",
+                "browser.page.register",
+                "browser.page.return",
             ],
         )
 
