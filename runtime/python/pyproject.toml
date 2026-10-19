@@ -31,6 +31,7 @@ firecrawl = ["firecrawl-py==4.17.0"]
 browser = ["mcp==2.2.0", "playwright==1.62.0"]
 
 [project.scripts]
+zn = "zn_agent.core.zn_cli:main"
 zn-resident = "zn_agent.resident:main"
 
 [tool.setuptools.packages.find]
