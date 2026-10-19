@@ -346,14 +346,30 @@ class _ClaimCognition:
     """Fixture cognition: three work steps, then scripted report rounds."""
 
     _BROAD_MARKER = "You are a bounded coding/reasoning resource assisting one durable ZN Work."
+    _INTAKE_MARKER = "Before any execution, define the Root acceptance contract."
 
-    def __init__(self, *, report_script: list[str]) -> None:
+    def __init__(
+        self,
+        *,
+        report_script: list[str],
+        intake_criteria: list[str] | None = None,
+    ) -> None:
         self._report_script = list(report_script)
+        self._intake_criteria = intake_criteria
         self.step_calls = 0
         self.report_calls = 0
         self.report_questions: list[str] = []
 
     def invoke(self, *, question: str, context: str) -> CognitiveIncrement:
+        # Full-stack runs ask for the Root acceptance contract first.
+        if self._intake_criteria is not None and self._INTAKE_MARKER in question:
+            return CognitiveIncrement(
+                text=json.dumps(
+                    {"zn_root_acceptance": {"criteria": self._intake_criteria}}
+                ),
+                provider="fixture",
+                model="single-verdict-fixture",
+            )
         if "completion_report" in question:
             index = min(self.report_calls, len(self._report_script) - 1)
             self.report_calls += 1
@@ -546,8 +562,6 @@ class FullAutonomousStackVerdictTests(unittest.TestCase):
     completion layer). Guards the claim round against the layers above
     it (autonomous intake must not swallow the completion report)."""
 
-    _INTAKE_MARKER = "Before any execution, define the Root acceptance contract."
-
     def _start(self, root: Path):
         from zn_agent.core.broad_goal_autonomous_resident import (
             BroadGoalAutonomousResidentRuntime,
@@ -560,7 +574,9 @@ class FullAutonomousStackVerdictTests(unittest.TestCase):
             config={"model": {}}, store_path=root / "kernel.db"
         )
         assert isinstance(resident, BroadGoalAutonomousResidentRuntime)
-        cognition = _ClaimCognition(report_script=[_full_report()])
+        cognition = _ClaimCognition(
+            report_script=[_full_report()], intake_criteria=CRITERIA
+        )
         SingleWorkResidentVerdictTests._configure(resident, cognition)
         control = RestoreAwareWorkControl(RecoveryBoundedWorkLedger(resident))
         ledger = control.ledger
@@ -576,23 +592,8 @@ class FullAutonomousStackVerdictTests(unittest.TestCase):
         return resident, cognition, ledger, event
 
     def test_full_stack_completes_through_the_report_round(self):
-        # Wrap the claim fixture: intake comes first on this stack.
         with tempfile.TemporaryDirectory() as tmp:
             resident, cognition, ledger, event = self._start(Path(tmp))
-            real_invoke = cognition.invoke
-
-            def invoke(*, question: str, context: str) -> CognitiveIncrement:
-                if self._INTAKE_MARKER in question:
-                    return CognitiveIncrement(
-                        text=json.dumps(
-                            {"zn_root_acceptance": {"criteria": CRITERIA}}
-                        ),
-                        provider="fixture",
-                        model="single-verdict-fixture",
-                    )
-                return real_invoke(question=question, context=context)
-
-            cognition.invoke = invoke  # type: ignore[method-assign]
             try:
                 terminal = None
                 for _ in range(260):
