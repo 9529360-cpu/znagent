@@ -79,7 +79,7 @@ class NativeBody:
         self.resident = resident
         self.store = store or (resident.store if resident is not None else None)
         # Extension handlers live INSIDE this Body, never as a second tool runner.
-        # Only explicitly admitted MCP tools may use these entry points: read
+        # Only explicitly admitted MCP/REST tools may use these entry points: read
         # tools via the read handlers, explicitly approved write tools via
         # the write handlers (M-7 contract: per-tool approval + replay
         # identity + postcondition verification).
@@ -99,8 +99,10 @@ class NativeBody:
     ) -> None:
         """Bind one approved read-only tool to the existing audited Body path."""
         normalized = str(kind or "").strip().lower()
-        if not re.fullmatch(r"zn_mcp_read_[a-f0-9]{24}", normalized):
-            raise ValueError("external Body kind must be a stable namespaced MCP read kind")
+        if not re.fullmatch(r"zn_(mcp|rest)_read_[a-f0-9]{24}", normalized):
+            raise ValueError(
+                "external Body kind must be a stable namespaced read kind"
+            )
         if not callable(handler):
             raise TypeError("external read action handler must be callable")
         if normalized in self._external_read_handlers:
@@ -115,17 +117,20 @@ class NativeBody:
         kind: str,
         handler: Callable[[BodyAction, str], BodyActionResult],
     ) -> None:
-        """Bind one explicitly approved MCP write tool to the audited Body path.
+        """Bind one explicitly approved write tool to the audited Body path.
 
-        The handler itself owns the M-7 contract: it must refuse any dispatch
-        whose replay identity was already completed under the same event, so
-        a retry never blindly re-applies a side effect. Postcondition
+        The handler itself owns the write contract (M-7 for MCP, the same
+        contract for REST): it must refuse any dispatch whose replay
+        identity was already completed under the same event, so a retry
+        never blindly re-applies a side effect. Postcondition
         verification lives in the ActionExecutionRuntime layer, which must
         have a per-tool verifier wired before the action can verify.
         """
         normalized = str(kind or "").strip().lower()
-        if not re.fullmatch(r"zn_mcp_write_[a-f0-9]{24}", normalized):
-            raise ValueError("external Body kind must be a stable namespaced MCP write kind")
+        if not re.fullmatch(r"zn_(mcp|rest)_write_[a-f0-9]{24}", normalized):
+            raise ValueError(
+                "external Body kind must be a stable namespaced write kind"
+            )
         if not callable(handler):
             raise TypeError("external write action handler must be callable")
         if normalized in self._external_write_handlers:
