@@ -71,6 +71,20 @@ def _default_endpoint_path() -> Path:
     return get_zn_home() / "kernel" / "resident-endpoint.json"
 
 
+def _pid_is_dead(pid: int) -> bool:
+    """True only when the OS positively reports the pid does not exist."""
+
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    except OSError:
+        # Existence check inconclusive on this platform (e.g. another
+        # user's process): treat as alive and let the connect attempt decide.
+        return False
+    return False
+
+
 def load_endpoint(
     explicit: str | None = None, *, environ: dict[str, str] | None = None
 ) -> Endpoint:
@@ -133,16 +147,11 @@ def load_endpoint(
             f"resident endpoint at {path} has a missing or too-short session secret"
         )
     pid = payload.get("pid")
-    if isinstance(pid, int) and pid > 0 and pid != os.getpid():
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            raise CliError(
-                f"resident endpoint at {path} is stale: the resident process "
-                f"(pid {pid}) no longer exists"
-            ) from None
-        except OSError:
-            pass  # Existence check inconclusive on this platform; connect below.
+    if isinstance(pid, int) and pid > 0 and pid != os.getpid() and _pid_is_dead(pid):
+        raise CliError(
+            f"resident endpoint at {path} is stale: the resident process "
+            f"(pid {pid}) no longer exists"
+        )
     return Endpoint(host=host, port=port, secret=secret, path=path)
 
 

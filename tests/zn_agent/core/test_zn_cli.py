@@ -16,12 +16,12 @@ from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "runtime" / "python"))
 
-from zn_agent.core.daemon import ResidentRpcServer  # noqa: E402
-from zn_agent.core.provider_bridge import (  # noqa: E402
+from zn_agent.core.daemon import ResidentRpcServer
+from zn_agent.core.provider_bridge import (
     build_resident_runtime_from_existing_stack,
 )
-from zn_agent.core.resident_server import ResidentSocketService  # noqa: E402
-from zn_agent.core.zn_cli import ResidentClient, load_endpoint, run  # noqa: E402
+from zn_agent.core.resident_server import ResidentSocketService
+from zn_agent.core.zn_cli import ResidentClient, load_endpoint, run
 
 _SECRET = "s" * 64
 
@@ -57,10 +57,10 @@ class _FakeSocket:
         self.sent: list[dict] = []
         self.closed = False
 
-    def settimeout(self, timeout) -> None:  # noqa: ARG002
+    def settimeout(self, _timeout) -> None:
         pass
 
-    def makefile(self, mode):  # noqa: ARG002
+    def makefile(self, _mode):
         return self.stream
 
     def sendall(self, data: bytes) -> None:
@@ -467,6 +467,17 @@ class ZnCliUnitTests(_CliHarness):
         self.assertIn("secret", str(caught.exception))
 
 
+
+def _best_effort_shutdown(endpoint_path) -> bool:
+    """Ask a test resident to shut down; False when it is already gone."""
+
+    try:
+        ResidentClient(load_endpoint(str(endpoint_path))).call("shutdown", {})
+    except Exception:
+        return False
+    return True
+
+
 class ZnCliResidentIntegrationTests(unittest.TestCase):
     """End-to-end: CLI -> real ResidentSocketService -> real approval store."""
 
@@ -564,12 +575,7 @@ class ZnCliResidentIntegrationTests(unittest.TestCase):
                 self.assertEqual(code, 0, stderr.getvalue())
                 self.assertNotIn(request_id, stdout.getvalue())
             finally:
-                try:
-                    ResidentClient(load_endpoint(str(endpoint_path))).call(
-                        "shutdown", {}
-                    )
-                except Exception:
-                    pass
+                _best_effort_shutdown(endpoint_path)
                 thread.join(timeout=10.0)
                 resident.store.close()
 
