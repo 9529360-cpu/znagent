@@ -19,7 +19,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from zn_agent.core.e2e_evidence_harness import (
+from zn_agent.core.live_model_evidence_harness import (
     DOMAINS,
     FAILURE_MODEL_CAPABILITY,
     FAILURE_NONE,
@@ -39,7 +39,7 @@ from zn_agent.core.e2e_evidence_harness import (
 
 HERE = Path(__file__).resolve()
 REPO_ROOT = HERE.parents[3]  # tests/zn_agent/core/test_x.py -> 仓库根
-TASKSET = REPO_ROOT / "evidence" / "e2e_taskset.json"
+TASKSET = REPO_ROOT / "evidence" / "live_model_taskset.json"
 
 
 def _good_report(task):
@@ -92,7 +92,7 @@ class TestTaskSetSchema(unittest.TestCase):
         }
 
     def _base_set(self, tasks):
-        return {"schema": "zn-e2e-taskset/v1", "tasks": tasks}
+        return {"schema": "zn-live-model-taskset/v1", "tasks": tasks}
 
     def test_rejects_wrong_schema(self):
         path = self._write({"schema": "nope", "tasks": [self._base_task()]})
@@ -463,14 +463,14 @@ class TestReport(unittest.TestCase):
             outcomes=outcomes,
         )
         payload = report.to_dict()
-        self.assertEqual(payload["schema"], "zn-e2e-evidence/v1")
+        self.assertEqual(payload["schema"], "zn-live-model-evidence/v1")
         json.dumps(payload, ensure_ascii=False)  # 必须可序列化
         self.assertEqual(payload["summary"]["total"], 2)
         self.assertEqual(payload["summary"]["by_verdict"]["verified"], 1)
         md = report.to_markdown()
         self.assertIn("research-01", md)
         self.assertIn("browser-01", md)
-        self.assertIn("zn-e2e-evidence/v1", md)
+        self.assertIn("zn-live-model-evidence/v1", md)
 
         with tempfile.TemporaryDirectory() as tmp:
             json_path, md_path = write_report(report, tmp)

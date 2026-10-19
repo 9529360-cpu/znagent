@@ -1,14 +1,14 @@
 {
-  "finished_at": "2026-10-19T19:33:18+0000",
+  "finished_at": "2026-10-19T19:56:39+0000",
   "gate": {
     "reason": "未设置 ZN_E2E_LIVE=1：opt-in 闸门关闭，真实模型调用被跳过"
   },
   "harness_version": "0.1.0",
   "mode": "dry",
   "model": "deepseek-chat",
-  "run_id": "20261019-193318",
-  "schema": "zn-e2e-evidence/v1",
-  "started_at": "2026-10-19T19:33:18+0000",
+  "run_id": "20261019-195639",
+  "schema": "zn-live-model-evidence/v1",
+  "started_at": "2026-10-19T19:56:39+0000",
   "summary": {
     "by_failure_class": {
       "none": 1,

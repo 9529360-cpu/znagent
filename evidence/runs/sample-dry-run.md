@@ -1,9 +1,9 @@
-# ZN 真实模型端到端证据报告（20261019-193318）
+# ZN 真实模型端到端证据报告（20261019-195639）
 
 - 模式：dry（模型：deepseek-chat）
 - 闸门：未设置 ZN_E2E_LIVE=1：opt-in 闸门关闭，真实模型调用被跳过
-- 时间：2026-10-19T19:33:18+0000 → 2026-10-19T19:33:18+0000
-- schema：zn-e2e-evidence/v1 / harness v0.1.0
+- 时间：2026-10-19T19:56:39+0000 → 2026-10-19T19:56:39+0000
+- schema：zn-live-model-evidence/v1 / harness v0.1.0
 - 汇总：共 6 项，rejected=5、skipped=1
 - 失败分类：none=1、tool_environment=5
 

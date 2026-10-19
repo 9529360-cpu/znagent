@@ -8,13 +8,13 @@ opt-in 的证据收集工具：**默认不跑、不进 CI 必需项**。回答 b
 
 ```bash
 # 1. 校验任务集（默认，不触网）
-PYTHONPATH=runtime/python python -m zn_agent.core.e2e_evidence_harness \
-  --taskset evidence/e2e_taskset.json --out evidence/runs
+PYTHONPATH=runtime/python python -m zn_agent.core.live_model_evidence_harness \
+  --taskset evidence/live_model_taskset.json --out evidence/runs
 
 # 2. 真实模型运行（opt-in 闸门）
 ZN_E2E_LIVE=1 ZN_E2E_MODEL=deepseek-chat \
-PYTHONPATH=runtime/python python -m zn_agent.core.e2e_evidence_harness \
-  --taskset evidence/e2e_taskset.json --out evidence/runs --live
+PYTHONPATH=runtime/python python -m zn_agent.core.live_model_evidence_harness \
+  --taskset evidence/live_model_taskset.json --out evidence/runs --live
 ```
 
 闸门逻辑（`resolve_live_gate`）：
@@ -25,7 +25,7 @@ PYTHONPATH=runtime/python python -m zn_agent.core.e2e_evidence_harness \
 
 ## 任务集
 
-`evidence/e2e_taskset.json`（schema `zn-e2e-taskset/v1`）：6 个任务，
+`evidence/live_model_taskset.json`（schema `zn-live-model-taskset/v1`）：6 个任务，
 覆盖研究 / 浏览器 / 文件 / 编码 / 跨面五个域。每个任务自带
 `expected_output`（CP-3 终报逐项举证的验收口径）与确定性检查：
 
@@ -52,14 +52,14 @@ harness 记录的 evidence 条目（`relative_path` / `objective` / `result`）
 
 ## 报告
 
-`evidence/runs/<run_id>.{json,md}`，schema `zn-e2e-evidence/v1`
+`evidence/runs/<run_id>.{json,md}`，schema `zn-live-model-evidence/v1`
 （固定字段集，跨次可对比；`sample-dry-run.*` 为格式样例）。
 报告含：任务 id / 域 / 模型名 / verdict / 失败类 / 耗时 /
 缺失清单 / 关键证据摘录。`_scratch/` 为隔离产物目录，不提交。
 
 ## 测试
 
-`tests/zn_agent/core/test_e2e_evidence_harness.py`：任务集 schema 校验、
+`tests/zn_agent/core/test_live_model_evidence_harness.py`：任务集 schema 校验、
 分类逻辑、终报提取、闸门三态、runner 四条路径 + 干闸门跳过、
 报告往返与写出——全部 mock，不触网，随 CI 正常跑。
 真实模型调用只出现在 opt-in 路径，默认 CI 不受影响。

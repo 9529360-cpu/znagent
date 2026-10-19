@@ -15,7 +15,7 @@
   跳过的任务明确记录跳过原因，而不是假跑。
 - 凭证只走环境变量/现有安全存储引用，永不写入代码、日志与报告。
 
-任务集：声明式 JSON（``evidence/e2e_taskset.json``），覆盖研究 /
+任务集：声明式 JSON（``evidence/live_model_taskset.json``），覆盖研究 /
 浏览器 / 文件 / 编码 / 跨面 五个域。每个任务自带 expected_output
 （CP-3 终报逐项举证的验收口径）与一组确定性检查：
 - ``fact_markers``: 模型输出原文必须命中的事实标记（研究类）。
@@ -57,8 +57,8 @@ from typing import Any, Callable, Mapping, Sequence
 from .completion_verdict import adjudicate_completion
 
 HARNESS_VERSION = "0.1.0"
-REPORT_SCHEMA = "zn-e2e-evidence/v1"
-TASKSET_SCHEMA = "zn-e2e-taskset/v1"
+REPORT_SCHEMA = "zn-live-model-evidence/v1"
+TASKSET_SCHEMA = "zn-live-model-taskset/v1"
 
 LIVE_ENV = "ZN_E2E_LIVE"
 MODEL_ENV = "ZN_E2E_MODEL"
@@ -223,7 +223,7 @@ def resolve_live_gate(*, environ: Mapping[str, str] | None = None) -> LiveGate:
         from .models import ModelRoute
 
         resolve_zn_cognitive_route(
-            ModelRoute(route_id="m11-e2e-gate-probe", provider="auto", model=model)
+            ModelRoute(route_id="m11-live-gate-probe", provider="auto", model=model)
         )
     except Exception as exc:  # 缺凭证 / 路由非法都算闸门关闭
         return LiveGate(
@@ -247,7 +247,7 @@ def build_live_invoke(model: str) -> Callable[[str, str], str]:
         from .models import ModelRoute
 
         route = resolve_zn_cognitive_route(
-            ModelRoute(route_id="m11-e2e-live", provider="auto", model=model)
+            ModelRoute(route_id="m11-live-run", provider="auto", model=model)
         )
         resource = OpenAICompatibleCognitiveResource(route)
         increment = resource.invoke(question=question, context=context)
@@ -486,7 +486,7 @@ def _run_http_observation(
 ) -> CheckOutcome:
     url = str(check.get("url") or "").strip()
     markers = [str(m) for m in check.get("markers", [])]
-    request = urllib.request.Request(url, headers={"User-Agent": "ZN-e2e-harness/1"})
+    request = urllib.request.Request(url, headers={"User-Agent": "ZN-live-model-harness/1"})
     try:
         with urllib.request.urlopen(request, timeout=timeout_s) as response:
             body = response.read(200_000).decode("utf-8", errors="replace")
