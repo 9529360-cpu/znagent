@@ -17,6 +17,7 @@ from .models import utc_now
 from .output_contract import OutputContract
 from .route_policy_intake import infer_thread_route_policy, merge_route_policy
 from .skills import SkillStore
+from .skill_gap_driver import build_skill_gap_driver
 from .skill_ledger import skill_reference_block
 from .steerable_work import WorkItem
 
@@ -55,6 +56,15 @@ class BroadGoalAutonomousResidentRuntime(BroadGoalCompletionResidentRuntime):
         # Skill bundles are file-based domain knowledge (data, not authority).
         # An absent skills directory binds nothing.
         self._skill_store = SkillStore()
+        # M-15: skill-gap auto-trigger inside the Work cognition loop. When
+        # skill binding finds no skill for a task, the driver runs
+        # detect -> propose -> open-card (reusing the M-13 mechanism) and
+        # attaches a bounded gap note; without an approval path it
+        # fail-closes to "blocked", never silently and never auto-installing.
+        self._skill_store.gap_driver = build_skill_gap_driver(
+            skill_store=self._skill_store,
+            store=getattr(self, "store", None),
+        )
 
     def _bind_work_route_policy(self, event, request):
         """Persist Work privacy policy before any external cognition.
