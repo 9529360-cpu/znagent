@@ -106,6 +106,10 @@ APPROVAL_KINDS = (
     # approval/budget envelope; outside it (sensitive / over budget) the
     # decision goes to the user as an approval card of this kind.
     "team_assembly",
+    # M-13: a Work needs a capability no Skill covers; ZN proposes acquiring
+    # a plugin from an already-approved source. Install happens only after
+    # this card is approved; deny/expire means the gap stays blocked.
+    "skill_acquire",
 )
 
 APPROVAL_SOURCES = (
