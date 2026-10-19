@@ -352,6 +352,29 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
         child.updated_at = utc_now()
         self.work_ledger._save_item(child)
         state.data["local_failure"] = failure[:6000]
+        # M-3: a research_page attempt is a loop attempt like any other
+        # step kind -- record it in the same strategy ledger so the next
+        # proposal switches strategy / resource bundle instead of
+        # re-asking for the same page, and the same bounded budget
+        # applies. The M-5 completion-report round is unaffected (it
+        # never calls this path).
+        raw_step = state.data.get(self._BROAD_RESEARCH_KEY)
+        step = raw_step if isinstance(raw_step, dict) else {}
+        blocked = self._record_strategy_failure(
+            event,
+            state,
+            strategy=(
+                f"research_page:{str(step.get('url') or '').strip()} "
+                f":: {child.objective}"
+            ),
+            failure=failure,
+            child_work_item_id=child.work_item_id,
+            root=self._criterion_bound_root(event),
+        )
+        if blocked is not None:
+            return self._checkpoint_terminal_failure(
+                event, state, reason=blocked
+            )
         investigation = self.investigator.current(event.event_id)
         if investigation is not None and investigation.status == "resolved_external":
             evidence = list(investigation.evidence)
@@ -373,6 +396,13 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
         return None
 
     def _roll_forward_research_state(self, event, state):
+        # M-3: completed research evidence is verified progress -- reset
+        # the reroute streak like a verified Body child does. (On the
+        # stale-plan branch the scope check makes this a no-op: the new
+        # plan already gets a fresh ledger.)
+        self._record_strategy_success(
+            state, root=self._criterion_bound_root(event)
+        )
         state.data.pop(self._BROAD_RESEARCH_KEY, None)
         state.data.pop("cognitive_increment", None)
         state.data.pop("external_cognition_result", None)
