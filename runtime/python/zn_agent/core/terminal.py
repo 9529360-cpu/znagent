@@ -22,6 +22,7 @@ import tempfile
 import threading
 import time
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -32,6 +33,13 @@ from .path_context import canonical_host_path
 
 _IS_WINDOWS = os.name == "nt"
 _COMPATIBLE_POSIX_SHELLS = frozenset({"bash", "zsh", "sh", "dash", "ksh", "mksh"})
+
+# Grace for the post-kill stdout drain in ZNLocalTerminal.execute. After
+# the process tree is killed, the read must not wait unboundedly for EOF:
+# a descendant can survive the kill while still holding the stdout pipe,
+# and an unbounded read would then hang until that descendant exits.
+_POST_KILL_DRAIN_TIMEOUT = 2.0
+
 
 _ZN_INHERITED_SECRET_KEYS = frozenset(
     {
@@ -185,7 +193,25 @@ class ZNLocalTerminal:
             timed_out = False
         except subprocess.TimeoutExpired:
             self._terminate_tree(proc)
-            stdout, _ = proc.communicate()
+            try:
+                stdout, _ = proc.communicate(timeout=_POST_KILL_DRAIN_TIMEOUT)
+            except subprocess.TimeoutExpired:
+                # A descendant can survive the tree kill while still
+                # holding the stdout pipe; the unbounded read would then
+                # wait for that descendant's EOF instead of returning.
+                # Abandon the read and reap the direct child only.
+                # Deliberately do NOT close proc.stdout here: on
+                # Windows the reader thread is blocked inside read()
+                # holding the buffer lock, so close() would block
+                # until that read returns (i.e. until EOF) -- the
+                # exact hang this drain exists to avoid. The daemon
+                # reader thread exits on its own at EOF.
+                # Timeout output is best-effort: the timeout verdict is
+                # what the caller must be able to rely on.
+                self._terminate_tree(proc)
+                with suppress(subprocess.TimeoutExpired, OSError):
+                    proc.wait(timeout=1)
+                stdout = ""
             timed_out = True
 
         clean_output, observed_cwd = self._extract_cwd(stdout or "", marker)

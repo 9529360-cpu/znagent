@@ -73,6 +73,21 @@ class ZNLocalTerminalTests(unittest.TestCase):
         self.assertTrue(result.timed_out)
         self.assertEqual(result.status, "timeout")
 
+    def test_timeout_returns_promptly_when_a_detached_child_holds_stdout(self):
+        # A detached grandchild (new session via setsid) escapes the
+        # process-group kill while still holding the stdout pipe. The
+        # post-kill drain must be bounded: without it, execute() would
+        # wait for that grandchild's EOF (20s) instead of returning.
+        started = time.monotonic()
+        result = self.terminal.execute(
+            TerminalRequest(command="setsid sleep 20 & sleep 20", timeout=0.2)
+        )
+        elapsed = time.monotonic() - started
+        self.assertFalse(result.success)
+        self.assertTrue(result.timed_out)
+        self.assertEqual(result.status, "timeout")
+        self.assertLess(elapsed, 12.0)
+
     def test_background_process_can_be_polled_to_completion(self):
         started = self.terminal.execute(
             TerminalRequest(command="printf 'background-ok'", background=True)
