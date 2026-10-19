@@ -20,6 +20,28 @@ A test run is real execution, not a dry run: it hands the routine's task to
 Will through the same path a scheduled occurrence uses, and its run row is
 closed by the same outcome observation. The only difference is the
 ``trigger_kind`` recorded on the row.
+
+The approval boundary is enforced, not just recorded. Before an
+occurrence hands its task to Will, the routine layer checks the boundary
+through the existing approval gate (``ApprovalGate``):
+
+- an empty boundary means unrestricted: the occurrence hands off exactly
+  like before, with no approval card;
+- a non-empty boundary means the occurrence needs approval: it is held
+  (run status ``awaiting_approval``) and an approval card is created
+  (source ``routine``, kind ``production_change``). Nothing executes
+  until the user decides on the card. ``allow_once`` releases that one
+  occurrence; ``always_allow`` records an auto-allow rule so later
+  occurrences of the same routine pass without a card; ``deny`` voids
+  the occurrence (and stays sticky for the routine's task, per the
+  gate's deny semantics — only an explicit reconsideration re-asks it).
+
+Held occurrences are durable: a scheduled hold keeps the trigger
+organ's pending stamp, so the next pulse retries the handoff and the
+gate is re-evaluated (approval -> hand off, still pending -> keep
+holding, denied/expired -> void). A test-run hold is resumed by the
+routine sweep on the next pulse. Editing or pausing a routine voids its
+held occurrences, because the approval was for the pre-edit task.
 """
 
 import sqlite3
@@ -29,6 +51,12 @@ from contextlib import closing
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 
+from .approval_cards import (
+    ApprovalCardStore,
+    ApprovalGate,
+    ApprovalGateOutcome,
+    ApprovalRequest,
+)
 from .models import utc_now
 from .routine_request import (
     DEFAULT_AUTO_PAUSE_AFTER_DAYS,
@@ -77,7 +105,7 @@ class RoutineRun:
     scheduled_at: str
     started_at: str
     finished_at: str | None = None
-    status: str = "running"  # running | succeeded | failed
+    status: str = "running"  # running | awaiting_approval | succeeded | failed
     failure_reason: str | None = None
     summary: str | None = None
 
@@ -92,6 +120,10 @@ class RoutineManager:
         self.resident = resident
         self.store = resident.store
         self._lock = threading.RLock()
+        # The approval ledger lives in the same SQLite file as the
+        # routine tables (daemon's ApprovalCardStore uses the same path),
+        # so the routine layer shares that ledger instead of forking it.
+        self._approval_store_cache: ApprovalCardStore | None = None
         self._init_schema()
 
     # -- creation: propose -> confirm -------------------------------------
@@ -332,6 +364,12 @@ class RoutineManager:
                 ),
             )
             conn.commit()
+        # Re-registering the trigger already cleared any stamped pending
+        # occurrence; void the held runs so an occurrence approved for
+        # the pre-edit task never executes the edited task.
+        self._void_held_runs_of_routine(
+            routine, "routine edited before approval; occurrence voided"
+        )
         return self._snapshot(routine_id)
 
     def delete(self, routine_id: str) -> dict:
@@ -351,6 +389,10 @@ class RoutineManager:
         except KeyError:
             pass
         with self._lock, closing(self._connect()) as conn:
+            conn.execute(
+                "DELETE FROM resident_routine_held_occurrences WHERE routine_id=?",
+                (routine.routine_id,),
+            )
             conn.execute(
                 "DELETE FROM resident_routine_runs WHERE routine_id=?",
                 (routine.routine_id,),
@@ -381,25 +423,46 @@ class RoutineManager:
         This is real execution, not a dry run: the task is handed to Will
         exactly like a scheduled occurrence, and the run row closes on the
         same outcome observation.
+
+        The approval boundary is enforced first. An unrestricted routine
+        (empty boundary) executes immediately. A boundary-carrying routine
+        whose approval card is still pending returns a run in
+        ``awaiting_approval`` without handing anything to Will; the sweep
+        resumes it on the next pulse once the card is approved. A denied
+        or expired boundary raises instead of executing.
         """
         routine = self._require(routine_id)
         self._reject_if_engaged(routine, "test run")
         intention = self.resident.will.get(routine.intention_id)
         if intention is None:
             raise KeyError(f"unknown resident intention: {routine.intention_id}")
+        outcome, request = self._gate_decision(routine)
+        if not outcome.allowed:
+            if request is not None and request.status == "pending":
+                run = self._start_run(
+                    routine,
+                    trigger_kind="test_run",
+                    scheduled_at=None,
+                    initial_status="awaiting_approval",
+                )
+                self._save_held_occurrence(
+                    run,
+                    routine,
+                    request_id=request.request_id,
+                    task=routine.task,
+                )
+                return run.to_dict()
+            raise ValueError(
+                "routine test run blocked by its approval boundary: "
+                f"{outcome.reason}"
+            )
         run = self._start_run(routine, trigger_kind="test_run", scheduled_at=None)
         payload = {
-            "routine_id": routine.routine_id,
-            "routine_run_id": run.run_id,
             "routine_test_run": True,
-            "routine_owner": routine.owner,
-            "routine_approval_boundary": routine.approval_boundary,
-            "routine_missing_data_policy": routine.missing_data_policy,
-            "routine_expected_result": routine.expected_result,
-            "routine_input_source": routine.input_source,
             "execution_authority": False,
             "fresh_revalidation_required": True,
         }
+        self._enrich_occurrence_payload(payload, routine, run)
         self.resident.will.set_next_step(
             routine.intention_id,
             routine.task,
@@ -410,27 +473,67 @@ class RoutineManager:
 
     # -- run history: open on handoff, close on outcome ------------------------
 
-    def _on_trigger_handoff(self, trigger, payload: dict) -> None:
-        """Seam called by the trigger organ just before Will handoff."""
+    def _on_trigger_handoff(self, trigger, payload: dict) -> bool | str | None:
+        """Seam called by the trigger organ just before Will handoff.
+
+        Returns None to hand off as before, False to hold the occurrence
+        (the trigger organ keeps the pending stamp so the next pulse
+        retries and the gate is re-evaluated), or "void" to drop the
+        occurrence without handing it to Will. Never raises: a hook
+        failure holds the occurrence (fail closed) instead of handing an
+        ungated occurrence to Will.
+        """
+        try:
+            return self._on_trigger_handoff_inner(trigger, payload)
+        except Exception:
+            return False
+
+    def _on_trigger_handoff_inner(
+        self, trigger, payload: dict
+    ) -> bool | str | None:
         routine = self.get_by_intention(trigger.intention_id)
         if routine is None or routine.status != "active":
-            return
+            return None
         scheduled_at = str(payload.get("recurring_scheduled_at") or "").strip()
         if not scheduled_at:
-            return
+            return None
+        outcome, request = self._gate_decision(routine)
         run = self._start_run(
             routine,
             trigger_kind="scheduled",
             scheduled_at=scheduled_at,
+            initial_status=(
+                "awaiting_approval"
+                if (not outcome.allowed and request is not None and request.status == "pending")
+                else "running"
+            ),
         )
-        payload["routine_id"] = routine.routine_id
-        payload["routine_run_id"] = run.run_id
-        payload["routine_owner"] = routine.owner
-        payload["routine_approval_boundary"] = routine.approval_boundary
-        payload["routine_missing_data_policy"] = routine.missing_data_policy
-        payload["routine_expected_result"] = routine.expected_result
-        payload["routine_input_source"] = routine.input_source
-        self._touch_run(routine)
+        if run.status in ("succeeded", "failed"):
+            # A terminal run row for this occurrence means it already
+            # ended (e.g. voided earlier); never hand it off again.
+            self._delete_held_occurrence(run.run_id)
+            return "void"
+        if outcome.allowed:
+            self._set_run_status(run.run_id, "running")
+            self._enrich_occurrence_payload(payload, routine, run)
+            self._delete_held_occurrence(run.run_id)
+            self._touch_run(routine)
+            return None
+        if request is not None and request.status == "pending":
+            self._set_run_status(run.run_id, "awaiting_approval")
+            self._save_held_occurrence(
+                run,
+                routine,
+                request_id=request.request_id,
+                task=routine.task,
+            )
+            return False
+        # Denied / expired / undecidable: the occurrence never executes.
+        self._fail_run(
+            run.run_id, f"routine occurrence voided: {outcome.reason}"
+        )
+        self._delete_held_occurrence(run.run_id)
+        return "void"
 
     def close_run_from_event(
         self,
@@ -477,8 +580,277 @@ class RoutineManager:
             if self._should_auto_pause(routine, current):
                 self._auto_pause(routine, current)
                 paused.append(routine.routine_id)
+        self._resume_test_run_holds()
         self._close_stale_runs(current)
         return paused
+
+    # -- approval boundary enforcement -------------------------------------
+
+    def _approval_store(self) -> ApprovalCardStore:
+        if self._approval_store_cache is None:
+            self._approval_store_cache = ApprovalCardStore(self.store.path)
+        return self._approval_store_cache
+
+    def _gate_decision(
+        self, routine: Routine
+    ) -> tuple[ApprovalGateOutcome, ApprovalRequest | None]:
+        """Evaluate a routine's approval_boundary through the approval gate.
+
+        An empty boundary means unrestricted: allowed, with no approval
+        card and no ledger touch. Otherwise the gate decides from the
+        routine's own (kind, scope, target) triple — kind
+        ``production_change``, scope ``routine:<routine_id>``, target the
+        routine task — so one card (or one auto-allow rule) covers exactly
+        this routine's occurrences. The returned request is the gate's
+        latest request for the triple, if any.
+        """
+        if not str(routine.approval_boundary or "").strip():
+            return (
+                ApprovalGateOutcome(
+                    True, reason="approval boundary is empty: unrestricted"
+                ),
+                None,
+            )
+        store = self._approval_store()
+        gate = ApprovalGate(store)
+        outcome = gate.check(
+            action_kind="production_change",
+            target=routine.task,
+            scope=f"routine:{routine.routine_id}",
+            value_text=(
+                f"Routine {routine.routine_id}: {routine.task}. "
+                f"Expected result: {routine.expected_result}. "
+                f"Approval boundary: {routine.approval_boundary}"
+            ),
+            source="routine",
+        )
+        request = (
+            store.get_request(outcome.request_id)
+            if outcome.request_id
+            else None
+        )
+        return outcome, request
+
+    @staticmethod
+    def _enrich_occurrence_payload(
+        payload: dict, routine: Routine, run: RoutineRun
+    ) -> None:
+        """Add the routine context an occurrence carries into Will."""
+        payload["routine_id"] = routine.routine_id
+        payload["routine_run_id"] = run.run_id
+        payload["routine_owner"] = routine.owner
+        payload["routine_approval_boundary"] = routine.approval_boundary
+        payload["routine_missing_data_policy"] = routine.missing_data_policy
+        payload["routine_expected_result"] = routine.expected_result
+        payload["routine_input_source"] = routine.input_source
+
+    def _set_run_status(self, run_id: str, status: str) -> None:
+        """Move a run between running and awaiting_approval.
+
+        Moving to running refreshes started_at: execution starts when the
+        occurrence is released, not when it was first held.
+        """
+        now = utc_now()
+        with self._lock, closing(self._connect()) as conn:
+            if status == "running":
+                conn.execute(
+                    "UPDATE resident_routine_runs "
+                    "SET status='running',started_at=? WHERE run_id=? "
+                    "AND status IN ('running','awaiting_approval')",
+                    (now, str(run_id)),
+                )
+            else:
+                conn.execute(
+                    "UPDATE resident_routine_runs SET status=? WHERE run_id=? "
+                    "AND status IN ('running','awaiting_approval')",
+                    (status, str(run_id)),
+                )
+            conn.commit()
+
+    def _fail_run(self, run_id: str, reason: str) -> None:
+        """Close a running or held run as failed with a reason."""
+        now = utc_now()
+        with self._lock, closing(self._connect()) as conn:
+            conn.execute(
+                """
+                UPDATE resident_routine_runs
+                SET finished_at=?,status='failed',failure_reason=?
+                WHERE run_id=? AND status IN ('running','awaiting_approval')
+                """,
+                (now, str(reason or "").strip() or "运行失败", str(run_id)),
+            )
+            conn.commit()
+
+    # -- held occurrences --------------------------------------------------
+
+    def _save_held_occurrence(
+        self,
+        run: RoutineRun,
+        routine: Routine,
+        *,
+        request_id: str,
+        task: str,
+    ) -> None:
+        """Snapshot a held occurrence: the task as approved, plus its card.
+
+        The snapshot task is the source of truth when the occurrence is
+        later released, so a routine edit in between cannot swap the
+        approved task (edits void held occurrences anyway; this is the
+        second lock). A re-save never overwrites the original task, only
+        the card id, so a re-evaluation cannot smuggle in a new task.
+        """
+        now = utc_now()
+        with self._lock, closing(self._connect()) as conn:
+            conn.execute(
+                """
+                INSERT INTO resident_routine_held_occurrences(
+                    run_id,routine_id,task,approval_request_id,created_at
+                ) VALUES(?,?,?,?,?)
+                ON CONFLICT(run_id) DO UPDATE SET
+                    approval_request_id=excluded.approval_request_id
+                """,
+                (
+                    run.run_id,
+                    routine.routine_id,
+                    str(task or ""),
+                    str(request_id or ""),
+                    now,
+                ),
+            )
+            conn.commit()
+
+    def _held_occurrence(self, run_id: str) -> dict | None:
+        with closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT * FROM resident_routine_held_occurrences WHERE run_id=?",
+                (str(run_id),),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def _delete_held_occurrence(self, run_id: str) -> None:
+        with self._lock, closing(self._connect()) as conn:
+            conn.execute(
+                "DELETE FROM resident_routine_held_occurrences WHERE run_id=?",
+                (str(run_id),),
+            )
+            conn.commit()
+
+    def _held_runs(self) -> list[dict]:
+        """Awaiting runs joined with their held-occurrence snapshot."""
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                """
+                SELECT r.*, h.task AS held_task,
+                       h.approval_request_id AS held_request_id
+                FROM resident_routine_runs r
+                JOIN resident_routine_held_occurrences h
+                  ON h.run_id = r.run_id
+                WHERE r.status='awaiting_approval'
+                ORDER BY r.started_at ASC, r.run_id ASC
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def _void_held_run(
+        self,
+        held: dict,
+        routine: Routine | None,
+        reason: str,
+        *,
+        clear_trigger_pending: bool = False,
+    ) -> None:
+        """Close a held occurrence as failed and drop its snapshot.
+
+        When ``clear_trigger_pending`` is set (the stale sweep's backstop),
+        the trigger organ's pending stamp for a scheduled hold is cleared
+        too, so the occurrence is not retried. Callers that already clear
+        the stamp themselves (pause/edit/delete re-register or disable
+        the trigger) leave it unset.
+        """
+        run_id = str(held.get("run_id") or "")
+        self._fail_run(run_id, reason)
+        self._delete_held_occurrence(run_id)
+        if (
+            clear_trigger_pending
+            and routine is not None
+            and str(held.get("trigger_kind") or "") == "scheduled"
+            and self.resident.recurring_will is not None
+        ):
+            try:
+                self.resident.recurring_will.clear_pending_occurrence(
+                    routine.intention_id,
+                    scheduled_at=str(held.get("scheduled_at") or ""),
+                )
+            except Exception:
+                pass
+
+    def _void_held_runs_of_routine(self, routine: Routine, reason: str) -> None:
+        """Void every held occurrence of one routine.
+
+        Used when the routine is edited or paused: the approval (if any)
+        was for the pre-edit task, so held occurrences must not run.
+        """
+        for held in self._held_runs():
+            if str(held.get("routine_id") or "") == routine.routine_id:
+                self._void_held_run(held, routine, reason)
+
+    def _resume_test_run_holds(self) -> None:
+        """Resume or void test-run holds whose approval card was decided.
+
+        Scheduled holds resume through the trigger organ's retry path
+        (the handoff hook re-evaluates the gate on the next pulse), so
+        the sweep only handles test-run holds, which have no trigger.
+        The intention is checked free BEFORE the gate is consulted, so a
+        busy intention never consumes an approved_once approval.
+        """
+        for held in self._held_runs():
+            if str(held.get("trigger_kind") or "") != "test_run":
+                continue
+            routine = self.get(str(held.get("routine_id") or ""))
+            if routine is None or routine.status != "active":
+                self._void_held_run(
+                    held, routine, "routine is no longer active"
+                )
+                continue
+            intention = self.resident.will.get(routine.intention_id)
+            if intention is None:
+                self._void_held_run(
+                    held, routine, "routine intention is gone"
+                )
+                continue
+            if intention.related_event_id or intention.next_task:
+                continue  # busy; retry on a later pulse
+            outcome, request = self._gate_decision(routine)
+            if outcome.allowed:
+                run = RoutineRun(
+                    run_id=str(held["run_id"]),
+                    routine_id=routine.routine_id,
+                    trigger_kind="test_run",
+                    scheduled_at=str(held.get("scheduled_at") or ""),
+                    started_at=str(held.get("started_at") or ""),
+                )
+                self._set_run_status(run.run_id, "running")
+                payload = {
+                    "routine_test_run": True,
+                    "execution_authority": False,
+                    "fresh_revalidation_required": True,
+                }
+                self._enrich_occurrence_payload(payload, routine, run)
+                self.resident.will.set_next_step(
+                    routine.intention_id,
+                    str(held.get("held_task") or routine.task),
+                    payload=payload,
+                )
+                self._delete_held_occurrence(run.run_id)
+                self._touch_run(routine)
+            elif request is not None and request.status == "pending":
+                continue  # still waiting on the user
+            else:
+                self._void_held_run(
+                    held,
+                    routine,
+                    f"routine occurrence voided: {outcome.reason}",
+                )
 
     # -- internals --------------------------------------------------------------
 
@@ -553,6 +925,12 @@ class RoutineManager:
                 (reason, now, now, routine.routine_id),
             )
             conn.commit()
+        # Disabling the trigger already cleared any stamped pending
+        # occurrence; void the held runs so they never execute later.
+        # The approval (if any) was for the pre-pause state.
+        self._void_held_runs_of_routine(
+            routine, "routine paused before approval; occurrence voided"
+        )
 
     def _close_stale_runs(self, current: datetime) -> None:
         cutoff = (current - _STALE_RUN_AFTER).isoformat()
@@ -567,6 +945,29 @@ class RoutineManager:
                 (current.isoformat(), cutoff),
             )
             conn.commit()
+        # Backstop for held occurrences the handoff hook / sweep never
+        # resolved (e.g. no pulse ran for a day): fail them so they do
+        # not linger in awaiting_approval forever. The approval card
+        # itself expired after 10 minutes; this only closes the record.
+        # Queried from the runs table directly (not the snapshot join)
+        # so a held run without a snapshot is closed too.
+        with closing(self._connect()) as conn:
+            stale_held = conn.execute(
+                """
+                SELECT * FROM resident_routine_runs
+                WHERE status='awaiting_approval' AND started_at < ?
+                """,
+                (cutoff,),
+            ).fetchall()
+        for row in stale_held:
+            held = dict(row)
+            routine = self.get(str(held.get("routine_id") or ""))
+            self._void_held_run(
+                held,
+                routine,
+                "等待审批超过 24 小时，occurrence 已作废",
+                clear_trigger_pending=True,
+            )
 
     def _start_run(
         self,
@@ -574,7 +975,10 @@ class RoutineManager:
         *,
         trigger_kind: str,
         scheduled_at: str | None,
+        initial_status: str = "running",
     ) -> RoutineRun:
+        if initial_status not in ("running", "awaiting_approval"):
+            raise ValueError(f"unsupported initial run status: {initial_status}")
         now = utc_now()
         run_id = f"run-{uuid.uuid4().hex[:12]}"
         scheduled = scheduled_at or now
@@ -587,9 +991,9 @@ class RoutineManager:
                 INSERT OR IGNORE INTO resident_routine_runs(
                     run_id,routine_id,trigger_kind,scheduled_at,started_at,
                     finished_at,status,failure_reason,summary
-                ) VALUES(?,?,?,?,?,NULL,'running',NULL,NULL)
+                ) VALUES(?,?,?,?,?,NULL,?,NULL,NULL)
                 """,
-                (run_id, routine.routine_id, trigger_kind, scheduled, now),
+                (run_id, routine.routine_id, trigger_kind, scheduled, now, initial_status),
             )
             existing = conn.execute(
                 """
@@ -768,6 +1172,17 @@ class RoutineManager:
                 );
                 CREATE INDEX IF NOT EXISTS idx_routine_runs_recent
                     ON resident_routine_runs(routine_id, started_at DESC);
+                CREATE TABLE IF NOT EXISTS resident_routine_held_occurrences(
+                    run_id TEXT PRIMARY KEY,
+                    routine_id TEXT NOT NULL,
+                    task TEXT NOT NULL,
+                    approval_request_id TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(run_id) REFERENCES resident_routine_runs(run_id)
+                        ON DELETE CASCADE
+                );
+                CREATE INDEX IF NOT EXISTS idx_routine_held_routine
+                    ON resident_routine_held_occurrences(routine_id);
                 """
             )
             conn.commit()

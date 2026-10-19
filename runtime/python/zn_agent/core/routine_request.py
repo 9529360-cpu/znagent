@@ -427,8 +427,14 @@ def validate_routine_draft(raw: dict) -> RoutineDraft:
     if not expected_result:
         raise ValueError("routine expected result must not be empty")
     approval_boundary = str(raw.get("approval_boundary") or "").strip()
-    if not approval_boundary:
-        raise ValueError("routine approval boundary must not be empty")
+    # An empty boundary is allowed and means "unrestricted": occurrences
+    # of the routine execute without an approval card. A non-empty
+    # boundary is enforced by the routine layer (see routine.py): the
+    # occurrence is held for approval before it may execute. The
+    # one-sentence parser keeps the safe non-empty default, so a routine
+    # is only unrestricted when the user explicitly clears its boundary.
+    if len(approval_boundary) > 1000:
+        raise ValueError("routine approval boundary must be at most 1000 characters")
     missing_data_policy = str(raw.get("missing_data_policy") or "").strip()
     if missing_data_policy not in MISSING_DATA_POLICIES:
         raise ValueError(
