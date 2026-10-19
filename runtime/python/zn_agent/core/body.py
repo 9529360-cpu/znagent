@@ -79,8 +79,14 @@ class NativeBody:
         self.resident = resident
         self.store = store or (resident.store if resident is not None else None)
         # Extension handlers live INSIDE this Body, never as a second tool runner.
-        # Only explicitly admitted read-only MCP tools may use this entry point.
+        # Only explicitly admitted MCP tools may use these entry points: read
+        # tools via the read handlers, explicitly approved write tools via
+        # the write handlers (M-7 contract: per-tool approval + replay
+        # identity + postcondition verification).
         self._external_read_handlers: dict[
+            str, Callable[[BodyAction, str], BodyActionResult]
+        ] = {}
+        self._external_write_handlers: dict[
             str, Callable[[BodyAction, str], BodyActionResult]
         ] = {}
         if self.store is not None:
@@ -103,6 +109,31 @@ class NativeBody:
 
     def unregister_external_read_handler(self, kind: str) -> None:
         self._external_read_handlers.pop(str(kind or "").strip().lower(), None)
+
+    def register_external_write_handler(
+        self,
+        kind: str,
+        handler: Callable[[BodyAction, str], BodyActionResult],
+    ) -> None:
+        """Bind one explicitly approved MCP write tool to the audited Body path.
+
+        The handler itself owns the M-7 contract: it must refuse any dispatch
+        whose replay identity was already completed under the same event, so
+        a retry never blindly re-applies a side effect. Postcondition
+        verification lives in the ActionExecutionRuntime layer, which must
+        have a per-tool verifier wired before the action can verify.
+        """
+        normalized = str(kind or "").strip().lower()
+        if not re.fullmatch(r"zn_mcp_write_[a-f0-9]{24}", normalized):
+            raise ValueError("external Body kind must be a stable namespaced MCP write kind")
+        if not callable(handler):
+            raise TypeError("external write action handler must be callable")
+        if normalized in self._external_write_handlers:
+            raise ValueError(f"external write action already registered: {normalized}")
+        self._external_write_handlers[normalized] = handler
+
+    def unregister_external_write_handler(self, kind: str) -> None:
+        self._external_write_handlers.pop(str(kind or "").strip().lower(), None)
 
     def sense(self) -> dict[str, Any]:
         disk = shutil.disk_usage(Path.cwd())
@@ -222,6 +253,17 @@ class NativeBody:
                 or result.event_id != action.event_id
             ):
                 raise ValueError("external read handler returned mismatched Body evidence")
+            return result
+        write_extension = self._external_write_handlers.get(kind)
+        if write_extension is not None:
+            result = write_extension(action, started)
+            if (
+                not isinstance(result, BodyActionResult)
+                or result.action_id != action.action_id
+                or result.kind != action.kind
+                or result.event_id != action.event_id
+            ):
+                raise ValueError("external write handler returned mismatched Body evidence")
             return result
         raise ValueError(f"unknown body action kind: {kind or '<empty>'}")
 
@@ -1488,6 +1530,40 @@ class NativeBody:
                 "external_read_redacted": True,
                 "provider_id": str(raw_data.get("provider_id") or "")[:80],
                 "tool": str(raw_data.get("tool") or "")[:100],
+                "result_chars": len(digest_source),
+                "result_sha256": hashlib.sha256(
+                    digest_source.encode("utf-8")
+                ).hexdigest(),
+                "truncated": bool(raw_data.get("truncated")),
+            }
+        if action.kind.startswith("zn_mcp_write_"):
+            # Write arguments can contain the very payload being effected
+            # (a message body, a record, a payment instruction). The audit
+            # history keeps the replay identity and a digest, never the raw
+            # payload or the provider's returned content.
+            encoded = json.dumps(
+                action.args, ensure_ascii=False, sort_keys=True, default=str,
+                separators=(",", ":"),
+            )
+            action_record["args"] = {
+                "redacted": True,
+                "names": sorted(str(name) for name in action.args),
+                "sha256": hashlib.sha256(encoded.encode("utf-8")).hexdigest(),
+            }
+            raw_output = str(result.output or "")
+            raw_data = dict(result.data or {})
+            returned_text = str(raw_data.pop("text", "") or "")
+            digest_source = returned_text or raw_output
+            result_record["output"] = ""
+            result_record["error"] = (
+                "approved MCP write failed" if result.error else None
+            )
+            result_record["data"] = {
+                "external_write_redacted": True,
+                "provider_id": str(raw_data.get("provider_id") or "")[:80],
+                "tool": str(raw_data.get("tool") or "")[:100],
+                "replay_identity": str(raw_data.get("replay_identity") or "")[:64],
+                "replayed": bool(raw_data.get("replayed")),
                 "result_chars": len(digest_source),
                 "result_sha256": hashlib.sha256(
                     digest_source.encode("utf-8")
