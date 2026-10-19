@@ -6,6 +6,15 @@ import uuid
 
 from .action import NativeActionIntent
 from .action_execution import ActionRequest
+from .browser import BrowserPermissionContext
+from .browser_loop import (
+    browser_loop_catalog,
+    browser_loop_spec,
+    close_browser_loop_session,
+    execute_browser_loop_step,
+    parse_browser_permission,
+    validate_browser_loop_arguments,
+)
 from .cognition import CognitiveIncrement
 from .generic_action_loop import (
     build_generic_action_context,
@@ -32,6 +41,65 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
     _GENERIC_ACTION_MAX_STEPS = 12
     _GENERIC_ACTION_MAX_PROTOCOL_REPAIRS = 2
     _GENERIC_ACTION_MAX_REVERIFY_ATTEMPTS = 8
+
+    def _browser_loop_provider(self, event):
+        """Resident-owned browser provider, or None when no provider exists.
+
+        Explicit injection (``browser_provider`` / ``managed_browser``) wins;
+        otherwise the default managed-browser adapter is built lazily and
+        cached. Building never launches a browser; a session opens only when
+        the model proposes ``browser.navigate`` / ``browser.observe``.
+        """
+        for attribute in ("browser_provider", "managed_browser"):
+            try:
+                candidate = getattr(self, attribute, None)
+            except Exception:
+                candidate = None
+            if candidate is not None:
+                return candidate
+        cache = getattr(self, "__dict__", {})
+        if "_browser_loop_provider_cache" in cache:
+            return cache["_browser_loop_provider_cache"]
+        try:
+            from .browser_provider_registry import build_managed_browser_adapter
+
+            provider = build_managed_browser_adapter()
+        except Exception:
+            provider = None
+        self._browser_loop_provider_cache = provider
+        return provider
+
+    def _browser_loop_permission(self, event):
+        """Caller-owned browser permission, or None when not supplied.
+
+        The permission comes from a resident-owned attribute or from the
+        event payload (``browser_permission``). It is never model-supplied:
+        the model proposes only targets and action arguments.
+        """
+        candidate = getattr(self, "browser_permission_context", None)
+        if isinstance(candidate, BrowserPermissionContext):
+            return candidate
+        payload = event.payload if isinstance(getattr(event, "payload", None), dict) else {}
+        return parse_browser_permission(payload.get("browser_permission"))
+
+    def _resolve_browser_loop(self, event):
+        provider = self._browser_loop_provider(event)
+        if provider is None:
+            raise ValueError("browser loop has no browser provider for this event")
+        permission = self._browser_loop_permission(event)
+        if permission is None:
+            raise ValueError(
+                "browser loop requires a caller-supplied browser_permission context; "
+                "the model cannot grant browser permission itself"
+            )
+        return provider, permission
+
+    def _browser_loop_available(self, event) -> bool:
+        try:
+            self._resolve_browser_loop(event)
+        except (ValueError, TypeError):
+            return False
+        return True
 
     def _model_led_event_enabled(self, event) -> bool:
         """Explicitly selected model-led Work reuses the existing Resident loop.
@@ -147,6 +215,14 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
             action_context["last_failure"] = dict(loop["last_failure"])
         if loop.get("last_protocol_error"):
             action_context["last_protocol_error"] = str(loop["last_protocol_error"])[:1200]
+        if self._browser_loop_available(event):
+            action_context["available_actions"].extend(browser_loop_catalog())
+            browser_state = loop.get("browser")
+            action_context["browser_loop"] = (
+                dict(browser_state)
+                if isinstance(browser_state, dict)
+                else {"session_open": False, "url": "", "page_id": ""}
+            )
         context["generic_action_loop"] = action_context
         request.context = context
 
@@ -171,6 +247,15 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
             protocol += (
                 " If the bounded question genuinely needs no local observation or effect, plain prose "
                 "remains valid and no action envelope is required."
+            )
+        if self._browser_loop_available(event):
+            protocol += (
+                " Browser work uses the same envelopes with the browser.* catalog: start with "
+                "browser.navigate to open the loop session, then use browser.semantic_* actions that "
+                "find targets by exact accessible name on the currently pinned page, and browser.observe "
+                "to re-observe. Never invent a session id, page id, or target id; the loop owns the "
+                "session and pins the URL. After a URL-drift failure, decide again from the fresh "
+                "observation instead of reusing the stale page."
             )
         request.question = str(request.question or "") + protocol
         return request
@@ -311,6 +396,12 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
                 reason="generic Action Fabric loop reached its bounded action limit",
             )
 
+        browser_spec = browser_loop_spec(proposal.action_id)
+        if browser_spec is not None:
+            return self._admit_browser_loop_proposal(
+                event, state, increment, proposal, browser_spec
+            )
+
         descriptor = self.action_fabric.descriptor(proposal.action_id)
         if descriptor is None or not descriptor.body_action_kind:
             return self._reject_generic_action_cognition(
@@ -370,6 +461,75 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
         self.store.save_working_state(state)
         return None
 
+    def _admit_browser_loop_proposal(self, event, state, increment, proposal, spec):
+        loop = self._generic_action_loop_state(state)
+        admitted = max(0, int(loop.get("actions_admitted") or 0))
+        if admitted >= self._GENERIC_ACTION_MAX_STEPS:
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason="generic Action Fabric loop reached its bounded action limit",
+            )
+        try:
+            normalized = validate_browser_loop_arguments(spec, proposal.arguments)
+            _, permission = self._resolve_browser_loop(event)
+        except ValueError as exc:
+            return self._reject_generic_action_cognition(
+                event,
+                state,
+                f"browser loop proposal rejected: {exc}",
+            )
+        if spec.kind is not None and not permission.allows_action(spec.kind):
+            return self._reject_generic_action_cognition(
+                event,
+                state,
+                f"browser permission does not allow {spec.kind.value}; the model cannot widen it",
+            )
+
+        invocations = self._accept_generic_action_increment(event, state, increment)
+        loop["model_invocations"] = max(0, int(loop.get("model_invocations") or 0)) + invocations
+        loop["actions_admitted"] = admitted + 1
+        loop["protocol_repairs"] = 0
+        proposal_id = f"browser-loop-{uuid.uuid4().hex[:12]}"
+        loop["pending"] = {
+            "proposal_id": proposal_id,
+            "action_id": proposal.action_id,
+            "arguments": dict(normalized),
+            "increment_id": increment.increment_id,
+            "attempts": 0,
+            "uncertain_attempts": 0,
+            "admitted_at": utc_now(),
+            "browser_action": True,
+        }
+        loop["status"] = "action_pending"
+        state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
+
+        if spec.effect_class != "read_only":
+            intent = NativeActionIntent(
+                intent_id=proposal_id,
+                event_id=event.event_id,
+                kind="browser_semantic_action",
+                args={"action_id": proposal.action_id, "arguments": dict(normalized)},
+                expected_outcome={
+                    "kind": "browser_loop",
+                    "action_id": proposal.action_id,
+                },
+                reason=(
+                    "external cognition proposed one schema-bounded browser semantic action; "
+                    "ZN retained browser permission authority and post-step verification"
+                ),
+                source="external_cognition_browser_proposal",
+            )
+            state.data["native_action_intent"] = intent.to_dict()
+
+        self._clear_generic_cognition_state(state)
+        state.stage = self._GENERIC_ACTION_STAGE
+        state.next_action = f"execute verified browser semantic action {proposal.action_id}"
+        state.blocked_by = None
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
+
     def _advance_event_step(
         self,
         event,
@@ -412,6 +572,9 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
                 state,
                 reason="generic Action Fabric pending proposal is malformed",
             )
+
+        if pending.get("browser_action") is True:
+            return self._generic_browser_action_step(event, state, loop, pending)
 
         descriptor = self.action_fabric.descriptor(action_id)
         if descriptor is None or not descriptor.body_action_kind:
@@ -594,6 +757,110 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
         self.store.save_working_state(state)
         return None
 
+    def _generic_browser_action_step(self, event, state, loop, pending):
+        """Execute one admitted browser proposal exactly once, then verify.
+
+        Unlike the Action Fabric path there is no reverification re-entry
+        here: a dispatched, uncertain, or failed browser effect is never
+        re-dispatched. The failure (with fresh observation evidence) goes
+        back to cognition / investigation so the next decision is made from
+        fresh state.
+        """
+        action_id = str(pending.get("action_id") or "").strip()
+        arguments = pending.get("arguments")
+        proposal_id = str(pending.get("proposal_id") or "").strip()
+        spec = browser_loop_spec(action_id)
+        if spec is None or not isinstance(arguments, dict):
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason="browser loop pending proposal is malformed",
+            )
+        try:
+            provider, permission = self._resolve_browser_loop(event)
+        except ValueError as exc:
+            return self._checkpoint_terminal_failure(
+                event,
+                state,
+                reason=f"browser loop lost its provider or permission before execution: {exc}",
+            )
+        pending["attempts"] = max(0, int(pending.get("attempts") or 0)) + 1
+        pending["last_attempt_at"] = utc_now()
+        loop["pending"] = pending
+        loop["status"] = "executing"
+        state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
+        self.store.save_working_state(state)
+
+        result = execute_browser_loop_step(
+            provider,
+            session=loop.get("browser"),
+            permission=permission,
+            action_id=action_id,
+            arguments=arguments,
+        )
+        loop["browser"] = dict(result.session)
+        summary = summarize_action_execution(result.execution)
+        summary["proposal_id"] = proposal_id
+        summary["recorded_at"] = utc_now()
+
+        if result.execution.success:
+            history = [
+                dict(item)
+                for item in loop.get("history") or ()
+                if isinstance(item, dict)
+                and str(item.get("proposal_id") or "") != proposal_id
+            ]
+            history.append(summary)
+            loop["history"] = history[-self._GENERIC_ACTION_MAX_STEPS :]
+            loop.pop("pending", None)
+            loop["status"] = "awaiting_next_cognition"
+            loop["last_verified_execution_id"] = summary["execution_id"]
+            state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
+            state.data.pop("native_action_intent", None)
+            state.data.pop("local_failure", None)
+            if loop.get("model_led") is True:
+                state.stage = "model_led_prepare"
+                state.next_action = "prepare model decision from verified browser evidence"
+                self._sync_execution_context(event, state)
+                self.store.save_working_state(state)
+                return self._begin_model_led_event(event, state)
+            self.investigator.reopen_after_external(
+                event.event_id,
+                f"verified browser execution {summary['execution_id']} changed current reality",
+            )
+            state.stage = "native_deliberation"
+            state.next_action = "reassess the remaining user goal from verified browser evidence"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return None
+
+        loop.pop("pending", None)
+        loop["status"] = "action_failed"
+        loop["last_failure"] = summary
+        state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
+        state.data.pop("native_action_intent", None)
+        failure = (
+            result.execution.error
+            or result.execution.verification.reason
+            or f"browser loop execution failed: {action_id}"
+        )
+        state.data["local_failure"] = str(failure)[:1600]
+        if loop.get("model_led") is True and spec.effect_class == "read_only":
+            state.stage = "model_led_prepare"
+            state.next_action = "reconsider browser read after verified failure"
+            self._sync_execution_context(event, state)
+            self.store.save_working_state(state)
+            return self._begin_model_led_event(event, state)
+        self.investigator.reopen_after_external(
+            event.event_id,
+            f"browser loop execution failed after accepted cognition: {str(failure)[:900]}",
+        )
+        state.stage = "native_investigation"
+        state.next_action = "inspect the failed browser semantic action before asking cognition for a repair"
+        self._sync_execution_context(event, state)
+        self.store.save_working_state(state)
+        return None
+
     def _complete_generic_action_loop(self, event, state, increment, completion):
         loop = self._generic_action_loop_state(state)
         history = [dict(item) for item in loop.get("history") or () if isinstance(item, dict)]
@@ -647,6 +914,15 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
             "execution_ids": list(cited),
         }
         state.data["generic_action_completion"] = checkpoint
+        browser_state = loop.get("browser")
+        if isinstance(browser_state, dict) and browser_state.get("session_id"):
+            try:
+                browser_provider, _ = self._resolve_browser_loop(event)
+            except ValueError:
+                browser_provider = None
+            close_browser_loop_session(browser_provider, browser_state)
+            loop.pop("browser", None)
+            state.data[self._GENERIC_ACTION_LOOP_KEY] = loop
         state.stage = self._GENERIC_ACTION_COMPLETION_STAGE
         state.next_action = "publish terminal EventOutcome"
         self._sync_execution_context(event, state)
