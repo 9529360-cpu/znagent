@@ -38,6 +38,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, field
 from datetime import date, datetime, time, timedelta, timezone
+from contextlib import suppress
 from pathlib import Path
 from typing import Any, Callable, Mapping, Protocol
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -397,10 +398,10 @@ def _atomic_write_text(path: Path, text: str) -> None:
             handle.write(text)
         os.replace(tmp_name, path)
     except BaseException:
-        try:
+        # Best-effort cleanup of the temp file; its removal failing must not
+        # mask the original error being raised.
+        with suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise
 
 
