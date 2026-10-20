@@ -10,6 +10,7 @@ evidence after actions instead of treating provider dispatch as completion.
 """
 
 import hashlib
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -31,7 +32,11 @@ from .browser import (
 )
 from .managed_browser_select import perform_select_option
 from .models import utc_now
+from .privacy_choke import redact_for_egress
 from .url_safety import is_safe_url
+
+
+_LOG = logging.getLogger(__name__)
 
 
 class ManagedBrowserError(RuntimeError):
@@ -46,6 +51,13 @@ UrlChecker = Callable[..., bool]
 
 _MAX_MANAGED_TEXT_UTF16_UNITS = 512
 _MAX_OBSERVED_TEXT_CHARS = 4096
+
+# Console / page error observation (P2-9). Bounded per page so a chatty page
+# cannot grow session state without limit; each entry's text is truncated
+# and run through the privacy choke single point before it is stored.
+_MAX_CONSOLE_ERRORS_PER_PAGE = 20
+_MAX_CONSOLE_ERROR_TEXT_CHARS = 1024
+_MAX_CONSOLE_ERROR_RECENT_IN_OBSERVATION = 5
 
 _TARGET_HANDLE_BUNDLE_SCRIPT = r"""
 (domId) => {
@@ -247,6 +259,12 @@ class _ManagedSession:
     #   "auto_dismiss_count": number of beforeunload dialogs auto-dismissed on the page
     #   "last_auto_dismissed": snapshot of the most recent auto-dismissed dialog
     dialog_state: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Console / page error state, keyed by page_id. Each entry is a dict with:
+    #   "entries": bounded list (oldest dropped first) of
+    #     {"kind","type","text","captured_at"}; text is redacted + truncated
+    #   "total_count": number of console errors / pageerrors seen on the page
+    #   "dropped_count": entries dropped because the per-page bound was hit
+    console_error_state: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class PlaywrightManagedBrowser:
@@ -1388,6 +1406,121 @@ class PlaywrightManagedBrowser:
             "opened_at": str(snapshot.get("opened_at") or ""),
         }
 
+    def _install_console_error_observer(
+        self,
+        session: _ManagedSession,
+        page_id: str,
+        page: Any,
+    ) -> None:
+        """Record console errors and uncaught page exceptions (pageerror).
+
+        Observation only: this never changes the page or adds new action
+        kinds. Only ``console`` messages with type ``error`` and ``pageerror``
+        events are recorded; warnings and info are ignored. Each entry is
+        redacted through the privacy choke single point and truncated before
+        storage, and the per-page list is bounded (oldest entries are
+        dropped first, with a counter). Handlers must never propagate into
+        the provider: every callback is fail-closed and logs instead.
+        """
+        state = session.console_error_state.setdefault(
+            page_id,
+            {"entries": [], "total_count": 0, "dropped_count": 0},
+        )
+
+        def record_error(kind: str, error_type: str, raw_text: Any) -> None:
+            try:
+                scrubbed = redact_for_egress(str(raw_text or ""))
+                text = str(scrubbed)[:_MAX_CONSOLE_ERROR_TEXT_CHARS]
+                entries = state.setdefault("entries", [])
+                entries.append(
+                    {
+                        "kind": kind,
+                        "type": str(error_type or "unknown"),
+                        "text": text,
+                        "captured_at": utc_now(),
+                    }
+                )
+                state["total_count"] = int(state.get("total_count") or 0) + 1
+                while len(entries) > _MAX_CONSOLE_ERRORS_PER_PAGE:
+                    entries.pop(0)
+                    state["dropped_count"] = int(state.get("dropped_count") or 0) + 1
+            except Exception:
+                _LOG.warning(
+                    "managed browser console error record failed for page %s",
+                    page_id,
+                    exc_info=True,
+                )
+
+        def handle_console(message: Any) -> None:
+            try:
+                message_type = str(getattr(message, "type", "") or "unknown")
+                if message_type.lower() != "error":
+                    return
+                text_getter = getattr(message, "text", None)
+                text = (
+                    text_getter()
+                    if callable(text_getter)
+                    else str(text_getter or "")
+                )
+                record_error("console", message_type, text)
+            except Exception:
+                _LOG.warning(
+                    "managed browser console event handler failed for page %s",
+                    page_id,
+                    exc_info=True,
+                )
+
+        def handle_pageerror(error: Any) -> None:
+            try:
+                stack = getattr(error, "stack", None)
+                text = stack if isinstance(stack, str) and stack else str(error)
+                record_error("pageerror", "pageerror", text)
+            except Exception:
+                _LOG.warning(
+                    "managed browser pageerror handler failed for page %s",
+                    page_id,
+                    exc_info=True,
+                )
+
+        on = getattr(page, "on", None)
+        if not callable(on):
+            _LOG.warning(
+                "managed browser page has no event subscription; "
+                "console error observation disabled for page %s",
+                page_id,
+            )
+            return
+        for event, handler in (
+            ("console", handle_console),
+            ("pageerror", handle_pageerror),
+        ):
+            try:
+                on(event, handler)
+            except Exception:
+                _LOG.warning(
+                    "managed browser could not subscribe %s events on page %s",
+                    event,
+                    page_id,
+                    exc_info=True,
+                )
+
+    @staticmethod
+    def _console_error_snapshot(
+        session: _ManagedSession, page_id: str
+    ) -> dict[str, Any]:
+        """Bounded error summary for one page's observation metadata."""
+        state = session.console_error_state.get(page_id) or {}
+        entries = list(state.get("entries") or [])
+        return {
+            "total_count": int(state.get("total_count") or 0),
+            "kept_count": len(entries),
+            "dropped_count": int(state.get("dropped_count") or 0),
+            "recent": [
+                dict(entry)
+                for entry in entries[-_MAX_CONSOLE_ERROR_RECENT_IN_OBSERVATION:]
+            ],
+        }
+
     @staticmethod
     def _validate_managed_text(value: Any) -> tuple[str, dict[str, Any]]:
         if not isinstance(value, str):
@@ -1532,6 +1665,7 @@ class PlaywrightManagedBrowser:
                 "service_workers": "blocked",
                 "profile_scope": session.identity.profile_scope,
                 "dialog": self._open_dialog_snapshot(session, page_id),
+                "console_errors": self._console_error_snapshot(session, page_id),
                 "dialog_auto_dismiss_count": int(
                     (session.dialog_state.get(page_id) or {}).get(
                         "auto_dismiss_count"
@@ -1833,6 +1967,7 @@ class PlaywrightManagedBrowser:
         if not session.default_page_id:
             session.default_page_id = page_id
         self._install_dialog_observer(session, page_id, page)
+        self._install_console_error_observer(session, page_id, page)
         return page_id
 
     def _reconcile_pages(self, session: _ManagedSession) -> None:
@@ -1884,6 +2019,7 @@ class PlaywrightManagedBrowser:
         self._invalidate_target_binding(session, page_id)
         session.last_observation.pop(page_id, None)
         session.dialog_state.pop(page_id, None)
+        session.console_error_state.pop(page_id, None)
         session.pages.pop(page_id, None)
         if session.default_page_id == page_id:
             session.default_page_id = ""
