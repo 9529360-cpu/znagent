@@ -10,7 +10,10 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.user_browser_causal_popup_adapter import (
     CausalPopupAuthorizedExtensionUserBrowser,
 )
@@ -147,7 +150,7 @@ def _prepared(relay: _CausalRelay):
         allow_page_interaction=True,
         allowed_origins=(_ROOT,),
     )
-    session = browser.open_session(permission=permission)
+    session = browser.open_session(owner=_OWNER, permission=permission)
     initial = browser.observe(session.session_id)
     observed = browser.observe_target(
         session.session_id,

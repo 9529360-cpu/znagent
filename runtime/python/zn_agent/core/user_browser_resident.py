@@ -8,11 +8,34 @@ from typing import Any
 
 from .action import NativeActionIntent
 from .body import BodyActionResult
-from .browser import BrowserPermissionContext, BrowserPlane
+from .browser import BrowserPermissionContext, BrowserPlane, BrowserSessionOwner
 from .browser_goal_understanding_resident import BrowserGoalUnderstandingResidentRuntime
 from .browser_named_goal import browser_named_text_request
 from .models import utc_now
 from .user_browser import AuthorizedCDPUserBrowser
+from typing import Any
+
+
+def _user_browser_session_owner(event: Any, purpose: str) -> BrowserSessionOwner:
+    """Q4 session ownership for authorized user-browser sessions.
+
+    The resident event carries the Work thread id in its payload when the
+    investigation runs inside a Work; otherwise the session is owned by the
+    user-browser bridge component itself.
+    """
+    payload = getattr(event, "payload", None) or {}
+    thread_id = str(payload.get("work_thread_id") or "").strip()
+    if thread_id:
+        return BrowserSessionOwner(
+            work_id=thread_id,
+            root_id=thread_id,
+            purpose=purpose,
+        )
+    return BrowserSessionOwner(
+        work_id="user-browser-bridge",
+        root_id="user-browser-bridge",
+        purpose=purpose,
+    )
 
 
 class UserBrowserBridgeResidentRuntime(BrowserGoalUnderstandingResidentRuntime):
@@ -96,7 +119,13 @@ class UserBrowserBridgeResidentRuntime(BrowserGoalUnderstandingResidentRuntime):
         )
         session = None
         try:
-            session = browser.open_session(permission=permission, headless=False)
+            session = browser.open_session(
+                permission=permission,
+                headless=False,
+                owner=_user_browser_session_owner(
+                    event, "user-browser:named-goal-investigation"
+                ),
+            )
             current = browser.observe(session.session_id)
             observed, text_state = browser.observe_named_text_state(
                 session.session_id,

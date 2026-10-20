@@ -16,7 +16,10 @@ from .browser import (
     BrowserTargetQueryKind,
 )
 from .browser_semantic_action import execute_fresh_semantic_action
-from .browser_work_body import BrowserSideEffectAwareBody
+from .browser_work_body import (
+    BrowserSideEffectAwareBody,
+    _body_action_session_owner,
+)
 from .models import utc_now
 
 
@@ -109,10 +112,15 @@ class BrowserTextWorkBody(BrowserSideEffectAwareBody):
                 return opener(
                     permission=permission,
                     headless=headless,
+                    owner=_body_action_session_owner(action),
                     expected_tab_id=int(expected_tab_id),
                     expected_attached_at=expected_attached_at,
                 )
-        return browser.open_session(permission=permission, headless=headless)
+        return browser.open_session(
+            permission=permission,
+            headless=headless,
+            owner=_body_action_session_owner(action),
+        )
 
     def _browser_type_named_text(
         self,

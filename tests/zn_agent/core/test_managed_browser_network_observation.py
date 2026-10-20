@@ -7,7 +7,10 @@ from zn_agent.core.browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.managed_browser import PlaywrightManagedBrowser
 
 
@@ -170,6 +173,7 @@ class ManagedBrowserNetworkObservationTests(unittest.TestCase):
             url_checker=lambda url, **kwargs: True,
         )
         identity = adapter.open_session(
+            owner=_OWNER,
             permission=BrowserPermissionContext(
                 allow_navigation=True, allow_page_interaction=True
             ),

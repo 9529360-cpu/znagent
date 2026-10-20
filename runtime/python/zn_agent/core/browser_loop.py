@@ -36,6 +36,7 @@ from .browser import (
     BrowserActionKind,
     BrowserEffectEvidence,
     BrowserPermissionContext,
+    BrowserSessionOwner,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
@@ -449,6 +450,7 @@ def execute_browser_loop_step(
     permission: BrowserPermissionContext,
     action_id: str,
     arguments: Mapping[str, Any],
+    owner: BrowserSessionOwner | None = None,
 ) -> BrowserLoopStepResult:
     """Execute one validated browser proposal with post-step verification.
 
@@ -462,11 +464,21 @@ def execute_browser_loop_step(
     the failed proposal is returned as failed with the recovered session, so
     the caller decides the next step from fresh state. The failed proposal
     itself is never retried here.
+
+    Q4: ``owner`` attributes every session this step opens (including the
+    disconnect-recovery reopen) to the calling Work/intent. When omitted, the
+    session is owned by the browser loop step itself, namespaced so it stays
+    distinguishable from Work-ledger owners.
     """
     spec = browser_loop_spec(action_id)
     if spec is None:
         raise ValueError(f"unknown browser loop action: {action_id}")
     normalized = validate_browser_loop_arguments(spec, arguments)
+    session_owner = owner or BrowserSessionOwner(
+        work_id="browser-loop",
+        root_id="browser-loop",
+        purpose=f"browser-loop:{action_id}",
+    )
     current = dict(session or {})
     session_id = str(current.get("session_id") or "").strip()
 
@@ -479,6 +491,7 @@ def execute_browser_loop_step(
                 permission=permission,
                 session=current,
                 session_id=session_id,
+                owner=session_owner,
             )
         if spec.action_id == "browser.observe":
             return _execute_observe(
@@ -488,6 +501,7 @@ def execute_browser_loop_step(
                 permission=permission,
                 session=current,
                 session_id=session_id,
+                owner=session_owner,
             )
         if spec.action_id == "browser.page.register":
             return _execute_page_register(
@@ -524,6 +538,7 @@ def execute_browser_loop_step(
                 permission=permission,
                 session=current,
                 cause=exc,
+                owner=session_owner,
             )
         # An unexpected provider failure is a failed step, never a reason to
         # re-dispatch the same proposal.
@@ -543,6 +558,7 @@ def _recover_after_disconnect(
     permission: BrowserPermissionContext,
     session: Mapping[str, Any],
     cause: Exception,
+    owner: BrowserSessionOwner,
 ) -> BrowserLoopStepResult:
     """Rebuild a dead provider session, then fail the proposal explicitly.
 
@@ -566,6 +582,7 @@ def _recover_after_disconnect(
             provider,
             session=session,
             permission=permission,
+            owner=owner,
             target_query=target_query,
             dispatched_side_effect_action_ids=dispatched_ids,
         )
@@ -621,8 +638,15 @@ def _recover_after_disconnect(
     )
 
 
-def _open_session(provider: Any, *, permission: BrowserPermissionContext) -> Any:
-    return provider.open_session(permission=permission, headless=True)
+def _open_session(
+    provider: Any,
+    *,
+    permission: BrowserPermissionContext,
+    owner: BrowserSessionOwner | None = None,
+) -> Any:
+    return provider.open_session(
+        permission=permission, headless=True, owner=owner
+    )
 
 
 def _execute_navigate(
@@ -633,6 +657,7 @@ def _execute_navigate(
     permission: BrowserPermissionContext,
     session: Mapping[str, Any],
     session_id: str,
+    owner: BrowserSessionOwner,
 ) -> BrowserLoopStepResult:
     url = str(normalized["url"])
     expected_url = str(normalized.get("expected_url") or url)
@@ -663,7 +688,7 @@ def _execute_navigate(
                     reason=f"browser loop could not re-observe the existing session before navigation: {type(exc).__name__}: {exc}",
                 )
         else:
-            opened = _open_session(provider, permission=permission)
+            opened = _open_session(provider, permission=permission, owner=owner)
             session_id = str(opened.session_id)
             pre = provider.observe(session_id)
             page_id = str(pre.page_id or "")
@@ -738,10 +763,11 @@ def _execute_observe(
     permission: BrowserPermissionContext,
     session: Mapping[str, Any],
     session_id: str,
+    owner: BrowserSessionOwner,
 ) -> BrowserLoopStepResult:
     try:
         if not session_id:
-            opened = _open_session(provider, permission=permission)
+            opened = _open_session(provider, permission=permission, owner=owner)
             session_id = str(opened.session_id)
         observed = provider.observe(session_id)
     except Exception as exc:

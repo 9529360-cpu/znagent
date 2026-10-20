@@ -10,7 +10,10 @@ from zn_agent.core.browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.semantic_managed_browser import SemanticPlaywrightManagedBrowser
 
 
@@ -70,7 +73,7 @@ class ManagedBrowserCommandWindowsContract(unittest.TestCase):
             allowed_origins=(self.origin,),
         )
         browser = SemanticPlaywrightManagedBrowser()
-        identity = browser.open_session(permission=permission, headless=True)
+        identity = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         return browser, identity, permission
 
     def _navigate(self, browser, identity, permission):

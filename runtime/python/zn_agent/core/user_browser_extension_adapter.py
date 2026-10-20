@@ -15,6 +15,7 @@ from .browser import (
     BrowserPermissionContext,
     BrowserPlane,
     BrowserSessionIdentity,
+    BrowserSessionOwner,
     BrowserTarget,
     BrowserTargetKind,
     BrowserTargetQuery,
@@ -38,6 +39,8 @@ class _ExtensionSession:
     permission: BrowserPermissionContext
     tab_id: int
     authorization_attached_at: str
+    # Q4 session ownership: the Work/intent that opened this session.
+    owner: BrowserSessionOwner
     last_observation: dict[str, BrowserObservation] = field(default_factory=dict)
 
 
@@ -62,10 +65,12 @@ class AuthorizedExtensionUserBrowser:
         *,
         permission: BrowserPermissionContext | None = None,
         headless: bool = False,
+        owner: BrowserSessionOwner | None = None,
     ) -> BrowserSessionIdentity:
         return self.open_session_for_authorization(
             permission=permission,
             headless=headless,
+            owner=owner,
         )
 
     def open_session_for_authorization(
@@ -73,11 +78,17 @@ class AuthorizedExtensionUserBrowser:
         *,
         permission: BrowserPermissionContext | None = None,
         headless: bool = False,
+        owner: BrowserSessionOwner | None = None,
         expected_tab_id: int | None = None,
         expected_attached_at: str | None = None,
     ) -> BrowserSessionIdentity:
         del headless
         policy = permission or BrowserPermissionContext()
+        if owner is None:
+            raise ExtensionUserBrowserError(
+                f"{self.name} open_session requires an explicit session owner: "
+                "pass owner=BrowserSessionOwner(work_id=..., root_id=..., purpose=...)"
+            )
         if policy.allow_navigation:
             raise ExtensionUserBrowserError(
                 "extension user-browser slice does not grant direct navigation authority"
@@ -109,6 +120,7 @@ class AuthorizedExtensionUserBrowser:
             permission=policy,
             tab_id=authorized.tab_id,
             authorization_attached_at=authorized.attached_at,
+            owner=owner,
         )
         return identity
 
@@ -143,6 +155,7 @@ class AuthorizedExtensionUserBrowser:
                 "attachment": "authorized_extension_tab",
                 "transport": "chrome_debugger",
                 "authorization_attached_at": session.authorization_attached_at,
+                "owner": session.owner.as_dict(),
             },
         )
         session.last_observation[resolved_page] = observation

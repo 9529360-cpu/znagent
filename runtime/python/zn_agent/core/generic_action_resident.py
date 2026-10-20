@@ -6,7 +6,7 @@ import uuid
 
 from .action import NativeActionIntent
 from .action_execution import ActionRequest
-from .browser import BrowserPermissionContext
+from .browser import BrowserPermissionContext, BrowserSessionOwner
 from .browser_loop import (
     browser_loop_catalog,
     browser_loop_spec,
@@ -902,6 +902,28 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
         self.store.save_working_state(state)
         return None
 
+    @staticmethod
+    def _browser_loop_session_owner(event, action_id: str) -> BrowserSessionOwner:
+        """Q4 session ownership for generic-action browser loop sessions.
+
+        The resident event carries the Work thread id in its payload when the
+        action runs inside a Work; otherwise the session is owned by the
+        generic-action browser loop step itself.
+        """
+        payload = getattr(event, "payload", None) or {}
+        thread_id = str(payload.get("work_thread_id") or "").strip()
+        if thread_id:
+            return BrowserSessionOwner(
+                work_id=thread_id,
+                root_id=thread_id,
+                purpose=f"browser-loop:{action_id}",
+            )
+        return BrowserSessionOwner(
+            work_id="browser-loop",
+            root_id="browser-loop",
+            purpose=f"browser-loop:{action_id}",
+        )
+
     def _generic_browser_action_step(self, event, state, loop, pending):
         """Execute one admitted browser proposal exactly once, then verify.
 
@@ -942,6 +964,7 @@ class GenericActionResidentRuntime(ResearchInformationResidentRuntime):
             permission=permission,
             action_id=action_id,
             arguments=arguments,
+            owner=self._browser_loop_session_owner(event, action_id),
         )
         loop["browser"] = dict(result.session)
         summary = summarize_action_execution(result.execution)

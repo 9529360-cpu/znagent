@@ -30,13 +30,15 @@ class _FakeManagedBrowser:
         self.last_action = None
         self.last_observation = None
         self.last_required_target_queries = ()
+        self.last_owner = None
         self.call_threads: list[int] = []
 
     def _record_thread(self) -> None:
         self.call_threads.append(threading.get_ident())
 
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         self._record_thread()
+        self.last_owner = owner
         assert headless is True
         policy = permission or BrowserPermissionContext()
         session = BrowserSessionIdentity.create(
@@ -52,9 +54,11 @@ class _FakeManagedBrowser:
         *,
         permission=None,
         headless=True,
+        owner=None,
         required_target_queries=(),
     ):
         self._record_thread()
+        self.last_owner = owner
         self.last_required_target_queries = tuple(required_target_queries)
         assert headless is True
         policy = permission or BrowserPermissionContext()
@@ -318,6 +322,77 @@ class ResidentBrowserRpcTests(unittest.TestCase):
                     browser.last_required_target_queries,
                     (BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,),
                 )
+            finally:
+                self._close(server)
+
+    def test_browser_open_without_owner_param_uses_resident_rpc_owner(self) -> None:
+        # No new RPC: browser_open keeps working for existing clients, and the
+        # session is never anonymous — the resident RPC surface owns it.
+        with tempfile.TemporaryDirectory() as tmp:
+            server, browser = self._server(Path(tmp))
+            try:
+                opened = server.handle(
+                    {"id": "open", "method": "browser_open", "params": {}}
+                )
+                self.assertTrue(opened["ok"])
+                owner = browser.last_owner
+                self.assertIsNotNone(owner)
+                self.assertEqual(
+                    owner.as_dict(),
+                    {
+                        "work_id": "resident-rpc",
+                        "root_id": "resident-rpc",
+                        "purpose": "rpc:browser_open",
+                    },
+                )
+            finally:
+                self._close(server)
+
+    def test_browser_open_accepts_explicit_owner_param(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server, browser = self._server(Path(tmp))
+            try:
+                opened = server.handle(
+                    {
+                        "id": "open",
+                        "method": "browser_open",
+                        "params": {
+                            "owner": {
+                                "work_id": "work-9",
+                                "root_id": "root-9",
+                                "purpose": "desktop:research",
+                            },
+                        },
+                    }
+                )
+                self.assertTrue(opened["ok"])
+                owner = browser.last_owner
+                self.assertIsNotNone(owner)
+                self.assertEqual(
+                    owner.as_dict(),
+                    {
+                        "work_id": "work-9",
+                        "root_id": "root-9",
+                        "purpose": "desktop:research",
+                    },
+                )
+            finally:
+                self._close(server)
+
+    def test_browser_open_rejects_invalid_owner_param(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            server, _ = self._server(Path(tmp))
+            try:
+                with self.assertRaisesRegex(ValueError, "owner"):
+                    server.handle(
+                        {
+                            "id": "open",
+                            "method": "browser_open",
+                            "params": {
+                                "owner": {"work_id": "", "root_id": "r", "purpose": "p"},
+                            },
+                        }
+                    )
             finally:
                 self._close(server)
 

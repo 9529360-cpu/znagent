@@ -13,7 +13,10 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.managed_browser import PlaywrightManagedBrowser
 
 
@@ -94,7 +97,7 @@ class ManagedBrowserSelectWindowsContract(unittest.TestCase):
             allowed_origins=(self.origin,),
         )
         browser = PlaywrightManagedBrowser()
-        session = browser.open_session(permission=permission, headless=True)
+        session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         try:
             page_id = self._navigate(browser, session, permission)
             query = BrowserTargetQuery(
@@ -138,7 +141,7 @@ class ManagedBrowserSelectWindowsContract(unittest.TestCase):
             allowed_origins=(self.origin,),
         )
         browser = PlaywrightManagedBrowser()
-        session = browser.open_session(permission=permission, headless=True)
+        session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         try:
             page_id = self._navigate(browser, session, permission)
             query = BrowserTargetQuery(

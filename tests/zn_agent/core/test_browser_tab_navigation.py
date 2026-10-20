@@ -13,7 +13,10 @@ from zn_agent.core.browser import (
     BrowserTargetKind,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.browser_scene import BrowserScene, _PageSceneState
 from zn_agent.core.managed_browser import _ManagedTargetBinding
 from zn_agent.core.semantic_managed_browser import SemanticPlaywrightManagedBrowser
@@ -229,6 +232,7 @@ class BrowserTabNavigationTests(unittest.TestCase):
             url_checker=lambda url, **kwargs: True,
         )
         identity = adapter.open_session(
+            owner=_OWNER,
             permission=permission
             or BrowserPermissionContext(
                 allow_navigation=True,
@@ -255,6 +259,7 @@ class BrowserTabNavigationTests(unittest.TestCase):
             url_checker=lambda url, **kwargs: True,
         )
         identity = adapter.open_session(
+            owner=_OWNER,
             permission=BrowserPermissionContext(
                 allow_navigation=True,
                 allow_page_interaction=True,

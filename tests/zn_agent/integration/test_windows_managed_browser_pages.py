@@ -4,7 +4,9 @@ import http.server
 import threading
 import unittest
 
-from zn_agent.core.browser import BrowserPermissionContext
+from zn_agent.core.browser import BrowserPermissionContext, BrowserSessionOwner
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.managed_browser import ManagedBrowserError, PlaywrightManagedBrowser
 
 
@@ -50,7 +52,7 @@ class ManagedBrowserPageLifecycleWindowsContract(unittest.TestCase):
             allowed_origins=(self.origin,),
         )
         browser = PlaywrightManagedBrowser()
-        session = browser.open_session(permission=permission, headless=True)
+        session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         try:
             initial = browser.observe(session.session_id)
             self.assertEqual(initial.metadata["page_count"], 1)

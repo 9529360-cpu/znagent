@@ -9,7 +9,10 @@ from zn_agent.core.browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.semantic_managed_browser import SemanticPlaywrightManagedBrowser
 
 
@@ -74,7 +77,7 @@ class ManagedBrowserTabHistoryWindowsContract(unittest.TestCase):
             allowed_origins=(self.origin,),
         )
         browser = SemanticPlaywrightManagedBrowser()
-        session = browser.open_session(permission=permission, headless=True)
+        session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         try:
             initial = browser.observe(session.session_id)
             first_page_id = initial.page_id

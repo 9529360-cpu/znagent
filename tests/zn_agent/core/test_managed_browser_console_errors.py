@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from zn_agent.core.browser import BrowserPermissionContext
+from zn_agent.core.browser import BrowserPermissionContext, BrowserSessionOwner
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.managed_browser import PlaywrightManagedBrowser
 
 
@@ -134,6 +136,7 @@ class ManagedBrowserConsoleErrorTests(unittest.TestCase):
             url_checker=lambda url, **kwargs: True,
         )
         identity = adapter.open_session(
+            owner=_OWNER,
             permission=BrowserPermissionContext(allow_page_interaction=True),
             headless=True,
         )

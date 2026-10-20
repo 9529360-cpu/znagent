@@ -22,12 +22,14 @@ from .browser import (
     BrowserPermissionContext,
     BrowserPlane,
     BrowserSessionIdentity,
+    BrowserSessionOwner,
 )
 from .file_identity import compare_file_identities, observe_file_identity
 from .managed_browser import (
     ManagedBrowserError,
     ManagedBrowserUnavailable,
     _ManagedSession,
+    _require_session_owner,
 )
 
 
@@ -68,14 +70,20 @@ class PlaywrightBrowserSceneFileTransferMixin:
         *,
         permission: BrowserPermissionContext | None = None,
         headless: bool = True,
+        owner: BrowserSessionOwner | None = None,
     ) -> BrowserSessionIdentity:
         """Create a file-authorized ephemeral context without widening USER sessions."""
 
         policy = permission or BrowserPermissionContext()
+        session_owner = _require_session_owner(owner, provider=self.name)
         if not (policy.allow_downloads or policy.allow_uploads):
-            return super().open_session(permission=policy, headless=headless)
+            return super().open_session(
+                permission=policy, headless=headless, owner=session_owner
+            )
         if self.plane is not BrowserPlane.MANAGED:
-            return super().open_session(permission=policy, headless=headless)
+            return super().open_session(
+                permission=policy, headless=headless, owner=session_owner
+            )
 
         factory = self._playwright_factory or self._default_playwright_factory
         playwright = browser = context = None
@@ -98,6 +106,7 @@ class PlaywrightBrowserSceneFileTransferMixin:
             session = _ManagedSession(
                 identity=identity,
                 permission=policy,
+                owner=session_owner,
                 playwright=playwright,
                 browser=browser,
                 context=context,

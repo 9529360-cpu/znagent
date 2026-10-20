@@ -30,6 +30,7 @@ from .browser import (
     BrowserActionKind,
     BrowserPermissionContext,
     BrowserProviderDisconnectedError,
+    BrowserSessionOwner,
     BrowserTargetQuery,
 )
 from .models import utc_now
@@ -164,6 +165,7 @@ def recover_browser_session_after_disconnect(
     session: Mapping[str, Any],
     permission: BrowserPermissionContext,
     headless: bool = True,
+    owner: BrowserSessionOwner | None = None,
     target_query: BrowserTargetQuery | None = None,
     dispatched_side_effect_action_ids: Iterable[str] = (),
 ) -> RecoveredBrowserSession:
@@ -198,7 +200,11 @@ def recover_browser_session_after_disconnect(
     _close_quietly(provider, previous_session_id)
 
     try:
-        identity = provider.open_session(permission=permission, headless=headless)
+        # The recovered session keeps the original session's owner: it is the
+        # same Work/intent continuing, not a new anonymous session.
+        identity = provider.open_session(
+            permission=permission, headless=headless, owner=owner
+        )
     except Exception as exc:
         raise BrowserSessionRecoveryError(
             "browser session recovery failed: the provider could not reopen a "

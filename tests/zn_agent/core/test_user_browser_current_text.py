@@ -44,7 +44,7 @@ class _UserBrowser:
         self.close_calls = 0
         self.typed_text = ""
 
-    def open_session(self, *, permission=None, headless=False):
+    def open_session(self, *, permission=None, headless=False, owner=None):
         self.permission = permission
         return self.identity
 

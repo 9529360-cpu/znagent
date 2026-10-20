@@ -9,7 +9,10 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.managed_browser import PlaywrightManagedBrowser
 
 
@@ -187,7 +190,7 @@ def _build(node):
         playwright_factory=lambda: _Starter(playwright),
         url_checker=lambda url, **kwargs: True,
     )
-    session = browser.open_session(permission=permission, headless=True)
+    session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
     query = BrowserTargetQuery(
         kind=BrowserTargetQueryKind.DOM_ID,
         value="toggle",

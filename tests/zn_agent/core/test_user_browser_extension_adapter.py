@@ -8,6 +8,7 @@ from zn_agent.core.browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserSessionOwner,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
@@ -16,6 +17,8 @@ from zn_agent.core.user_browser_extension_relay import (
     AuthorizedUserBrowserTab,
     UserBrowserExtensionCommandUncertainError,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 
 
 _URL = "https://example.test/account"
@@ -179,6 +182,7 @@ def _prepared_action(browser: AuthorizedExtensionUserBrowser):
     )
     session = browser.open_session_for_authorization(
         permission=permission,
+        owner=_OWNER,
         expected_tab_id=71,
         expected_attached_at=_AUTH_AT,
     )

@@ -100,7 +100,7 @@ class _SemanticRetryBrowser:
             postcondition="same_exact_target_text_equals_requested",
             data={"input_sent": True},
         )
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         raise AssertionError("not used")
 
     def close_session(self, session_id):

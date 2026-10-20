@@ -13,7 +13,10 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.chrome_devtools_mcp_browser import (
     CHROME_DEVTOOLS_MCP_PROVIDER,
     ChromeDevToolsMcpBrowserUnavailable,
@@ -237,7 +240,7 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
     def test_navigation_and_semantic_form_actions_keep_zn_authority(self):
         browser = self._browser()
         permission = self._permission()
-        session = browser.open_session(permission=permission, headless=True)
+        session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         try:
             initial = browser.observe(session.session_id)
             navigate = BrowserAction.create(
@@ -375,7 +378,7 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             url_checker=lambda *_args, **_kwargs: True,
         )
         permission = self._permission()
-        session = browser.open_session(permission=permission, headless=True)
+        session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         try:
             observed = browser.observe_target(
                 session.session_id,
@@ -497,6 +500,7 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             "causal file-transfer contract",
         ):
             browser.open_session(
+                owner=_OWNER,
                 permission=BrowserPermissionContext(
                     allow_page_interaction=True,
                     allow_downloads=True,
@@ -540,7 +544,7 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
     def test_stale_authority_is_rejected_before_provider_dispatch(self):
         browser = self._browser()
         permission = self._permission()
-        session = browser.open_session(permission=permission, headless=True)
+        session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         initial = browser.observe(session.session_id)
         action = BrowserAction.create(
             session_id=session.session_id,

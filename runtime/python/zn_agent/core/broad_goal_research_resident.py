@@ -18,6 +18,7 @@ from .browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserSessionOwner,
 )
 from .cognition import CognitiveIncrement
 from .models import utc_now
@@ -264,7 +265,15 @@ class BroadGoalResearchResidentRuntime(BroadGoalRecoverableCodingResidentRuntime
                 allow_private_network=bool(event.payload.get("allow_private_research", False)),
                 allowed_origins=(self._origin_url(url),),
             )
-            session = browser.open_session(permission=permission, headless=True)
+            session = browser.open_session(
+                permission=permission,
+                headless=True,
+                owner=BrowserSessionOwner(
+                    work_id=child.work_item_id,
+                    root_id=thread_id,
+                    purpose="broad-goal-research:read-page",
+                ),
+            )
             page = self._navigate_and_read(browser, session.session_id, url, permission)
         except Exception as exc:
             return self._fail_research_step(

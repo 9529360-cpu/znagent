@@ -3,7 +3,9 @@ from __future__ import annotations
 import unittest
 from dataclasses import replace
 
-from zn_agent.core.browser import BrowserPermissionContext, BrowserPlane
+from zn_agent.core.browser import BrowserPermissionContext, BrowserPlane, BrowserSessionOwner
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.managed_browser import ManagedBrowserError
 from zn_agent.core.semantic_managed_browser import SemanticPlaywrightManagedBrowser
 
@@ -188,6 +190,7 @@ def _build(page, *, allowed_origins=("https://example.com",)):
         url_checker=lambda url, **kwargs: True,
     )
     session = browser.open_session(
+        owner=_OWNER,
         permission=BrowserPermissionContext(
             allow_page_interaction=True,
             allowed_origins=allowed_origins,

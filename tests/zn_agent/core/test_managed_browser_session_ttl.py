@@ -3,7 +3,9 @@ from __future__ import annotations
 import time
 import unittest
 
-from zn_agent.core.browser import BrowserPermissionContext
+from zn_agent.core.browser import BrowserPermissionContext, BrowserSessionOwner
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.managed_browser import (
     ManagedBrowserError,
     PlaywrightManagedBrowser,
@@ -33,6 +35,7 @@ class ManagedBrowserSessionTtlTests(unittest.TestCase):
             **kwargs,
         )
         identity = adapter.open_session(
+            owner=_OWNER,
             permission=BrowserPermissionContext(allow_page_interaction=True),
             headless=True,
         )
@@ -227,6 +230,7 @@ class ManagedBrowserSessionTtlTests(unittest.TestCase):
         try:
             for _ in range(_MAX_SESSION_EVENTS + 10):
                 identity = adapter.open_session(
+                    owner=_OWNER,
                     permission=BrowserPermissionContext(
                         allow_page_interaction=True
                     ),

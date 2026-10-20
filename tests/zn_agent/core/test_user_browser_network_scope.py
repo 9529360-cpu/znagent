@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from zn_agent.core.browser import BrowserPermissionContext
+from zn_agent.core.browser import BrowserPermissionContext, BrowserSessionOwner
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.user_browser import AuthorizedCDPUserBrowser, UserBrowserBridgeError
 
 
@@ -82,7 +84,7 @@ class AuthorizedUserBrowserNetworkScopeTests(unittest.TestCase):
             allow_private_network=False,
         )
         with self.assertRaisesRegex(UserBrowserBridgeError, "network boundary"):
-            adapter.open_session(permission=permission)
+            adapter.open_session(owner=_OWNER, permission=permission)
         self.assertEqual(playwright.stop_calls, 1)
         self.assertFalse(adapter._sessions)
 
@@ -93,7 +95,7 @@ class AuthorizedUserBrowserNetworkScopeTests(unittest.TestCase):
             allowed_origins=("http://127.0.0.1:8080",),
             allow_private_network=True,
         )
-        session = adapter.open_session(permission=permission)
+        session = adapter.open_session(owner=_OWNER, permission=permission)
         try:
             observed = adapter.observe(session.session_id)
             self.assertEqual(observed.url, "http://127.0.0.1:8080/admin")

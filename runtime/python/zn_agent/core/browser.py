@@ -152,6 +152,45 @@ class BrowserSessionIdentity:
 
 
 @dataclass(frozen=True, slots=True)
+class BrowserSessionOwner:
+    """Who owns a browser session: the Work/intent that opened it.
+
+    ``work_id``/``root_id`` are Work-ledger identifiers when the opener runs
+    inside a Work, otherwise a namespaced component marker
+    (``"<component>:<local-id>"``) so a leaked session is still traceable.
+    ``purpose`` is a short human-readable intent, e.g.
+    ``"browser-loop:navigate"``. Recorded on the session, surfaced in
+    observation metadata and in the close/TTL session event journal.
+    """
+
+    work_id: str
+    root_id: str
+    purpose: str
+
+    def __post_init__(self) -> None:
+        for label, value in (
+            ("work_id", self.work_id),
+            ("root_id", self.root_id),
+            ("purpose", self.purpose),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(
+                    f"browser session owner requires a non-empty {label}"
+                )
+            if len(value) > 512:
+                raise ValueError(
+                    f"browser session owner {label} is too long"
+                )
+
+    def as_dict(self) -> dict[str, str]:
+        return {
+            "work_id": self.work_id,
+            "root_id": self.root_id,
+            "purpose": self.purpose,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class BrowserPermissionContext:
     allow_navigation: bool = False
     allow_page_interaction: bool = False
@@ -428,6 +467,7 @@ class BrowserAdapter(Protocol):
         *,
         permission: BrowserPermissionContext | None = None,
         headless: bool = True,
+        owner: BrowserSessionOwner | None = None,
     ) -> BrowserSessionIdentity: ...
 
     def close_session(self, session_id: str) -> None: ...

@@ -17,7 +17,7 @@ import os
 from pathlib import Path
 
 import zn_agent.resident
-from zn_agent.core.browser import BrowserPermissionContext
+from zn_agent.core.browser import BrowserPermissionContext, BrowserSessionOwner
 from zn_agent.core.managed_browser import PlaywrightManagedBrowser
 from zn_agent.core.provider_bridge import build_resident_runtime
 from zn_agent.core.veteran_engineering import vendored_veteran_root
@@ -39,7 +39,15 @@ assert (veteran_root / "mcp" / "server.mjs").is_file()
 assert (veteran_root / "VENDOR.json").is_file()
 
 browser = PlaywrightManagedBrowser()
-session = browser.open_session(permission=BrowserPermissionContext(), headless=True)
+session = browser.open_session(
+    permission=BrowserPermissionContext(),
+    headless=True,
+    owner=BrowserSessionOwner(
+        work_id="packaged-runtime-smoke",
+        root_id="packaged-runtime-smoke",
+        purpose="packaged-runtime:smoke",
+    ),
+)
 try:
     observation = browser.observe(session.session_id)
     assert observation.url == "about:blank"

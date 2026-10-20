@@ -20,10 +20,15 @@ from .browser import (
     BrowserPermissionContext,
     BrowserPlane,
     BrowserSessionIdentity,
+    BrowserSessionOwner,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
-from .managed_browser import ManagedBrowserError, _ManagedSession
+from .managed_browser import (
+    ManagedBrowserError,
+    _ManagedSession,
+    _require_session_owner,
+)
 from .semantic_managed_browser import SemanticPlaywrightManagedBrowser
 
 
@@ -56,9 +61,11 @@ class AuthorizedCDPUserBrowser(SemanticPlaywrightManagedBrowser):
         *,
         permission: BrowserPermissionContext | None = None,
         headless: bool = False,
+        owner: BrowserSessionOwner | None = None,
     ) -> BrowserSessionIdentity:
         del headless
         policy = permission or BrowserPermissionContext()
+        session_owner = _require_session_owner(owner, provider=self.name)
         if policy.allow_downloads or policy.allow_uploads:
             raise UserBrowserBridgeError(
                 "user-browser downloads/uploads require separate explicit file authority"
@@ -92,6 +99,7 @@ class AuthorizedCDPUserBrowser(SemanticPlaywrightManagedBrowser):
             session = _ManagedSession(
                 identity=identity,
                 permission=policy,
+                owner=session_owner,
                 playwright=playwright,
                 browser=browser,
                 context=context,

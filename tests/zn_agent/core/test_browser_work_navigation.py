@@ -34,7 +34,7 @@ class _FakeManagedBrowser:
         self.permission = None
         self.last_observation = None
 
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         self.open_calls += 1
         self.permission = permission
         self.assert_headless = headless

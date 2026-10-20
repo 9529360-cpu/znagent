@@ -46,7 +46,7 @@ class _FakeNamedTextBrowser:
         self.stale_once = stale_once
         self.semantic_attempts = 0
 
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         self.permission = permission
         return self.identity
 

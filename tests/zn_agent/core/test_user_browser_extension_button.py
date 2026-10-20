@@ -9,7 +9,10 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.user_browser_extension_adapter import AuthorizedExtensionUserBrowser
 from zn_agent.core.user_browser_extension_relay import (
     AuthorizedUserBrowserTab,
@@ -124,7 +127,7 @@ def _prepared_click(browser: AuthorizedExtensionUserBrowser):
         allow_text_entry=True,
         allowed_origins=(_START_URL,),
     )
-    session = browser.open_session(permission=permission)
+    session = browser.open_session(owner=_OWNER, permission=permission)
     initial = browser.observe(session.session_id)
     observed = browser.observe_target(
         session.session_id,
