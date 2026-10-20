@@ -1247,7 +1247,47 @@ class EvidenceBoundSteerableWorkLedger(SteerableWorkLedger):
         root.completed_at = now
         root.updated_at = now
         self._save_item(root)
+        # P1-5: the verdict above is "verified" -- count this task shape and
+        # propose a skill draft on its 2nd verified completion. Best-effort:
+        # a proposal failure must never break the acceptance gate.
+        self._record_skill_proposal(
+            root,
+            event_id=event_id,
+            verification_summary=verification_summary,
+        )
         return root
+
+    def _record_skill_proposal(
+        self, root: WorkItem, *, event_id: str, verification_summary: str
+    ) -> None:
+        """P1-5: proactive skill proposal on a verified Root acceptance.
+
+        Best-effort by design (see ``skill_proposal``): the driver counts
+        the task shape and, on its 2nd verified completion, saves an inert
+        draft plus a proposal message in the work thread. Confirmation
+        stays with the existing ``skill_confirm`` flow; nothing here ever
+        auto-saves.
+        """
+        try:
+            from .skill_proposal import propose_skill_for_verified_completion
+
+            store = getattr(getattr(self, "resident", None), "store", None)
+            if store is None:
+                return
+            propose_skill_for_verified_completion(
+                store=store,
+                ledger=self,
+                task=str(getattr(root, "title", "") or ""),
+                objective=str(getattr(root, "objective", "") or ""),
+                acceptance_criteria=list(
+                    getattr(root, "acceptance_criteria", None) or []
+                ),
+                response=str(verification_summary or ""),
+                thread_id=str(getattr(root, "work_thread_id", "") or ""),
+                event_id=str(event_id or ""),
+            )
+        except Exception:
+            return
 
     def _accepted_by_current_evidence(self, item: WorkItem) -> bool:
         if item.status != "completed" or not item.result:
