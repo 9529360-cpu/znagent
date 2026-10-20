@@ -9,6 +9,7 @@ available managed browser instead of instantiating a concrete engine directly.
 
 import os
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from typing import Any, Callable, Iterable
 
 from .browser import (
@@ -23,6 +24,21 @@ from .browser import (
 
 
 BrowserFactory = Callable[[], BrowserAdapter]
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderFailure:
+    """Last observed failure of one browser provider.
+
+    Recording is observation only: it never changes provider selection. A
+    provider with a recorded failure is still resolved when it is the best
+    currently available candidate. The record exists so ``resolve()``
+    failures can explain *why* a provider went down (ZN.md §4.5 actionable
+    failure reasons) instead of only saying it is unavailable.
+    """
+
+    reason: str
+    at: str  # UTC ISO-8601 timestamp of when the failure was recorded
 
 
 @dataclass(frozen=True, slots=True)
@@ -55,6 +71,7 @@ class BrowserProviderRegistry:
 
     def __init__(self) -> None:
         self._providers: dict[str, BrowserProviderDescriptor] = {}
+        self._last_failure: dict[str, ProviderFailure] = {}
 
     def register(self, descriptor: BrowserProviderDescriptor) -> None:
         name = str(descriptor.name or "").strip().lower()
@@ -63,6 +80,33 @@ class BrowserProviderRegistry:
         if name in self._providers:
             raise ValueError(f"browser provider already registered: {name}")
         self._providers[name] = descriptor
+
+    def record_failure(self, name: str, reason: str) -> None:
+        """Record the latest failure of a registered provider.
+
+        Fail-closed: unknown providers and empty reasons are rejected so a
+        typo or empty error never silently pollutes the health record.
+        """
+        key = str(name or "").strip().lower()
+        if key not in self._providers:
+            raise ValueError(f"unknown browser provider: {name!r}")
+        detail = str(reason or "").strip()
+        if not detail:
+            raise ValueError("browser provider failure reason must not be empty")
+        self._last_failure[key] = ProviderFailure(
+            reason=detail,
+            at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        )
+
+    def last_failure(self, name: str) -> ProviderFailure | None:
+        """Return the last recorded failure of a provider, if any."""
+        return self._last_failure.get(str(name or "").strip().lower())
+
+    def _failure_detail(self, name: str) -> str:
+        failure = self._last_failure.get(name)
+        if failure is None:
+            return ""
+        return f" (last failure at {failure.at}: {failure.reason})"
 
     def resolve(
         self,
@@ -84,7 +128,10 @@ class BrowserProviderRegistry:
                     f"browser provider {wanted} does not serve {plane.value} plane"
                 )
             if not descriptor.available():
-                raise RuntimeError(f"browser provider is unavailable: {wanted}")
+                raise RuntimeError(
+                    f"browser provider is unavailable: {wanted}"
+                    + self._failure_detail(wanted)
+                )
             if not descriptor.supports(required, required_queries):
                 missing = required.difference(descriptor.supported_actions)
                 missing_queries = required_queries.difference(
@@ -124,6 +171,23 @@ class BrowserProviderRegistry:
             ]
             if needs:
                 suffix = " supporting " + ", ".join(needs)
+            failure_notes = []
+            for descriptor in sorted(
+                self._providers.values(),
+                key=lambda item: (-item.priority, item.name),
+            ):
+                if descriptor.plane is not plane:
+                    continue
+                failure = self._last_failure.get(
+                    str(descriptor.name or "").strip().lower()
+                )
+                if failure is not None:
+                    failure_notes.append(
+                        f"{descriptor.name}: last failure at {failure.at}: "
+                        f"{failure.reason}"
+                    )
+            if failure_notes:
+                suffix += "; last failures: " + "; ".join(failure_notes)
             raise RuntimeError(
                 f"no available browser provider for {plane.value} plane{suffix}"
             )
@@ -193,16 +257,25 @@ class ManagedBrowserProviderRouter:
             required_actions=self._required_actions(policy),
             required_target_queries=required_target_queries,
         )
-        adapter = descriptor.factory()
+        # The failure is recorded for observation only and then re-raised:
+        # selection behavior is unchanged (no automatic failover).
         try:
-            identity = adapter.open_session(
-                permission=policy,
-                headless=headless,
+            adapter = descriptor.factory()
+            try:
+                identity = adapter.open_session(
+                    permission=policy,
+                    headless=headless,
+                )
+            except BaseException:
+                close = getattr(adapter, "close", None)
+                if callable(close):
+                    close()
+                raise
+        except BaseException as exc:
+            self._registry.record_failure(
+                descriptor.name,
+                f"{type(exc).__name__}: {exc}",
             )
-        except BaseException:
-            close = getattr(adapter, "close", None)
-            if callable(close):
-                close()
             raise
         self._sessions[identity.session_id] = adapter
         return identity
