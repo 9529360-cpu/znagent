@@ -39,6 +39,11 @@ from .browser import (
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
+from .browser_disconnect_recovery import (
+    BrowserSessionRecoveryError,
+    is_provider_disconnect,
+    recover_browser_session_after_disconnect,
+)
 from .browser_multipage_context import (
     load_multipage_context,
     store_multipage_context,
@@ -451,6 +456,12 @@ def execute_browser_loop_step(
     On URL drift (before dispatch or at post-step verification) the step
     fails, the session pin is refreshed from the fresh observation, and the
     caller must decide again from fresh state instead of continuing blindly.
+
+    On a provider disconnect the session is rebuilt from the last verified
+    URL pin (reopen + re-navigate + re-observe, no side-effect replay) and
+    the failed proposal is returned as failed with the recovered session, so
+    the caller decides the next step from fresh state. The failed proposal
+    itself is never retried here.
     """
     spec = browser_loop_spec(action_id)
     if spec is None:
@@ -505,6 +516,15 @@ def execute_browser_loop_step(
             session_id=session_id,
         )
     except Exception as exc:
+        if is_provider_disconnect(exc):
+            return _recover_after_disconnect(
+                provider,
+                spec=spec,
+                normalized=normalized,
+                permission=permission,
+                session=current,
+                cause=exc,
+            )
         # An unexpected provider failure is a failed step, never a reason to
         # re-dispatch the same proposal.
         return _failed_step(
@@ -513,6 +533,92 @@ def execute_browser_loop_step(
             session=current,
             reason=f"browser loop step failed: {type(exc).__name__}: {exc}",
         )
+
+
+def _recover_after_disconnect(
+    provider: Any,
+    *,
+    spec: BrowserLoopActionSpec,
+    normalized: Mapping[str, Any],
+    permission: BrowserPermissionContext,
+    session: Mapping[str, Any],
+    cause: Exception,
+) -> BrowserLoopStepResult:
+    """Rebuild a dead provider session, then fail the proposal explicitly.
+
+    The disconnect killed the proposal; recovery rebuilds the session from
+    the last verified URL pin (reopen + re-navigate + re-observe, no
+    side-effect replay) and hands the recovered session back so the caller
+    decides the next step from fresh state. The failed proposal is never
+    retried here: a dispatched or uncertain effect must not be re-dispatched.
+    """
+    target_query = None
+    if spec.query_kind is not None:
+        target_name = str(normalized.get("target_name") or "").strip()
+        if target_name:
+            target_query = BrowserTargetQuery(
+                kind=spec.query_kind,
+                value=target_name,
+            )
+    dispatched_ids = session.get("dispatched_side_effect_action_ids") or ()
+    try:
+        recovered = recover_browser_session_after_disconnect(
+            provider,
+            session=session,
+            permission=permission,
+            target_query=target_query,
+            dispatched_side_effect_action_ids=dispatched_ids,
+        )
+    except BrowserSessionRecoveryError as exc:
+        return _failed_step(
+            spec=spec,
+            arguments=normalized,
+            session=session,
+            reason=(
+                "browser provider disconnected and the session could not be "
+                f"recovered: {exc}. The browser session is not usable; do not "
+                "continue browser proposals on it."
+            ),
+            evidence={
+                "disconnect": {
+                    "cause": f"{type(cause).__name__}: {cause}",
+                },
+                "recovery_failed": True,
+                "recovery_error": str(exc),
+            },
+        )
+    recovered_session = dict(recovered.session)
+    return BrowserLoopStepResult(
+        execution=_build_execution(
+            spec=spec,
+            arguments=normalized,
+            success=False,
+            reason=(
+                "browser provider disconnected; the session was recovered to "
+                f"the last verified URL {recovered.recovered_url!r} "
+                "(reopened + re-navigated + re-observed, no side effect "
+                "replayed). The failed proposal was not re-dispatched; decide "
+                "the next step from the fresh session."
+            ),
+            evidence={
+                "disconnect": {
+                    "cause": f"{type(cause).__name__}: {cause}",
+                },
+                "recovered": True,
+                "previous_session_id": recovered.previous_session_id,
+                "recovered_session_id": recovered_session.get("session_id"),
+                "recovered_url": recovered.recovered_url,
+                "target_reresolved": recovered.target_reresolved,
+                "target_reresolve_detail": recovered.target_reresolve_detail,
+            },
+            observation_data=dict(recovered_session.get("last_observation") or {}),
+            error=(
+                "browser provider disconnected; session recovered to the last "
+                f"verified URL {recovered.recovered_url!r}"
+            ),
+        ),
+        session=recovered_session,
+    )
 
 
 def _open_session(provider: Any, *, permission: BrowserPermissionContext) -> Any:

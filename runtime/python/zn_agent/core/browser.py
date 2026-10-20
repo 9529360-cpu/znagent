@@ -48,6 +48,18 @@ class BrowserTargetStaleError(RuntimeError):
     """A provider proved the exact browser target changed before dispatch."""
 
 
+class BrowserProviderDisconnectedError(RuntimeError):
+    """A provider proved its browser session or transport connection is gone.
+
+    This is the explicit disconnect signal. Recovery code treats it as "the
+    old session is dead, rebuild from the last verified state" instead of an
+    action failure. Providers should raise it when they know the connection
+    dropped (closed browser/context, dead transport); transport-level
+    exceptions are additionally recognized by
+    browser_disconnect_recovery.is_provider_disconnect as a fallback.
+    """
+
+
 class BrowserTargetKind(str, Enum):
     PAGE = "page"
     ELEMENT = "element"
