@@ -81,9 +81,9 @@ SOURCE_LABEL = (
 )
 
 #: Nominatim's usage policy requires an HTTP User-Agent that identifies
-#: the application; generic library defaults are blocked. The project
-#: URL lets OSM operators reach the maintainers.
-OSM_USER_AGENT = "ZN-Agent-Maps/0.1 (+https://github.com/9529360-cpu/znagent)"
+#: the application; generic library defaults are blocked. This product
+#: token names the application and its version, nothing more.
+OSM_USER_AGENT = "ZN-Agent-Maps/0.1"
 
 #: Nominatim's published absolute maximum is 1 request/second. The same
 #: conservative floor is applied to Overpass (fair-use) requests.
