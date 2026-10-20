@@ -7,6 +7,13 @@ language. ZN accepts only exact user-supplied names for explicitly supported
 roles, keeps the query in the main frame, and fails closed on zero or multiple
 matches. Provider locators may compute accessibility names internally, but ZN
 never receives page-wide text or a candidate list.
+
+Supported roles: checkbox, button, textbox, combobox, link, radio, slider.
+Link targets additionally support verified navigation clicks; radio targets
+support verified check (select); slider targets are perceivable and support
+only the verified set_slider_value mutation (set, then read the value back on
+the same exact node). Any slider interaction that cannot be verified this way
+-- drags, keyboard nudges -- is explicitly not offered.
 """
 
 import hashlib
@@ -156,6 +163,106 @@ _SEMANTIC_COMBOBOX_EVIDENCE_SCRIPT = r"""
 }
 """
 
+_SEMANTIC_LINK_EVIDENCE_SCRIPT = r"""
+(element) => {
+  const connected = Boolean(element && element.isConnected);
+  const style = connected ? window.getComputedStyle(element) : null;
+  const rect = connected ? element.getBoundingClientRect() : null;
+  const visible = Boolean(
+    connected &&
+    !element.hidden &&
+    style &&
+    style.display !== "none" &&
+    style.visibility !== "hidden" &&
+    rect &&
+    rect.width > 0 &&
+    rect.height > 0
+  );
+  const tag = String(element && element.tagName || "").toLowerCase().slice(0, 32);
+  const href = String(element && element.getAttribute("href") || "").slice(0, 256);
+  return {
+    connected,
+    visible,
+    tag,
+    href,
+    native_link: tag === "a" && href !== "",
+  };
+}
+"""
+
+_SEMANTIC_RADIO_EVIDENCE_SCRIPT = r"""
+(element) => {
+  const connected = Boolean(element && element.isConnected);
+  const style = connected ? window.getComputedStyle(element) : null;
+  const rect = connected ? element.getBoundingClientRect() : null;
+  const visible = Boolean(
+    connected &&
+    !element.hidden &&
+    style &&
+    style.display !== "none" &&
+    style.visibility !== "hidden" &&
+    rect &&
+    rect.width > 0 &&
+    rect.height > 0
+  );
+  const tag = String(element && element.tagName || "").toLowerCase().slice(0, 32);
+  const inputType = String(element && element.getAttribute("type") || "")
+    .trim()
+    .toLowerCase()
+    .slice(0, 32);
+  return {
+    connected,
+    visible,
+    tag,
+    input_type: inputType,
+    native_radio: tag === "input" && inputType === "radio",
+    disabled: Boolean(element && element.disabled),
+  };
+}
+"""
+
+_SEMANTIC_SLIDER_EVIDENCE_SCRIPT = r"""
+(element) => {
+  const connected = Boolean(element && element.isConnected);
+  const style = connected ? window.getComputedStyle(element) : null;
+  const rect = connected ? element.getBoundingClientRect() : null;
+  const visible = Boolean(
+    connected &&
+    !element.hidden &&
+    style &&
+    style.display !== "none" &&
+    style.visibility !== "hidden" &&
+    rect &&
+    rect.width > 0 &&
+    rect.height > 0
+  );
+  const tag = String(element && element.tagName || "").toLowerCase().slice(0, 32);
+  const inputType = String(element && element.getAttribute("type") || "")
+    .trim()
+    .toLowerCase()
+    .slice(0, 32);
+  const nativeSlider = tag === "input" && inputType === "range";
+  const attrNum = (name, dflt) => {
+    const raw = element ? element.getAttribute(name) : null;
+    const n = raw === null || raw === "" ? NaN : Number(raw);
+    return Number.isFinite(n) ? n : dflt;
+  };
+  const current = element ? Number(element.value) : NaN;
+  return {
+    connected,
+    visible,
+    tag,
+    input_type: inputType,
+    native_slider: nativeSlider,
+    disabled: Boolean(element && element.disabled),
+    slider_min: attrNum("min", 0),
+    slider_max: attrNum("max", 100),
+    slider_step: attrNum("step", 1),
+    slider_value: Number.isFinite(current) ? current : null,
+  };
+}
+"""
+
 _EXACT_NODE_EQUAL_SCRIPT = r"""
 (element, other) => Boolean(element && other && element === other)
 """
@@ -180,6 +287,9 @@ class SemanticPlaywrightManagedBrowser(
             BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
             BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
             BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME,
+            BrowserTargetQueryKind.ACCESSIBLE_LINK_NAME,
+            BrowserTargetQueryKind.ACCESSIBLE_RADIO_NAME,
+            BrowserTargetQueryKind.ACCESSIBLE_SLIDER_NAME,
         }
     )
 
@@ -319,10 +429,15 @@ class SemanticPlaywrightManagedBrowser(
             return super()._click(session, action)
         if action.target is None:
             raise ManagedBrowserError("browser navigation click requires a current target")
-        if action.target.role != "button":
+        if action.target.role not in ("button", "link"):
             raise ManagedBrowserError(
-                "browser navigation click currently requires a semantic button target"
+                "browser navigation click currently requires a semantic button or link target"
             )
+        postcondition = (
+            "url_equals_after_fresh_semantic_link_click"
+            if action.target.role == "link"
+            else "url_equals_after_fresh_semantic_button_click"
+        )
         self._require_url_allowed(expected_url, session.permission)
 
         page_id = action.page_id or action.target.page_id or self._default_page_id(session)
@@ -371,7 +486,7 @@ class SemanticPlaywrightManagedBrowser(
                 url_before=before_url,
                 url_after=observation.url,
                 target_id=action.target.target_id,
-                postcondition="url_equals_after_fresh_semantic_button_click",
+                postcondition=postcondition,
                 data=data,
                 error="browser navigation click postcondition did not match observed URL",
             )
@@ -384,7 +499,7 @@ class SemanticPlaywrightManagedBrowser(
             url_before=before_url,
             url_after=observation.url,
             target_id=action.target.target_id,
-            postcondition="url_equals_after_fresh_semantic_button_click",
+            postcondition=postcondition,
             data=data,
         )
 
@@ -398,6 +513,12 @@ class SemanticPlaywrightManagedBrowser(
             return "textbox", _SEMANTIC_TEXTBOX_EVIDENCE_SCRIPT, "textbox"
         if kind is BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME:
             return "combobox", _SEMANTIC_COMBOBOX_EVIDENCE_SCRIPT, "combobox"
+        if kind is BrowserTargetQueryKind.ACCESSIBLE_LINK_NAME:
+            return "link", _SEMANTIC_LINK_EVIDENCE_SCRIPT, "link"
+        if kind is BrowserTargetQueryKind.ACCESSIBLE_RADIO_NAME:
+            return "radio", _SEMANTIC_RADIO_EVIDENCE_SCRIPT, "radio"
+        if kind is BrowserTargetQueryKind.ACCESSIBLE_SLIDER_NAME:
+            return "slider", _SEMANTIC_SLIDER_EVIDENCE_SCRIPT, "slider"
         raise ManagedBrowserError(f"unsupported semantic target query: {kind.value}")
 
     @staticmethod
@@ -448,6 +569,28 @@ class SemanticPlaywrightManagedBrowser(
                     "managed browser semantic combobox Work refuses multi-select targets"
                 )
             return
+        if kind is BrowserTargetQueryKind.ACCESSIBLE_LINK_NAME:
+            if not bool(raw.get("native_link")):
+                raise ManagedBrowserError(
+                    "managed browser semantic link Work currently supports only native anchor link targets"
+                )
+            return
+        if kind is BrowserTargetQueryKind.ACCESSIBLE_RADIO_NAME:
+            if not bool(raw.get("native_radio")):
+                raise ManagedBrowserError(
+                    "managed browser semantic radio Work currently supports only native input[type=radio] targets"
+                )
+            if bool(raw.get("disabled")):
+                raise ManagedBrowserError("managed browser semantic radio target is disabled")
+            return
+        if kind is BrowserTargetQueryKind.ACCESSIBLE_SLIDER_NAME:
+            if not bool(raw.get("native_slider")):
+                raise ManagedBrowserError(
+                    "managed browser semantic slider Work currently supports only native input[type=range] targets"
+                )
+            if bool(raw.get("disabled")):
+                raise ManagedBrowserError("managed browser semantic slider target is disabled")
+            return
         raise ManagedBrowserError(f"unsupported semantic target query: {kind.value}")
 
     @staticmethod
@@ -474,6 +617,15 @@ class SemanticPlaywrightManagedBrowser(
         elif query.kind is BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME:
             role = "combobox"
             selector_hint = "accessible_combobox_name:exact"
+        elif query.kind is BrowserTargetQueryKind.ACCESSIBLE_LINK_NAME:
+            role = "link"
+            selector_hint = "accessible_link_name:exact"
+        elif query.kind is BrowserTargetQueryKind.ACCESSIBLE_RADIO_NAME:
+            role = "radio"
+            selector_hint = "accessible_radio_name:exact"
+        elif query.kind is BrowserTargetQueryKind.ACCESSIBLE_SLIDER_NAME:
+            role = "slider"
+            selector_hint = "accessible_slider_name:exact"
         else:
             raise ManagedBrowserError(
                 f"unsupported semantic target query: {query.kind.value}"

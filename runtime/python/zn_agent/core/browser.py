@@ -36,6 +36,7 @@ class BrowserActionKind(str, Enum):
     DOWNLOAD_FILE = "download_file"
     CHECK = "check"
     UNCHECK = "uncheck"
+    SET_SLIDER_VALUE = "set_slider_value"
     DIALOG_ACCEPT = "dialog_accept"
     DIALOG_DISMISS = "dialog_dismiss"
     WAIT = "wait"
@@ -74,6 +75,9 @@ class BrowserTargetQueryKind(str, Enum):
     ACCESSIBLE_BUTTON_NAME = "accessible_button_name"
     ACCESSIBLE_TEXTBOX_NAME = "accessible_textbox_name"
     ACCESSIBLE_COMBOBOX_NAME = "accessible_combobox_name"
+    ACCESSIBLE_LINK_NAME = "accessible_link_name"
+    ACCESSIBLE_RADIO_NAME = "accessible_radio_name"
+    ACCESSIBLE_SLIDER_NAME = "accessible_slider_name"
 
 
 _NAVIGATION_ACTIONS = frozenset(
@@ -95,6 +99,7 @@ _PAGE_INTERACTION_ACTIONS = frozenset(
         BrowserActionKind.SELECT_OPTION,
         BrowserActionKind.CHECK,
         BrowserActionKind.UNCHECK,
+        BrowserActionKind.SET_SLIDER_VALUE,
         BrowserActionKind.DIALOG_ACCEPT,
         BrowserActionKind.DIALOG_DISMISS,
     }

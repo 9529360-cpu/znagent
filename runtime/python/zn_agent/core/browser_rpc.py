@@ -443,20 +443,35 @@ class BrowserResidentRpcServer(ResidentRpcServer):
             kind = BrowserActionKind(value)
         except ValueError as exc:
             raise ValueError(f"unsupported browser semantic action kind: {value}") from exc
-        required_query = {
-            BrowserActionKind.TYPE_TEXT: BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
-            BrowserActionKind.CLICK: BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
-            BrowserActionKind.CHECK: BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
-            BrowserActionKind.UNCHECK: BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
+        required_queries = {
+            BrowserActionKind.TYPE_TEXT: (
+                BrowserTargetQueryKind.ACCESSIBLE_TEXTBOX_NAME,
+            ),
+            BrowserActionKind.CLICK: (
+                BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
+                BrowserTargetQueryKind.ACCESSIBLE_LINK_NAME,
+            ),
+            BrowserActionKind.CHECK: (
+                BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
+                BrowserTargetQueryKind.ACCESSIBLE_RADIO_NAME,
+            ),
+            BrowserActionKind.UNCHECK: (
+                BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
+            ),
+            BrowserActionKind.SET_SLIDER_VALUE: (
+                BrowserTargetQueryKind.ACCESSIBLE_SLIDER_NAME,
+            ),
         }.get(kind)
-        if required_query is None:
+        if required_queries is None:
             raise ValueError(
-                "browser_semantic_action supports only type_text, click, check and uncheck"
+                "browser_semantic_action supports only type_text, click, check, "
+                "uncheck and set_slider_value"
             )
-        if query.kind is not required_query:
+        if query.kind not in required_queries:
+            names = ", ".join(sorted(q.value for q in required_queries))
             raise ValueError(
-                f"browser semantic action {kind.value} requires query kind "
-                f"{required_query.value}"
+                f"browser semantic action {kind.value} requires one of query "
+                f"kinds: {names}"
             )
         return kind
 
