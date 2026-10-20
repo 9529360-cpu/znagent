@@ -31,7 +31,18 @@ External model or tool success is evidence only.
 | Public research primitives | CONNECTED + PARTIAL | search/extract/evidence mechanisms remain; no dedicated representative-task completion path owns the product |
 | Delegated Work / routing | CONNECTED + PARTIAL | generic routing, progress, health and authority remain; fixed story phase orchestration was retired |
 | Memory / learned behavior | CONNECTED + VERIFIED NARROW | saved facts, explicit response preferences and same-Work conversation compose in bounded product cognition; automatic personal-memory writing, semantic search and arbitrary workflow learning remain open |
+| External REST connectors (OpenAPI) | CONNECTED + VERIFIED NARROW | host-configured OpenAPI documents become read/write-gated Fabric tools via the M-8 adapter; R1 weather (Open-Meteo) is the first landed connector, proven with mocked tests plus one live run; see the R-series section below |
 | Packaging / clean install | CONNECTED | packaged runtime and clean-install verification remain release boundaries |
+
+## External connectors (R series): first connector is weather (R1)
+
+R1 lands the paradigm every later connector copies. The M-8 OpenAPI adapter (`openapi_rest_adapter.py`) is the only mechanism: a connector is trusted host configuration (an OpenAPI document the host reviewed) attached to the same Fabric/Body as every other capability — never a parallel plugin path, never model-supplied configuration.
+
+The first connector is Open-Meteo (`open_meteo_connector.py`), key-free and read-only: the Geocoding API resolves a place name to coordinates (`rest.open_meteo_geocoding.search_location`), the Forecast API returns current weather plus a daily forecast for those coordinates (`rest.open_meteo_forecast.get_forecast`). `lookup_weather` chains the two through the normal capability path (`ActionExecutionRuntime` + `ActionRequest`) and returns a structured answer — place, current conditions, daily entries, source, retrieval time. Every failure is explicit: no geocoding match, a non-2xx status, a transport failure, or a malformed payload raises `WeatherLookupError` with the concrete reason; coordinates and weather values are never invented.
+
+The user-facing half is the repo skill bundle `skills/weather/skill.md`: it routes weather questions to the two tools, fixes the lookup order (geocode first, forecast second) and the answer shape (source + retrieval time always stated). It passes the repo skill evals (Tier 1 structure + Tier 2 trigger checks through the real router) with zero warnings.
+
+Evidence: `tests/zn_agent/core/test_open_meteo_connector.py` (mocked HTTP: spec parsing, attach/detach, the chained lookup, not-found / HTTP-500 / transport failure honesty, skill evals) plus one opt-in live run against the real Open-Meteo API on 2026-10-20 (Berlin: geocoded to 52.52437, 13.41053, forecast chained from those coordinates). Remaining boundary: the connector is attached by host code that owns a Fabric/Body pair; daemon-level auto-attachment of approved connectors is a later R-series step, as are connectors that need credentials or write approvals.
 
 ## Saved memory in ordinary conversation
 
