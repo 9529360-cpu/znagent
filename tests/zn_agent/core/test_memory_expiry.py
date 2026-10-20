@@ -196,12 +196,16 @@ class StoreExpiryTests(unittest.TestCase):
         # Opening with the new code migrates the old database in place.
         store = KernelStore(path)
         try:
-            columns = {
-                row[1]
-                for row in sqlite3.connect(path).execute(
-                    "PRAGMA table_info(facts)"
-                ).fetchall()
-            }
+            # Explicitly close the check connection: on Windows an unclosed
+            # sqlite handle keeps old.db locked, which makes the temp dir
+            # cleanup fail with WinError 32.
+            check = sqlite3.connect(path)
+            try:
+                columns = {
+                    row[1] for row in check.execute("PRAGMA table_info(facts)").fetchall()
+                }
+            finally:
+                check.close()
             self.assertIn("expires_at", columns)
             facts = store.list_facts()
             self.assertEqual(len(facts), 1)
