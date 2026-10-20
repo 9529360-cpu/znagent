@@ -110,6 +110,12 @@ APPROVAL_KINDS = (
     # a plugin from an already-approved source. Install happens only after
     # this card is approved; deny/expire means the gap stays blocked.
     "skill_acquire",
+    # M-14: ZN's native goal-driven self-drive loop needs user sign-off on
+    # goal control actions it cannot take on its own authority: starting a
+    # resident-proposed goal, pausing/resuming, or redirecting a goal's
+    # objective mid-flight. The concrete action rides in the scope
+    # ("self-drive-goal:<intention_id>:<start|pause|resume|redirect>").
+    "goal_control",
 )
 
 APPROVAL_SOURCES = (
@@ -313,7 +319,10 @@ class ApprovalGateOutcome:
 
 
 # Approval kind -> permission-policy action type. "delete" maps to the
-# policy's file_delete type; the rest share names.
+# policy's file_delete type; the rest share names. Kinds without a mapping
+# (team_assembly, skill_acquire, goal_control) skip static policy
+# evaluation: the approval card itself is the authority check for those
+# resident-initiated control decisions.
 _POLICY_ACTION_TYPE_BY_KIND = {
     "send": "send",
     "publish": "publish",
