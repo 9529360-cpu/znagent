@@ -62,6 +62,13 @@ class WorkRestorePointIdempotentRedispatchTests(unittest.TestCase):
                     return original_act(kind, event_id=event_id, **args)
 
                 resident.body.act = stop_before_dispatch
+                # The Windows-only atomic-overwrite protocol lifecycle is a
+                # separate guard outside P3-13 scope; stub it so the test
+                # exercises the restore-point layer on every platform.
+                original_prepare = resident.body.prepare_atomic_protocol
+                resident.body.prepare_atomic_protocol = (
+                    lambda *, event_id=None, intent=None: {}
+                )
                 try:
                     restore_point_ids = []
                     for n in range(1, 6):
@@ -85,6 +92,7 @@ class WorkRestorePointIdempotentRedispatchTests(unittest.TestCase):
                         )
                 finally:
                     resident.body.act = original_act
+                    resident.body.prepare_atomic_protocol = original_prepare
 
                 # All five dispatches resolve to the same restore point.
                 self.assertEqual(len(set(restore_point_ids)), 1)
