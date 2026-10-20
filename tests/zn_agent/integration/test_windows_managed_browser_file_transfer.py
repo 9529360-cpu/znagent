@@ -12,7 +12,10 @@ from zn_agent.core.browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.file_identity import compare_file_identities, observe_file_identity
 from zn_agent.core.semantic_managed_browser import SemanticPlaywrightManagedBrowser
 
@@ -126,7 +129,7 @@ class ManagedBrowserFileTransferWindowsContract(unittest.TestCase):
             allowed_origins=(self.origin,),
         )
         browser = SemanticPlaywrightManagedBrowser()
-        identity = browser.open_session(permission=permission, headless=True)
+        identity = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         try:
             page_id = browser.observe(identity.session_id).page_id
             page_url = self._navigate(browser, identity, permission, page_id)
@@ -204,7 +207,7 @@ class ManagedBrowserFileTransferWindowsContract(unittest.TestCase):
             allowed_origins=(self.origin,),
         )
         browser = SemanticPlaywrightManagedBrowser()
-        identity = browser.open_session(permission=permission, headless=True)
+        identity = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         try:
             page_id = browser.observe(identity.session_id).page_id
             self._navigate(browser, identity, permission, page_id)

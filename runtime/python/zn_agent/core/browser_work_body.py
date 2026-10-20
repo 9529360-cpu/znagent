@@ -15,6 +15,7 @@ from .browser import (
     BrowserActionKind,
     BrowserPermissionContext,
     BrowserPlane,
+    BrowserSessionOwner,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
@@ -22,6 +23,21 @@ from .browser_semantic_action import execute_fresh_semantic_action
 from .models import utc_now
 
 _LOG = logging.getLogger(__name__)
+
+
+def _body_action_session_owner(action: BodyAction) -> BrowserSessionOwner:
+    """Q4 session ownership for body-driven browser sessions.
+
+    A Body movement has no Work-ledger identity of its own; the session is
+    owned by the concrete body action that opened it, namespaced so it stays
+    distinguishable from Work-ledger owners in the session journal.
+    """
+    action_id = str(action.action_id or "").strip() or "unknown-action"
+    return BrowserSessionOwner(
+        work_id=f"body:{action_id}",
+        root_id=f"body:{action_id}",
+        purpose=f"browser-body:{action.kind}",
+    )
 
 
 class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
@@ -95,16 +111,22 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 return opener(
                     permission=permission,
                     headless=headless,
+                    owner=_body_action_session_owner(action),
                     expected_tab_id=int(expected_tab_id),
                     expected_attached_at=expected_attached_at,
                 )
-        return browser.open_session(permission=permission, headless=headless)
+        return browser.open_session(
+            permission=permission,
+            headless=headless,
+            owner=_body_action_session_owner(action),
+        )
 
     @staticmethod
     def _open_session_for_target_query(
         browser,
         permission: BrowserPermissionContext,
         query_kind: BrowserTargetQueryKind,
+        action: BodyAction,
         *,
         headless: bool,
     ):
@@ -113,9 +135,14 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
             return opener(
                 permission=permission,
                 headless=headless,
+                owner=_body_action_session_owner(action),
                 required_target_queries=(query_kind,),
             )
-        return browser.open_session(permission=permission, headless=headless)
+        return browser.open_session(
+            permission=permission,
+            headless=headless,
+            owner=_body_action_session_owner(action),
+        )
 
     def _browser_navigate(self, action: BodyAction, started: str) -> BodyActionResult:
         browser = self._browser()
@@ -131,7 +158,11 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
         )
         session = None
         try:
-            session = browser.open_session(permission=permission, headless=True)
+            session = browser.open_session(
+                permission=permission,
+                headless=True,
+                owner=_body_action_session_owner(action),
+            )
             observation = browser.observe(session.session_id)
             browser_action = BrowserAction.create(
                 session_id=session.session_id,
@@ -260,6 +291,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 browser,
                 permission,
                 query.kind,
+                action,
                 headless=True,
             )
             initial = browser.observe(session.session_id)
@@ -414,6 +446,7 @@ class BrowserSideEffectAwareBody(AtomicOverwriteNamespaceAwareBody):
                 browser,
                 permission,
                 BrowserTargetQueryKind.ACCESSIBLE_COMBOBOX_NAME,
+                action,
                 headless=True,
             )
             initial = browser.observe(session.session_id)

@@ -41,7 +41,7 @@ class _SemanticUserBrowser(AuthorizedCDPUserBrowser):
         self.semantic_state_reads = 0
         self.close_calls = 0
 
-    def open_session(self, *, permission=None, headless=False):
+    def open_session(self, *, permission=None, headless=False, owner=None):
         self.permission = permission
         return self.identity
 

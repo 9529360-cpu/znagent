@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from zn_agent.core.browser import BrowserAction, BrowserActionAuthority, BrowserActionKind, BrowserPermissionContext
+from zn_agent.core.browser import BrowserAction, BrowserActionAuthority, BrowserActionKind, BrowserPermissionContext, BrowserSessionOwner
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.managed_browser import ManagedBrowserError
 from zn_agent.core.semantic_managed_browser import SemanticPlaywrightManagedBrowser
 from zn_agent.core.user_browser import AuthorizedCDPUserBrowser
@@ -247,11 +249,11 @@ def _build(page, *, permission=None, user=False):
     if user:
         adapter = AuthorizedCDPUserBrowser(endpoint="http://127.0.0.1:9222",
             playwright_factory=lambda: _Starter(playwright), url_checker=lambda url, **kwargs: True)
-        identity = adapter.open_session(permission=permission or _permission())
+        identity = adapter.open_session(owner=_OWNER, permission=permission or _permission())
     else:
         adapter = SemanticPlaywrightManagedBrowser(playwright_factory=lambda: _Starter(playwright),
             url_checker=lambda url, **kwargs: True)
-        identity = adapter.open_session(permission=permission or _permission(), headless=True)
+        identity = adapter.open_session(owner=_OWNER, permission=permission or _permission(), headless=True)
     return adapter, identity, context, provider
 
 

@@ -77,7 +77,7 @@ class _FakeBrowser:
         self.drift_target_on_next_observe = False
         self.session_open = False
 
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         self.open_calls += 1
         self.session_open = True
         return self.identity

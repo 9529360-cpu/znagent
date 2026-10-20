@@ -28,6 +28,7 @@ from .browser import (
     BrowserPermissionContext,
     BrowserPlane,
     BrowserSessionIdentity,
+    BrowserSessionOwner,
     BrowserTarget,
     BrowserTargetKind,
     BrowserTargetQuery,
@@ -78,6 +79,27 @@ def _parse_nonnegative_float(value: Any) -> float | None:
         return max(0.0, float(value))
     except (TypeError, ValueError):
         return None
+
+
+def _require_session_owner(
+    owner: BrowserSessionOwner | None, *, provider: str
+) -> BrowserSessionOwner:
+    """Fail closed when a session is opened without an explicit owner.
+
+    Q4: every managed session must record the Work/intent that opened it so
+    leaked sessions are attributable in the session event journal.
+    """
+    if owner is None:
+        raise ManagedBrowserError(
+            f"{provider} open_session requires an explicit session owner: "
+            "pass owner=BrowserSessionOwner(work_id=..., root_id=..., purpose=...)"
+        )
+    if not isinstance(owner, BrowserSessionOwner):
+        raise ManagedBrowserError(
+            f"{provider} open_session owner must be a BrowserSessionOwner, "
+            f"got {type(owner).__name__}"
+        )
+    return owner
 
 
 class ManagedBrowserError(RuntimeError):
@@ -357,6 +379,10 @@ class _ManagedTargetBinding:
 class _ManagedSession:
     identity: BrowserSessionIdentity
     permission: BrowserPermissionContext
+    # Session ownership (Q4): the Work/intent that opened this session.
+    # Required at creation; surfaced in observation metadata and in the
+    # close/TTL session event journal so leaked sessions are attributable.
+    owner: BrowserSessionOwner
     playwright: Any
     browser: Any
     context: Any
@@ -433,10 +459,12 @@ class PlaywrightManagedBrowser:
         *,
         permission: BrowserPermissionContext | None = None,
         headless: bool = True,
+        owner: BrowserSessionOwner | None = None,
     ) -> BrowserSessionIdentity:
         # Reclaim leaked sessions before launching a new browser.
         self._maybe_auto_sweep_idle_sessions()
         policy = permission or BrowserPermissionContext()
+        session_owner = _require_session_owner(owner, provider=self.name)
         if policy.allow_downloads or policy.allow_uploads:
             raise ManagedBrowserError(
                 "managed-browser downloads/uploads require explicit file authority and are not enabled in this slice"
@@ -464,6 +492,7 @@ class PlaywrightManagedBrowser:
             session = _ManagedSession(
                 identity=identity,
                 permission=policy,
+                owner=session_owner,
                 playwright=playwright,
                 browser=browser,
                 context=context,
@@ -2264,6 +2293,8 @@ class PlaywrightManagedBrowser:
                 "default_page_id": session.default_page_id,
                 "service_workers": "blocked",
                 "profile_scope": session.identity.profile_scope,
+                # Q4 session ownership: which Work/intent opened this session.
+                "owner": session.owner.as_dict(),
                 "dialog": self._open_dialog_snapshot(session, page_id),
                 "console_errors": self._console_error_snapshot(session, page_id),
                 "dialog_auto_dismiss_count": int(
@@ -2682,6 +2713,9 @@ class PlaywrightManagedBrowser:
             "session_id": session.identity.session_id,
             "provider": self.name,
             "plane": BrowserPlane.MANAGED.value,
+            # Q4 session ownership: attribute the closed session to the
+            # Work/intent that opened it for leak investigation.
+            "owner": session.owner.as_dict(),
             "idle_seconds": round(float(idle_seconds), 3),
             "ttl_seconds": float(ttl_seconds) if reason == "idle_ttl" else None,
             "closed_at": utc_now(),

@@ -14,6 +14,7 @@ from .body import BodyActionResult
 from .browser import (
     BrowserPermissionContext,
     BrowserPlane,
+    BrowserSessionOwner,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
@@ -40,6 +41,28 @@ _EN_SEARCH_FOR_ON_PAGE_RE = re.compile(
 _ZH_SEARCH_THIS_PAGE_RE = re.compile(
     r"^\s*(?:在)?(?:这个|当前)(?:页面|网页|网站)(?:里|中|上)?\s*(?:搜索|查找|搜一下|查一下)\s*[：:]?\s*(.+?)\s*[。！？!?]?\s*$"
 )
+
+
+def _extension_session_owner(event: Any, purpose: str) -> BrowserSessionOwner:
+    """Q4 session ownership for extension user-browser sessions.
+
+    The resident event carries the Work thread id in its payload when the
+    binding runs inside a Work; otherwise the session is owned by the
+    extension relay component itself.
+    """
+    payload = getattr(event, "payload", None) or {}
+    thread_id = str(payload.get("work_thread_id") or "").strip()
+    if thread_id:
+        return BrowserSessionOwner(
+            work_id=thread_id,
+            root_id=thread_id,
+            purpose=purpose,
+        )
+    return BrowserSessionOwner(
+        work_id="user-browser-extension",
+        root_id="user-browser-extension",
+        purpose=purpose,
+    )
 
 
 class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
@@ -719,6 +742,7 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
             url=current_url,
             name=selected_name,
             role="textbox",
+            event=event,
         )
         return {
             "url": current_url,
@@ -816,6 +840,7 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
             url=current_url,
             name=selected_name,
             role="button",
+            event=event,
         )
         return {
             "url": current_url,
@@ -1238,7 +1263,9 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
             )
         return f"{goal['subject_value']}: {fact}"
 
-    def _bind_exact_semantic_target(self, *, url: str, name: str, role: str) -> dict[str, str]:
+    def _bind_exact_semantic_target(
+        self, *, url: str, name: str, role: str, event: Any = None
+    ) -> dict[str, str]:
         if self.user_browser_extension.authorized_tab() is None:
             raise UserBrowserExtensionRelayError("the explicitly authorized browser tab is gone")
         permission = BrowserPermissionContext(
@@ -1252,6 +1279,9 @@ class UserBrowserExtensionResidentRuntime(UserBrowserBridgeResidentRuntime):
             session = self._extension_user_browser.open_session(
                 permission=permission,
                 headless=False,
+                owner=_extension_session_owner(
+                    event, "extension:bind-exact-semantic-target"
+                ),
             )
             current = self._extension_user_browser.observe(session.session_id)
             if current.url != url:

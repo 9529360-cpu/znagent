@@ -12,7 +12,10 @@ from zn_agent.core.browser import (
     BrowserTargetKind,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.managed_browser import ManagedBrowserError, PlaywrightManagedBrowser
 
 
@@ -323,7 +326,7 @@ class ManagedBrowserTests(unittest.TestCase):
             navigation_timeout_ms=5000,
             action_timeout_ms=3000,
         )
-        identity = adapter.open_session(permission=permission, headless=True)
+        identity = adapter.open_session(owner=_OWNER, permission=permission, headless=True)
         return adapter, playwright, identity
 
     def _observe_target(self, adapter, playwright, identity, *, dom_id="search-input"):
@@ -362,9 +365,9 @@ class ManagedBrowserTests(unittest.TestCase):
             url_checker=lambda url, **kwargs: True,
         )
         with self.assertRaises(ManagedBrowserError):
-            adapter.open_session(permission=BrowserPermissionContext(allow_downloads=True))
+            adapter.open_session(owner=_OWNER, permission=BrowserPermissionContext(allow_downloads=True))
         with self.assertRaises(ManagedBrowserError):
-            adapter.open_session(permission=BrowserPermissionContext(allow_uploads=True))
+            adapter.open_session(owner=_OWNER, permission=BrowserPermissionContext(allow_uploads=True))
 
     def test_dom_id_target_observation_is_bounded_fresh_and_authority_ready(self):
         permission = BrowserPermissionContext(allow_page_interaction=True)

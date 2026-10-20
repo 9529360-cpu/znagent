@@ -15,7 +15,10 @@ from zn_agent.core.browser import (
     BrowserTargetKind,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.managed_browser import ManagedBrowserError, PlaywrightManagedBrowser
 
 
@@ -131,7 +134,7 @@ class ManagedBrowserWindowsContract(unittest.TestCase):
             allowed_origins=(self.origin,),
         )
         browser = PlaywrightManagedBrowser()
-        session = browser.open_session(permission=permission, headless=True)
+        session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         try:
             initial = browser.observe(session.session_id)
             self.assertEqual(initial.url, "about:blank")
@@ -653,7 +656,7 @@ class ManagedBrowserWindowsContract(unittest.TestCase):
             allow_private_network=True,
         )
         browser = PlaywrightManagedBrowser()
-        session = browser.open_session(permission=permission, headless=True)
+        session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         try:
             current = browser.observe(session.session_id)
             metadata_probe = BrowserAction.create(

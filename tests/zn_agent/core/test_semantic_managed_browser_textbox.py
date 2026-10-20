@@ -7,7 +7,10 @@ from zn_agent.core.browser import (
     BrowserTargetKind,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.semantic_managed_browser import (
     ManagedBrowserError,
     SemanticPlaywrightManagedBrowser,
@@ -147,6 +150,7 @@ def _build(**page_kwargs):
         url_checker=lambda url, **kwargs: True,
     )
     session = browser.open_session(
+        owner=_OWNER,
         permission=BrowserPermissionContext(
             allow_page_interaction=True,
             allow_text_entry=True,

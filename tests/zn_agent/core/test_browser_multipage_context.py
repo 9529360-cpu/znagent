@@ -55,7 +55,7 @@ class _MultiPageBrowser:
         self.act_calls = 0
         self.observe_calls = 0
 
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         return self.identity
 
     def close_session(self, session_id):

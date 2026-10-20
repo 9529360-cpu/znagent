@@ -65,7 +65,7 @@ class _DisconnectFakeBrowser:
         self.fail_observe_target_with: BaseException | None = None
         self.fail_navigate_effect = False
 
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         self.open_calls += 1
         if self.fail_open_with is not None:
             raise self.fail_open_with

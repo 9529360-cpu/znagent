@@ -48,7 +48,7 @@ class _FakeFormSubmitBrowser:
         self.close_calls = 0
         self.typed_text = ""
 
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         self.permission = permission
         return self.identity
 

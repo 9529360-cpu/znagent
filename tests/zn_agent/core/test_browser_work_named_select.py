@@ -39,7 +39,7 @@ class _FakeNamedSelectBrowser:
         self.actions = []
         self.close_calls = 0
 
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         self.permission = permission
         self.headless = headless
         return self.identity

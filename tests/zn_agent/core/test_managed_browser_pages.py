@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import unittest
 
-from zn_agent.core.browser import BrowserPermissionContext, BrowserTargetQuery, BrowserTargetQueryKind
+from zn_agent.core.browser import BrowserPermissionContext, BrowserTargetQuery, BrowserTargetQueryKind, BrowserSessionOwner
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.managed_browser import ManagedBrowserError, PlaywrightManagedBrowser
 from test_managed_browser import _FakePage, _FakeStarter, _FakePlaywright, _target_snapshot
 
@@ -27,6 +29,7 @@ class ManagedBrowserPageLifecycleTests(unittest.TestCase):
             url_checker=lambda url, **kwargs: True,
         )
         identity = adapter.open_session(
+            owner=_OWNER,
             permission=BrowserPermissionContext(allow_page_interaction=True),
             headless=True,
         )

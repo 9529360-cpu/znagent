@@ -26,7 +26,7 @@ class _Adapter:
     def __init__(self, name):
         self.name = name
 
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         return BrowserSessionIdentity.create(
             plane=BrowserPlane.MANAGED,
             provider=self.name,
@@ -48,7 +48,7 @@ class _Adapter:
 class _FailingAdapter(_Adapter):
     """Adapter whose session open always blows up like a dead browser."""
 
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         raise RuntimeError("chrome socket died")
 
 

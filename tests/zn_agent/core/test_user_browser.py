@@ -8,7 +8,10 @@ from zn_agent.core.browser import (
     BrowserTargetKind,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.user_browser import (
     AuthorizedCDPUserBrowser,
     UserBrowserBridgeError,
@@ -182,7 +185,7 @@ class AuthorizedCDPUserBrowserTests(unittest.TestCase):
             allowed_origins=("https://example.test",),
         )
 
-        session = adapter.open_session(permission=permission)
+        session = adapter.open_session(owner=_OWNER, permission=permission)
         try:
             self.assertIs(session.plane, BrowserPlane.USER)
             self.assertEqual(session.profile_scope, "user_existing")
@@ -235,7 +238,7 @@ class AuthorizedCDPUserBrowserTests(unittest.TestCase):
         ]
         adapter, playwright, provider_browser, context = _build(pages)
         with self.assertRaisesRegex(UserBrowserBridgeError, "multiple visible pages"):
-            adapter.open_session()
+            adapter.open_session(owner=_OWNER, )
         self.assertEqual(playwright.stop_calls, 1)
         self.assertEqual(provider_browser.close_calls, 0)
         self.assertEqual(context.close_calls, 0)
@@ -250,7 +253,7 @@ class AuthorizedCDPUserBrowserTests(unittest.TestCase):
             playwright_factory=lambda: _Starter(playwright),
         )
         with self.assertRaisesRegex(UserBrowserBridgeError, "exactly one"):
-            adapter.open_session()
+            adapter.open_session(owner=_OWNER, )
         self.assertEqual(playwright.stop_calls, 1)
         self.assertEqual(provider_browser.close_calls, 0)
         self.assertEqual(sum(context.close_calls for context in contexts), 0)

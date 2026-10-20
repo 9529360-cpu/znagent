@@ -19,6 +19,7 @@ from .browser import (
     BrowserActionAuthority,
     BrowserActionKind,
     BrowserPermissionContext,
+    BrowserSessionOwner,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
 )
@@ -122,9 +123,11 @@ class _ResidentManagedBrowser:
         self.name = getattr(browser, "name", "managed-browser")
         self.plane = getattr(browser, "plane", None)
 
-    def open_session(self, *, permission=None, headless=True):
+    def open_session(self, *, permission=None, headless=True, owner=None):
         return self._owner.call(
-            lambda: self._browser.open_session(permission=permission, headless=headless)
+            lambda: self._browser.open_session(
+                permission=permission, headless=headless, owner=owner
+            )
         )
 
     def open_session_for_requirements(
@@ -132,16 +135,20 @@ class _ResidentManagedBrowser:
         *,
         permission=None,
         headless=True,
+        owner=None,
         required_target_queries=(),
     ):
         opener = getattr(self._browser, "open_session_for_requirements", None)
         if not callable(opener):
-            return self.open_session(permission=permission, headless=headless)
+            return self.open_session(
+                permission=permission, headless=headless, owner=owner
+            )
         queries = tuple(required_target_queries)
         return self._owner.call(
             lambda: opener(
                 permission=permission,
                 headless=headless,
+                owner=owner,
                 required_target_queries=queries,
             )
         )
@@ -264,6 +271,7 @@ class BrowserResidentRpcServer(ResidentRpcServer):
 
         if method == "browser_open":
             permission = self._permission_from_params(params.get("permission"))
+            owner = self._session_owner_from_params(params.get("owner"))
             required_target_queries = self._required_target_queries_from_params(
                 params.get("required_target_queries")
             )
@@ -272,12 +280,14 @@ class BrowserResidentRpcServer(ResidentRpcServer):
                 session = browser.open_session_for_requirements(
                     permission=permission,
                     headless=headless,
+                    owner=owner,
                     required_target_queries=required_target_queries,
                 )
             else:
                 session = browser.open_session(
                     permission=permission,
                     headless=headless,
+                    owner=owner,
                 )
             with self._browser_permissions_lock:
                 self._browser_permissions[session.session_id] = permission
@@ -509,3 +519,29 @@ class BrowserResidentRpcServer(ResidentRpcServer):
             allow_private_network=bool(raw.get("allow_private_network", False)),
             allowed_origins=tuple(str(item) for item in allowed_origins),
         )
+
+    @staticmethod
+    def _session_owner_from_params(raw: Any) -> BrowserSessionOwner:
+        """Resolve the Q4 session owner for a ``browser_open`` RPC call.
+
+        The RPC client may attach an explicit owner object
+        ``{"work_id","root_id","purpose"}`` (the same contract as the Python
+        ``BrowserSessionOwner``). When it does not, the session is owned by
+        the resident RPC surface itself — never anonymous.
+        """
+        if raw is None:
+            return BrowserSessionOwner(
+                work_id="resident-rpc",
+                root_id="resident-rpc",
+                purpose="rpc:browser_open",
+            )
+        if not isinstance(raw, dict):
+            raise ValueError("browser_open owner must be an object")
+        try:
+            return BrowserSessionOwner(
+                work_id=str(raw.get("work_id") or ""),
+                root_id=str(raw.get("root_id") or ""),
+                purpose=str(raw.get("purpose") or ""),
+            )
+        except ValueError as exc:
+            raise ValueError(f"browser_open owner is invalid: {exc}") from exc

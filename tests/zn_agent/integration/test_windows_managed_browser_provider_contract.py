@@ -11,7 +11,10 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.chrome_devtools_mcp_browser import (
     CHROME_DEVTOOLS_MCP_PROVIDER,
     ChromeDevToolsMcpManagedBrowser,
@@ -64,7 +67,7 @@ class ManagedBrowserProviderContractTests(unittest.TestCase):
             allowed_origins=(self.origin,),
         )
         browser = ChromeDevToolsMcpManagedBrowser()
-        session = browser.open_session(permission=permission, headless=True)
+        session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
         try:
             initial = browser.observe(session.session_id)
             navigate = BrowserAction.create(

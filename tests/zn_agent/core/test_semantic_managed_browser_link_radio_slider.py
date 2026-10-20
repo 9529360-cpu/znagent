@@ -10,7 +10,10 @@ from zn_agent.core.browser import (
     BrowserTargetKind,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserSessionOwner,
 )
+
+_OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
 from zn_agent.core.browser_rpc import BrowserResidentRpcServer
 from zn_agent.core.semantic_managed_browser import (
     ManagedBrowserError,
@@ -233,7 +236,7 @@ def _build(*, role, destination="https://example.com/done", count=1):
         playwright_factory=lambda: _Starter(playwright),
         url_checker=lambda url, **kwargs: True,
     )
-    session = browser.open_session(permission=permission, headless=True)
+    session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
     query = BrowserTargetQuery(
         kind=_ROLE_QUERY_KIND[role],
         value=_ROLE_NAME[role],

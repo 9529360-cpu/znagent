@@ -19,6 +19,7 @@ from .browser import (
     BrowserAdapter,
     BrowserPermissionContext,
     BrowserPlane,
+    BrowserSessionOwner,
     BrowserTargetQueryKind,
 )
 
@@ -237,10 +238,12 @@ class ManagedBrowserProviderRouter:
         *,
         permission: BrowserPermissionContext | None = None,
         headless: bool = True,
+        owner: BrowserSessionOwner | None = None,
     ):
         return self.open_session_for_requirements(
             permission=permission,
             headless=headless,
+            owner=owner,
         )
 
     def open_session_for_requirements(
@@ -248,6 +251,7 @@ class ManagedBrowserProviderRouter:
         *,
         permission: BrowserPermissionContext | None = None,
         headless: bool = True,
+        owner: BrowserSessionOwner | None = None,
         required_target_queries: Iterable[BrowserTargetQueryKind] = (),
     ):
         policy = permission or BrowserPermissionContext()
@@ -265,6 +269,7 @@ class ManagedBrowserProviderRouter:
                 identity = adapter.open_session(
                     permission=policy,
                     headless=headless,
+                    owner=owner,
                 )
             except BaseException:
                 close = getattr(adapter, "close", None)

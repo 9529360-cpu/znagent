@@ -25,6 +25,7 @@ from .browser import (
     BrowserPermissionContext,
     BrowserPlane,
     BrowserSessionIdentity,
+    BrowserSessionOwner,
     BrowserTarget,
     BrowserTargetKind,
     BrowserTargetQuery,
@@ -95,6 +96,8 @@ class _Session:
     permission: BrowserPermissionContext
     client: StdioMcpClient
     default_page_id: str
+    # Q4 session ownership: the Work/intent that opened this session.
+    owner: BrowserSessionOwner
     last_observation: dict[str, BrowserObservation] = field(default_factory=dict)
     snapshots: dict[str, _Snapshot] = field(default_factory=dict)
 
@@ -288,8 +291,14 @@ class ChromeDevToolsMcpManagedBrowser:
         *,
         permission: BrowserPermissionContext | None = None,
         headless: bool = True,
+        owner: BrowserSessionOwner | None = None,
     ) -> BrowserSessionIdentity:
         policy = permission or BrowserPermissionContext()
+        if owner is None:
+            raise ChromeDevToolsMcpBrowserError(
+                f"{self.name} open_session requires an explicit session owner: "
+                "pass owner=BrowserSessionOwner(work_id=..., root_id=..., purpose=...)"
+            )
         if policy.allow_uploads or policy.allow_downloads:
             raise ChromeDevToolsMcpBrowserUnavailable(
                 "Chrome DevTools MCP does not own ZN's causal file-transfer contract; "
@@ -319,6 +328,7 @@ class ChromeDevToolsMcpManagedBrowser:
                 permission=policy,
                 client=client,
                 default_page_id=str(selected["id"]),
+                owner=owner,
             )
             self._sessions[identity.session_id] = session
             self._capture(session, session.default_page_id)
@@ -380,7 +390,7 @@ class ChromeDevToolsMcpManagedBrowser:
             title=snapshot.title,
             load_state="observed",
             target=target,
-            metadata={"provider": self.name},
+            metadata={"provider": self.name, "owner": session.owner.as_dict()},
         )
         session.last_observation[resolved] = observation
         return observation
@@ -841,7 +851,7 @@ class ChromeDevToolsMcpManagedBrowser:
             url=snapshot.url,
             title=snapshot.title,
             load_state="observed",
-            metadata={"provider": self.name},
+            metadata={"provider": self.name, "owner": session.owner.as_dict()},
         )
         session.last_observation[page_id] = observation
         return observation
