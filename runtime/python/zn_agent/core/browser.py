@@ -254,6 +254,13 @@ class BrowserObservation:
     load_state: str
     target: BrowserTarget | None = None
     viewport: tuple[int, int] | None = None
+    # Bounded network failure summary produced by the provider's Playwright
+    # observer: {"total_count","kept_count","dropped_count","failed_requests"}.
+    # Failed requests carry a desensitized URL (query/fragment stripped),
+    # HTTP status or failure class, and the resource type; successful
+    # traffic is never recorded. Defaults to empty for providers that do
+    # not observe the network.
+    network: dict[str, Any] = field(default_factory=dict)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:

@@ -99,6 +99,16 @@ _MAX_CONSOLE_ERRORS_PER_PAGE = 20
 _MAX_CONSOLE_ERROR_TEXT_CHARS = 1024
 _MAX_CONSOLE_ERROR_RECENT_IN_OBSERVATION = 5
 
+# Network observation (Q2). Only failed requests (``requestfailed``) and
+# error responses (status >= 400) are recorded; successful traffic is never
+# stored. Query strings and fragments are stripped from stored URLs before
+# the privacy choke single point runs, mirroring the console-error path.
+_MAX_NETWORK_FAILURES_PER_PAGE = 20
+_MAX_NETWORK_URL_CHARS = 512
+_MAX_NETWORK_ERROR_TEXT_CHARS = 256
+_MAX_NETWORK_FAILURES_RECENT_IN_OBSERVATION = 5
+_NETWORK_ERROR_STATUS_MIN = 400
+
 _TARGET_HANDLE_BUNDLE_SCRIPT = r"""
 (domId) => {
   const matches = Array.from(document.querySelectorAll("[id]")).filter(
@@ -305,6 +315,14 @@ class _ManagedSession:
     #   "total_count": number of console errors / pageerrors seen on the page
     #   "dropped_count": entries dropped because the per-page bound was hit
     console_error_state: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Network failure state, keyed by page_id. Each entry is a dict with:
+    #   "entries": bounded list (oldest dropped first) of
+    #     {"kind","method","url","status","error","resource_type",
+    #      "captured_at"}; url is query/fragment-stripped, redacted and
+    #     truncated. Only failed requests and error responses are recorded.
+    #   "total_count": number of network failures seen on the page
+    #   "dropped_count": entries dropped because the per-page bound was hit
+    network_state: dict[str, dict[str, Any]] = field(default_factory=dict)
     # Monotonic timestamp of the last observe / observe_target / act on this
     # session (set at open). Drives the idle TTL sweep. Monotonic, not wall
     # clock, so a clock adjustment can neither keep a leaked session alive nor
@@ -547,7 +565,21 @@ class PlaywrightManagedBrowser:
         page_id = action.page_id or authority.page_id or self._default_page_id(session)
         page = self._page(session, page_id)
         before = str(getattr(page, "url", "") or "")
-        page.goto(raw_url, wait_until="domcontentloaded")
+        try:
+            page.goto(raw_url, wait_until="domcontentloaded")
+        except Exception as exc:
+            # Navigation failures usually surface as network errors
+            # (DNS, refused, timeout); the observer already recorded them,
+            # so attach the bounded summary to the failure evidence.
+            return self._failure(
+                action,
+                error=f"browser navigation failed: {type(exc).__name__}: {exc}",
+                data={
+                    "url_before": before,
+                    "url": raw_url,
+                    "network": self._network_snapshot(session, page_id),
+                },
+            )
         observation = self._capture(session, page_id)
         self._require_url_allowed(observation.url, session.permission)
 
@@ -1622,6 +1654,165 @@ class PlaywrightManagedBrowser:
         }
 
     @staticmethod
+    def _sanitize_network_url(raw_url: Any) -> str:
+        """Desensitize a request URL for the network observation.
+
+        Query strings and fragments are stripped entirely (they carry no
+        debugging value and routinely contain tokens/keys); the remainder
+        goes through the privacy choke single point -- the same mechanism
+        #570 used for console errors -- to scrub tokens embedded in the
+        path or userinfo. Never raises: fail closed to an empty URL.
+        """
+        try:
+            text = str(raw_url or "").strip()
+            if not text:
+                return ""
+            parts = urlsplit(text)
+            stripped = parts._replace(query="", fragment="")
+            url = stripped.geturl()
+            scrubbed = str(redact_for_egress(url))
+            return scrubbed[:_MAX_NETWORK_URL_CHARS]
+        except Exception:
+            return ""
+
+    def _install_network_observer(
+        self,
+        session: _ManagedSession,
+        page_id: str,
+        page: Any,
+    ) -> None:
+        """Record failed requests and error responses for this page.
+
+        Observation only: this never changes the page or adds new action
+        kinds. ``requestfailed`` events and ``response`` events with a
+        status >= 400 are recorded, with desensitized URLs, bounded per
+        page (oldest dropped first, with a counter). Handlers are
+        fail-closed and never propagate into the provider.
+        """
+        state = session.network_state.setdefault(
+            page_id,
+            {"entries": [], "total_count": 0, "dropped_count": 0},
+        )
+
+        def record_failure(
+            *,
+            kind: str,
+            request: Any,
+            status: int | None,
+            error: str,
+        ) -> None:
+            try:
+                url = self._sanitize_network_url(getattr(request, "url", ""))
+                method = str(getattr(request, "method", "") or "unknown")[:16]
+                resource_type = str(
+                    getattr(request, "resource_type", "") or "unknown"
+                )[:32]
+                entries = state.setdefault("entries", [])
+                entries.append(
+                    {
+                        "kind": kind,
+                        "method": method,
+                        "url": url,
+                        "status": status,
+                        "error": str(error or "unknown")[:_MAX_NETWORK_ERROR_TEXT_CHARS],
+                        "resource_type": resource_type,
+                        "captured_at": utc_now(),
+                    }
+                )
+                state["total_count"] = int(state.get("total_count") or 0) + 1
+                while len(entries) > _MAX_NETWORK_FAILURES_PER_PAGE:
+                    entries.pop(0)
+                    state["dropped_count"] = int(state.get("dropped_count") or 0) + 1
+            except Exception:
+                _LOG.warning(
+                    "managed browser network failure record failed for page %s",
+                    page_id,
+                    exc_info=True,
+                )
+
+        def handle_request_failed(request: Any) -> None:
+            try:
+                failure = getattr(request, "failure", None)
+                error = (
+                    str(failure)
+                    if not callable(failure)
+                    else str(failure() or "")
+                )
+                record_failure(
+                    kind="requestfailed",
+                    request=request,
+                    status=None,
+                    error=error,
+                )
+            except Exception:
+                _LOG.warning(
+                    "managed browser requestfailed handler failed for page %s",
+                    page_id,
+                    exc_info=True,
+                )
+
+        def handle_response(response: Any) -> None:
+            try:
+                status_getter = getattr(response, "status", None)
+                status = (
+                    int(status_getter())
+                    if callable(status_getter)
+                    else int(status_getter or 0)
+                )
+                if status < _NETWORK_ERROR_STATUS_MIN:
+                    return
+                request = getattr(response, "request", None)
+                record_failure(
+                    kind="response_error",
+                    request=request,
+                    status=status,
+                    error=f"http_status_{status}",
+                )
+            except Exception:
+                _LOG.warning(
+                    "managed browser response handler failed for page %s",
+                    page_id,
+                    exc_info=True,
+                )
+
+        on = getattr(page, "on", None)
+        if not callable(on):
+            _LOG.warning(
+                "managed browser page has no event subscription; "
+                "network observation disabled for page %s",
+                page_id,
+            )
+            return
+        for event, handler in (
+            ("requestfailed", handle_request_failed),
+            ("response", handle_response),
+        ):
+            try:
+                on(event, handler)
+            except Exception:
+                _LOG.warning(
+                    "managed browser could not subscribe %s events on page %s",
+                    event,
+                    page_id,
+                    exc_info=True,
+                )
+
+    @staticmethod
+    def _network_snapshot(session: _ManagedSession, page_id: str) -> dict[str, Any]:
+        """Bounded network failure summary for one page's observation."""
+        state = session.network_state.get(page_id) or {}
+        entries = list(state.get("entries") or [])
+        return {
+            "total_count": int(state.get("total_count") or 0),
+            "kept_count": len(entries),
+            "dropped_count": int(state.get("dropped_count") or 0),
+            "failed_requests": [
+                dict(entry)
+                for entry in entries[-_MAX_NETWORK_FAILURES_RECENT_IN_OBSERVATION:]
+            ],
+        }
+
+    @staticmethod
     def _validate_managed_text(value: Any) -> tuple[str, dict[str, Any]]:
         if not isinstance(value, str):
             raise ManagedBrowserError(
@@ -1757,6 +1948,7 @@ class PlaywrightManagedBrowser:
             load_state=load_state[:64],
             target=target,
             viewport=viewport,
+            network=self._network_snapshot(session, page_id),
             metadata={
                 "provider": session.identity.provider,
                 "page_count": len(session.pages),
@@ -2068,6 +2260,7 @@ class PlaywrightManagedBrowser:
             session.default_page_id = page_id
         self._install_dialog_observer(session, page_id, page)
         self._install_console_error_observer(session, page_id, page)
+        self._install_network_observer(session, page_id, page)
         return page_id
 
     def _reconcile_pages(self, session: _ManagedSession) -> None:
@@ -2120,6 +2313,7 @@ class PlaywrightManagedBrowser:
         session.last_observation.pop(page_id, None)
         session.dialog_state.pop(page_id, None)
         session.console_error_state.pop(page_id, None)
+        session.network_state.pop(page_id, None)
         session.pages.pop(page_id, None)
         if session.default_page_id == page_id:
             session.default_page_id = ""
