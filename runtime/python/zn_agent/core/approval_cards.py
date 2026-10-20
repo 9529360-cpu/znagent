@@ -116,6 +116,10 @@ APPROVAL_KINDS = (
     # objective mid-flight. The concrete action rides in the scope
     # ("self-drive-goal:<intention_id>:<start|pause|resume|redirect>").
     "goal_control",
+    # P1-4: a completed Work proposes at most one memory-capture candidate
+    # fact. The fact is written through the existing ``remember`` path only
+    # after this card is approved; deny/expire means it is never written.
+    "memory_capture",
 )
 
 APPROVAL_SOURCES = (
