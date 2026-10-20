@@ -21,7 +21,7 @@ from zn_agent.core.skill_lock import (
 )
 from zn_agent.core.skills import SkillStore
 
-from skill_plugin_updates import _git_url, bump_plugins, latest_sha_from_git  # noqa: E402
+from skill_plugin_updates import _git_url, bump_plugins, latest_sha_from_git
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
