@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import tempfile
 import threading
-import time
 import unittest
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -620,7 +619,20 @@ class ActiveWorkSteeringTests(unittest.TestCase):
             }
 
             steering_finished = threading.Event()
+            steering_reached_wait = threading.Event()
             steer_result = {}
+            original_steer = control._steer_referenced_active_work
+
+            def steer_and_signal(thread, active, task, **kwargs):
+                # Signal that steering has finished its pre-lock observations
+                # and reached the cycle-lock wait point: from here it can only
+                # observe event state under the lock, i.e. after the main
+                # thread finishes the old event below. This replaces the fixed
+                # 0.08s sleep with a wait for actual progress.
+                steering_reached_wait.set()
+                return original_steer(thread, active, task, **kwargs)
+
+            control._steer_referenced_active_work = steer_and_signal
 
             def steer_now():
                 try:
@@ -635,7 +647,10 @@ class ActiveWorkSteeringTests(unittest.TestCase):
             try:
                 steering = threading.Thread(target=steer_now, daemon=True)
                 steering.start()
-                time.sleep(0.08)
+                self.assertTrue(
+                    steering_reached_wait.wait(3.0),
+                    "steering thread did not reach the cycle-lock wait point",
+                )
                 self.assertTrue(steering.is_alive())
 
                 claimed = resident.store.claim_event(old_event.event_id)
@@ -681,7 +696,20 @@ class ActiveWorkSteeringTests(unittest.TestCase):
             _, old_event = ledger.start("product", "旧计划：完成最后一个步骤")
 
             steering_finished = threading.Event()
+            steering_reached_wait = threading.Event()
             steer_result = {}
+            original_steer = control._steer_referenced_active_work
+
+            def steer_and_signal(thread, active, task, **kwargs):
+                # Signal that steering has finished its pre-lock observations
+                # and reached the cycle-lock wait point: from here it can only
+                # observe event state under the lock, i.e. after the main
+                # thread finishes the old event below. This replaces the fixed
+                # 0.08s sleep with a wait for actual progress.
+                steering_reached_wait.set()
+                return original_steer(thread, active, task, **kwargs)
+
+            control._steer_referenced_active_work = steer_and_signal
 
             def steer_now():
                 try:
@@ -696,7 +724,10 @@ class ActiveWorkSteeringTests(unittest.TestCase):
             try:
                 steering = threading.Thread(target=steer_now, daemon=True)
                 steering.start()
-                time.sleep(0.08)
+                self.assertTrue(
+                    steering_reached_wait.wait(3.0),
+                    "steering thread did not reach the cycle-lock wait point",
+                )
                 self.assertTrue(
                     steering.is_alive(),
                     "the message should wait for the current final step boundary",
@@ -751,13 +782,26 @@ class ActiveWorkSteeringTests(unittest.TestCase):
             entered_state = threading.Event()
             release_state = threading.Event()
             steering_finished = threading.Event()
+            steering_reached_wait = threading.Event()
             original_state_for_event = resident._state_for_event
             steer_result = {}
+            original_steer = control._steer_referenced_active_work
 
             def blocked_state_for_event(event, **kwargs):
                 entered_state.set()
                 self.assertTrue(release_state.wait(3.0))
                 return original_state_for_event(event, **kwargs)
+
+            def steer_and_signal(thread, active, task, **kwargs):
+                # Signal that steering has finished its pre-lock observations
+                # and reached the cycle-lock wait point (held by the runner
+                # thread parked in state initialization below): from here it
+                # is genuinely waiting at the boundary. This replaces the fixed
+                # 0.08s sleep with a wait for actual progress.
+                steering_reached_wait.set()
+                return original_steer(thread, active, task, **kwargs)
+
+            control._steer_referenced_active_work = steer_and_signal
 
             def steer_now():
                 try:
@@ -790,7 +834,10 @@ class ActiveWorkSteeringTests(unittest.TestCase):
 
                     steering = threading.Thread(target=steer_now, daemon=True)
                     steering.start()
-                    time.sleep(0.08)
+                    self.assertTrue(
+                        steering_reached_wait.wait(3.0),
+                        "steering thread did not reach the cycle-lock wait point",
+                    )
                     self.assertTrue(
                         steering.is_alive(),
                         "steering must wait until claimed event state initialization finishes",
@@ -824,10 +871,12 @@ class ActiveWorkSteeringTests(unittest.TestCase):
             entered_step = threading.Event()
             release_step = threading.Event()
             steering_finished = threading.Event()
+            steering_reached_wait = threading.Event()
             run_finished = threading.Event()
             advance_calls = []
             run_result = {}
             steer_result = {}
+            original_steer = control._steer_referenced_active_work
 
             def advance_once(event, state, **kwargs):
                 advance_calls.append((event.event_id, state.stage))
@@ -848,6 +897,17 @@ class ActiveWorkSteeringTests(unittest.TestCase):
                     )
                 finally:
                     run_finished.set()
+
+            def steer_and_signal(thread, active, task, **kwargs):
+                # Signal that steering has finished its pre-lock observations
+                # and reached the cycle-lock wait point (held by the runner
+                # thread parked in the current step below): from here it is
+                # genuinely waiting at the step boundary. This replaces the
+                # fixed 0.08s sleep with a wait for actual progress.
+                steering_reached_wait.set()
+                return original_steer(thread, active, task, **kwargs)
+
+            control._steer_referenced_active_work = steer_and_signal
 
             def steer_now():
                 try:
@@ -870,7 +930,10 @@ class ActiveWorkSteeringTests(unittest.TestCase):
 
                     steering = threading.Thread(target=steer_now, daemon=True)
                     steering.start()
-                    time.sleep(0.08)
+                    self.assertTrue(
+                        steering_reached_wait.wait(3.0),
+                        "steering thread did not reach the cycle-lock wait point",
+                    )
                     self.assertTrue(
                         steering.is_alive(),
                         "steering must wait while the current Resident step owns the cycle lock",

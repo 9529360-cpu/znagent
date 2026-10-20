@@ -208,8 +208,18 @@ class ResidentSocketServiceTests(unittest.TestCase):
             self.assertTrue(perceived["ok"])
             trace_id = perceived["result"]["trace_id"]
 
-            time.sleep(0.15)
+            # Progress wait replacing the fixed 0.15s sleep: wait until the
+            # pulse counter actually advances (the condition the assertion
+            # below depends on), bounded by a deadline instead of a blind
+            # pause. The assertion itself is unchanged.
             second_ping = self._request(endpoint, "ping")
+            progress_deadline = time.monotonic() + 5.0
+            while (
+                int(second_ping["result"]["pulse_count"]) <= first_pulse
+                and time.monotonic() < progress_deadline
+            ):
+                time.sleep(0.02)
+                second_ping = self._request(endpoint, "ping")
             self.assertTrue(second_ping["ok"])
             self.assertGreaterEqual(int(second_ping["result"]["pulse_count"]), first_pulse)
             neural = self._request(endpoint, "neural", {"limit": 50})
