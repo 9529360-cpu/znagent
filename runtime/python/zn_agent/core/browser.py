@@ -36,6 +36,8 @@ class BrowserActionKind(str, Enum):
     DOWNLOAD_FILE = "download_file"
     CHECK = "check"
     UNCHECK = "uncheck"
+    DIALOG_ACCEPT = "dialog_accept"
+    DIALOG_DISMISS = "dialog_dismiss"
     WAIT = "wait"
     BACK = "back"
     FORWARD = "forward"
@@ -81,6 +83,8 @@ _PAGE_INTERACTION_ACTIONS = frozenset(
         BrowserActionKind.SELECT_OPTION,
         BrowserActionKind.CHECK,
         BrowserActionKind.UNCHECK,
+        BrowserActionKind.DIALOG_ACCEPT,
+        BrowserActionKind.DIALOG_DISMISS,
     }
 )
 
