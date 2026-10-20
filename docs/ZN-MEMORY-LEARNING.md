@@ -133,6 +133,17 @@ Structured fact stores and future semantic retrieval may support this layer.
 
 Semantic memory is still prediction/support, not authority over current reality.
 
+#### 3.3.1 Fact expiry (TTL)
+
+Facts may carry an optional `expires_at` (ISO-8601, `StructuredMemory.remember(..., expires_at=...)`
+/ `KernelStore.put_fact(..., expires_at=...)`). After the timestamp passes, the fact is filtered
+out of live recall paths (`recall`, `recall_hybrid`, `relevant_context`) and excluded from
+`consolidate()` merge candidacy -- but the row and its ledger history are kept, so `recall_as_of()`
+still returns what was true at a past moment and `forget()` still works. Omitting `expires_at`
+leaves an existing TTL untouched; explicit `None` clears it. Old databases gain the nullable
+`expires_at` column via migration on open. (Q7, PR: fact-expiry.)
+
+
 ### 3.4 Associative nervous memory
 
 This is the current `PersistentNervousSystem` direction:
