@@ -366,6 +366,61 @@ class ZnCliUnitTests(_CliHarness):
         self.assertEqual(code, 0, err)
         self.assertIn("no remembered facts", out)
 
+    def test_team_list_prints_teams(self):
+        teams = [
+            {
+                "team_id": "team-7f3a9c1e",
+                "project_title": "公司官网改版",
+                "roster": ["调研-01", "开发-02"],
+                "status": "active",
+            },
+            {
+                "team_id": "team-aa11bb22",
+                "project_title": "仓库物流系统",
+                "roster": ["架构-01"],
+                "status": "active",
+            },
+        ]
+        code, out, err = self._run(
+            ["team", "list"], self._handler({"team_list": teams})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("team-7f3a9c1e", out)
+        self.assertIn("status=active", out)
+        self.assertIn("调研-01", out)
+        self.assertIn("开发-02", out)
+        self.assertIn("公司官网改版", out)
+        self.assertIn("team-aa11bb22", out)
+        self.assertEqual(self.calls, [("team_list", {"limit": 20})])
+
+    def test_team_list_limit_flag_and_json(self):
+        teams = [
+            {
+                "team_id": "team-7f3a9c1e",
+                "project_title": "公司官网改版",
+                "roster": ["调研-01"],
+                "status": "active",
+            }
+        ]
+        code, out, err = self._run(
+            ["team", "list", "--limit", "5"],
+            self._handler({"team_list": teams}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.calls, [("team_list", {"limit": 5})])
+        code, out, _ = self._run(
+            ["team", "list", "--json"], self._handler({"team_list": teams})
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), teams)
+
+    def test_team_list_empty(self):
+        code, out, err = self._run(
+            ["team", "list"], self._handler({"team_list": []})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("no active teams", out)
+
     def test_unknown_command_and_conflicting_flags_exit_2_without_rpc(self):
         with self.assertRaises(SystemExit) as caught:
             run(["bogus"])
@@ -663,6 +718,34 @@ class ZnCliResidentIntegrationTests(unittest.TestCase):
                 self.assertIn("cli-memory-key", stdout.getvalue())
                 self.assertIn("tier=hot", stdout.getvalue())
                 self.assertNotIn("cli-secret-value", stdout.getvalue())
+
+                # team list against the real resident: team listed via its
+                # persisted spec, roster derived from the spec.
+                client.call(
+                    "remember",
+                    {
+                        "key": "team:team-cli9f2a:shared:team_spec",
+                        "value": {
+                            "project_title": "集成测试项目",
+                            "role_keys": ["researcher"],
+                        },
+                    },
+                )
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    code = run(
+                        [
+                            "--endpoint",
+                            str(endpoint_path),
+                            "team",
+                            "list",
+                        ]
+                    )
+                self.assertEqual(code, 0, stderr.getvalue())
+                self.assertIn("team-cli9f2a", stdout.getvalue())
+                self.assertIn("status=active", stdout.getvalue())
+                self.assertIn("调研-01", stdout.getvalue())
+                self.assertIn("集成测试项目", stdout.getvalue())
             finally:
                 _best_effort_shutdown(endpoint_path)
                 thread.join(timeout=10.0)

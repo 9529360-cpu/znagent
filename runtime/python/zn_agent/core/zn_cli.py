@@ -6,7 +6,7 @@ reads the resident endpoint file published by
 authenticates with the per-process session secret, and forwards one JSON-RPC
 call per command to the already-existing Daemon RPC methods
 (``work_list`` / ``work_get`` / ``work_create`` / ``work_submit`` /
-``approval_list`` / ``approval_decide`` / ``memory_list``). All policy, execution, approval and
+``approval_list`` / ``approval_decide`` / ``memory_list`` / ``team_list``). All policy, execution, approval and
 persistence decisions stay server-side.
 
 Fail-closed rules:
@@ -475,6 +475,35 @@ def _cmd_memory_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_team_list(args: argparse.Namespace) -> int:
+    result = _client(args).call("team_list", {"limit": args.limit})
+    if not isinstance(result, list):
+        raise CliError(f"resident returned an unexpected team_list result: {result!r}")
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if not result:
+        print("no active teams")
+        return 0
+    for item in result:
+        if not isinstance(item, dict):
+            continue
+        roster = item.get("roster")
+        roster_text = (
+            ", ".join(_one_line(member, limit=40) for member in roster)
+            if isinstance(roster, list) and roster
+            else "-"
+        )
+        print(
+            f"{_one_line(item.get('team_id'), limit=40)}  "
+            f"status={_one_line(item.get('status'))}  roster={roster_text}"
+        )
+        objective = _one_line(item.get("project_title"), limit=80)
+        if objective:
+            print(f"  objective: {objective}")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zn",
@@ -571,6 +600,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_list.add_argument("--json", action="store_true", help="print raw JSON")
     memory_list.set_defaults(func=_cmd_memory_list)
+
+    team = sub.add_parser("team", help="inspect project teams")
+    team_sub = team.add_subparsers(
+        dest="team_command", metavar="subcommand", required=True
+    )
+
+    team_list = team_sub.add_parser("list", help="list active project teams")
+    team_list.add_argument(
+        "--limit", type=lambda v: _require_positive_int(v, name="--limit", maximum=200),
+        default=20,
+    )
+    team_list.add_argument("--json", action="store_true", help="print raw JSON")
+    team_list.set_defaults(func=_cmd_team_list)
     return parser
 
 
