@@ -17,6 +17,7 @@ from .document_work_behavior import install_document_work_behavior
 from .intention_event_handoff_behavior import install_intention_event_handoff_behavior
 from .recurring_will_behavior import install_recurring_will_behavior
 from .routine import install_routine_behavior
+from .self_drive import install_self_drive_behavior
 from .user_goals import install_user_goal_behavior
 from .models import utc_now
 from .generic_action_resident import GenericActionResidentRuntime
@@ -123,6 +124,21 @@ class ProductResearchInformationResidentRuntime(GenericActionResidentRuntime):
         install_recurring_will_behavior(self)
         install_routine_behavior(self)
         install_user_goal_behavior(self)
+        # M-14: native goal-driven self-drive loop. The driver advances
+        # user-authorized goals once per pulse through the ordinary
+        # Will/event pipeline; with no goals registered it is a no-op scan.
+        # Approval cards for goal control reuse the same store the
+        # approval gate above was built from; without it, resident-side
+        # control fails closed inside the driver.
+        try:
+            self_drive_approval_store = (
+                ApprovalCardStore(store_path) if store_path else None
+            )
+        except Exception:
+            self_drive_approval_store = None
+        install_self_drive_behavior(
+            self, approval_store=self_drive_approval_store
+        )
 
     def _current_visual_stage_bridge(self, event):
         """Bind bounded visual cognition through current Work privacy/route policy."""

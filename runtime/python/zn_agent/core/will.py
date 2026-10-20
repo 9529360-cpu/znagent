@@ -631,6 +631,42 @@ class NativeWill:
             self._save(intention)
         return intention
 
+    def block(self, intention_id: str, *, reason: str | None = None) -> ResidentIntention:
+        """Mark an intention explicitly blocked; it leaves the active set.
+
+        M-14: the self-drive loop's terminal state for a goal that can no
+        longer advance (strategy budget exhausted, completion verdict
+        escalated, start denied). Blocked intentions are excluded from
+        ``active()`` so the pulse loop stops proposing steps for them, but
+        they stay visible via ``list_all()`` with the reason in progress.
+        """
+        intention = self._require(intention_id)
+        intention.status = "blocked"
+        intention.related_event_id = None
+        if reason:
+            intention.progress = (
+                *intention.progress,
+                f"blocked: {reason}"[:500],
+            )[-64:]
+        intention.updated_at = utc_now()
+        self._save(intention)
+        return intention
+
+    def clear_next_step(self, intention_id: str) -> ResidentIntention:
+        """Drop a not-yet-engaged next step; a no-op when none is set.
+
+        M-14: used when a goal is redirected before its pending step was
+        picked up by the event pipeline, so the stale step never executes
+        under the new objective.
+        """
+        intention = self._require(intention_id)
+        if intention.next_task:
+            intention.next_task = None
+            intention.next_payload = {}
+            intention.updated_at = utc_now()
+            self._save(intention)
+        return intention
+
     def list_all(self, limit: int = 100) -> list[ResidentIntention]:
         with closing(self._connect()) as conn:
             rows = conn.execute(
