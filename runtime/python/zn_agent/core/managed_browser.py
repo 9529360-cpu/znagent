@@ -60,17 +60,23 @@ _MAX_SESSION_EVENTS = 500
 def _resolve_session_idle_ttl(value: float | None) -> float:
     """Resolve the idle TTL in seconds; zero or negative disables the sweep."""
     if value is not None:
-        try:
-            return max(0.0, float(value))
-        except (TypeError, ValueError):
-            return float(_DEFAULT_SESSION_IDLE_TTL_SECONDS)
-    raw = str(os.environ.get(_SESSION_IDLE_TTL_ENV_VAR) or "").strip()
-    if raw:
-        try:
-            return max(0.0, float(raw))
-        except ValueError:
-            pass
+        parsed = _parse_nonnegative_float(value)
+        if parsed is not None:
+            return parsed
+        return float(_DEFAULT_SESSION_IDLE_TTL_SECONDS)
+    parsed = _parse_nonnegative_float(
+        str(os.environ.get(_SESSION_IDLE_TTL_ENV_VAR) or "").strip()
+    )
+    if parsed is not None:
+        return parsed
     return float(_DEFAULT_SESSION_IDLE_TTL_SECONDS)
+
+
+def _parse_nonnegative_float(value: Any) -> float | None:
+    try:
+        return max(0.0, float(value))
+    except (TypeError, ValueError):
+        return None
 
 
 class ManagedBrowserError(RuntimeError):
