@@ -630,6 +630,8 @@ class ResidentRpcServer:
             if not thread_id:
                 raise ValueError("team_handover_done requires thread_id")
             result = self._team_handover_done(thread_id)
+        elif method == "team_list":
+            result = self._team_list(params)
         elif method == "agent_run":
             task = str(params.get("task") or "").strip()
             if not task:
@@ -846,6 +848,58 @@ class ResidentRpcServer:
     @staticmethod
     def _limit(params: dict[str, Any]) -> int:
         return max(1, min(200, int(params.get("limit") or 20)))
+
+    def _team_list(self, params: dict[str, Any]) -> list[dict[str, Any]]:
+        """Read-only inventory of active project teams.
+
+        A team counts as active iff its spec fact (``team:{id}:shared:team_spec``)
+        still exists: disband deletes every fact under the ``team:{id}:`` prefix,
+        so a disbanded team never shows up here. The roster is reconstructed from
+        the persisted spec with the same deterministic ``assemble_team`` path
+        the owner uses on restart. Journal, plan map and assignee overrides
+        stay server-side -- this listing never leaks team content beyond the
+        project title and roster.
+        """
+        limit = self._limit(params)
+        suffix = f":shared:{TEAM_SPEC_KEY}"
+        listed: list[dict[str, Any]] = []
+        for fact in self.resident.memory.store.list_facts():
+            key = str(fact.get("key") or "")
+            if not (key.startswith("team:") and key.endswith(suffix)):
+                continue
+            team_id = key[len("team:") : -len(suffix)]
+            if not team_id or ":" in team_id:
+                continue
+            value = fact.get("value")
+            if not isinstance(value, dict):
+                continue
+            project = str(value.get("project_title") or "").strip()
+            roles = [str(role) for role in (value.get("role_keys") or [])]
+            if not project or not roles:
+                continue
+            try:
+                roster = [
+                    member.name
+                    for member in assemble_team(
+                        project, roles, team_id=team_id
+                    ).members
+                ]
+            except ValueError:
+                # A spec with roles unknown to the built-in registry (custom
+                # roles assembled by another slice): list the raw role keys
+                # instead of erroring out the whole inventory.
+                roster = list(roles)
+            listed.append(
+                {
+                    "team_id": team_id,
+                    "project_title": project,
+                    "roster": roster,
+                    "status": "active",
+                }
+            )
+            if len(listed) >= limit:
+                break
+        return listed
 
     def _team_timeline(self, thread_id: str) -> dict[str, Any]:
         """Read-only team timeline for one thread, derived from the Work log."""
