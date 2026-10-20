@@ -11,6 +11,7 @@ evidence after actions instead of treating provider dispatch as completion.
 
 import hashlib
 import logging
+import math
 import os
 import time
 from collections import deque
@@ -273,7 +274,9 @@ _TARGET_CHECKED_STATE_SCRIPT = r"""
   const inputType = String(element && element.getAttribute("type") || "")
     .trim()
     .toLowerCase();
-  const supported = Boolean(tag === "input" && inputType === "checkbox");
+  const supported = Boolean(
+    tag === "input" && (inputType === "checkbox" || inputType === "radio")
+  );
   return {
     connected,
     supported,
@@ -282,6 +285,65 @@ _TARGET_CHECKED_STATE_SCRIPT = r"""
   };
 }
 """
+
+_SLIDER_VALUE_SCRIPT = r"""
+(element) => {
+  const connected = Boolean(element && element.isConnected);
+  const tag = String(element && element.tagName || "").toLowerCase();
+  const inputType = String(element && element.getAttribute("type") || "")
+    .trim()
+    .toLowerCase();
+  const supported = Boolean(tag === "input" && inputType === "range");
+  const attrNum = (name, dflt) => {
+    const raw = element ? element.getAttribute(name) : null;
+    const n = raw === null || raw === "" ? NaN : Number(raw);
+    return Number.isFinite(n) ? n : dflt;
+  };
+  const sliderMin = attrNum("min", 0);
+  const sliderMax = attrNum("max", 100);
+  const sliderStep = attrNum("step", 1);
+  const current = element ? Number(element.value) : NaN;
+  const sliderValue = Number.isFinite(current)
+    ? current
+    : (sliderMin + sliderMax) / 2;
+  return {
+    connected,
+    supported,
+    disabled: Boolean(element && element.disabled),
+    native_slider: supported,
+    slider_min: sliderMin,
+    slider_max: sliderMax,
+    slider_step: sliderStep,
+    slider_value: Number.isFinite(sliderValue) ? sliderValue : null,
+  };
+}
+"""
+
+_SLIDER_SET_VALUE_SCRIPT = r"""
+(element, requested) => {
+  if (!element || !element.isConnected) {
+    return { slider_set_ok: false, slider_set_reason: "detached" };
+  }
+  const tag = String(element.tagName || "").toLowerCase();
+  const inputType = String(element.getAttribute("type") || "")
+    .trim()
+    .toLowerCase();
+  const nativeSlider = Boolean(tag === "input" && inputType === "range");
+  if (!nativeSlider) {
+    return { slider_set_ok: false, slider_set_reason: "unsupported" };
+  }
+  const value = Number(requested);
+  if (!Number.isFinite(value)) {
+    return { slider_set_ok: false, slider_set_reason: "not_a_number" };
+  }
+  element.value = String(value);
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+  element.dispatchEvent(new Event("change", { bubbles: true }));
+  return { slider_set_ok: true, slider_assigned: element.value };
+}
+"""
+
+_SLIDER_VALUE_EPSILON = 1e-9
 
 
 @dataclass(slots=True)
@@ -526,6 +588,8 @@ class PlaywrightManagedBrowser:
                 return self._check(session, action)
             if action.kind is BrowserActionKind.UNCHECK:
                 return self._uncheck(session, action)
+            if action.kind is BrowserActionKind.SET_SLIDER_VALUE:
+                return self._set_slider_value(session, action)
             if action.kind is BrowserActionKind.DIALOG_ACCEPT:
                 return self._dialog_respond(session, action, accept=True)
             if action.kind is BrowserActionKind.DIALOG_DISMISS:
@@ -1086,9 +1150,9 @@ class PlaywrightManagedBrowser:
     ) -> BrowserEffectEvidence:
         if action.target is None:
             raise ManagedBrowserError("browser check requires a current target")
-        if action.target.role != "checkbox":
+        if action.target.role not in ("checkbox", "radio"):
             raise ManagedBrowserError(
-                "browser check currently requires a native checkbox target"
+                "browser check currently requires a native checkbox or radio target"
             )
 
         page_id = action.page_id or action.target.page_id or self._default_page_id(session)
@@ -1376,6 +1440,187 @@ class PlaywrightManagedBrowser:
             url_after=after_url,
             target_id=post_target.target_id,
             postcondition="same_exact_target_unchecked",
+            data=data,
+        )
+
+    def _set_slider_value(
+        self,
+        session: _ManagedSession,
+        action: BrowserAction,
+    ) -> BrowserEffectEvidence:
+        """Set a native range slider to a requested value, then read it back.
+
+        The only slider mutation ZN offers. The requested value is clamped
+        into the observed [min, max] bounds before dispatch; step alignment
+        stays the caller's responsibility. The postcondition requires the
+        read-back value to match the clamped request on the same exact DOM
+        node -- anything else is reported as a failed postcondition, never
+        silently accepted. Drags, keyboard nudges, or any other slider
+        interaction are explicitly not offered.
+        """
+        if action.target is None:
+            raise ManagedBrowserError("browser set_slider_value requires a current target")
+        if action.target.role != "slider":
+            raise ManagedBrowserError(
+                "browser set_slider_value currently requires a native slider target"
+            )
+        requested = self._validate_slider_value_arg(action.args.get("value"))
+
+        page_id = action.page_id or action.target.page_id or self._default_page_id(session)
+        page = self._page(session, page_id)
+        binding = self._revalidate_target_binding(session, page_id, action.target)
+        before_url = str(getattr(page, "url", "") or "")
+        before_state = self._read_target_slider_state(binding.handle)
+        slider_min = before_state["min"]
+        slider_max = before_state["max"]
+        lo, hi = (slider_min, slider_max) if slider_min <= slider_max else (slider_max, slider_min)
+        clamped = min(max(requested, lo), hi)
+        if math.isclose(
+            before_state["value"], clamped, rel_tol=0.0, abs_tol=_SLIDER_VALUE_EPSILON
+        ):
+            raise ManagedBrowserError(
+                "browser set_slider_value target is already at the requested value before dispatch"
+            )
+
+        try:
+            dispatch_raw = binding.handle.evaluate(_SLIDER_SET_VALUE_SCRIPT, clamped)
+        except Exception as exc:
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"managed browser set_slider_value dispatch failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if not isinstance(dispatch_raw, dict) or not bool(
+            dispatch_raw.get("slider_set_ok")
+        ):
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                "managed browser set_slider_value dispatch was not acknowledged by the page: "
+                f"{dispatch_raw.get('slider_set_reason') if isinstance(dispatch_raw, dict) else '?'}"
+            )
+
+        post_captured_at = utc_now()
+        try:
+            fresh_binding = self._acquire_target_binding(
+                session,
+                page_id,
+                binding.query,
+                observed_at=post_captured_at,
+            )
+        except Exception as exc:
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"managed browser set_slider_value target could not be re-observed: {exc}"
+            ) from exc
+
+        try:
+            same_exact_node = bool(
+                binding.handle.evaluate(_EXACT_NODE_EQUAL_SCRIPT, fresh_binding.handle)
+            )
+        except Exception:
+            same_exact_node = False
+        try:
+            after_state = self._read_target_slider_state(fresh_binding.handle)
+        except Exception as exc:
+            self._dispose_target_binding(fresh_binding)
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"browser set_slider_value postcondition could not be observed: {exc}"
+            ) from exc
+
+        try:
+            post_observation = self._capture(
+                session,
+                page_id,
+                target=fresh_binding.target,
+                captured_at=post_captured_at,
+                target_binding=fresh_binding,
+            )
+        except Exception:
+            self._dispose_target_binding(fresh_binding)
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise
+
+        after_url = post_observation.url
+        post_target = post_observation.target
+        data = {
+            "provider": session.identity.provider,
+            "exact_node_continuity": same_exact_node,
+            "value_before": before_state["value"],
+            "value_requested": clamped,
+            "value_after": after_state["value"],
+            "slider_min": slider_min,
+            "slider_max": slider_max,
+            "slider_step": before_state["step"],
+        }
+        if post_target is None:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=action.target.target_id,
+                postcondition="same_exact_target_slider_value_set",
+                data=data,
+                error="browser set_slider_value postcondition lost the current target",
+            )
+        if not same_exact_node:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_slider_value_set",
+                data=data,
+                error="browser set_slider_value postcondition observed a replaced target node",
+            )
+        if post_target.target_id != action.target.target_id:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_slider_value_set",
+                data=data,
+                error="browser set_slider_value postcondition observed changed target identity",
+            )
+        if not math.isclose(
+            after_state["value"], clamped, rel_tol=0.0, abs_tol=_SLIDER_VALUE_EPSILON
+        ):
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=after_url,
+                target_id=post_target.target_id,
+                postcondition="same_exact_target_slider_value_set",
+                data=data,
+                error="browser set_slider_value postcondition was not observed",
+            )
+
+        return BrowserEffectEvidence(
+            action_id=action.action_id,
+            session_id=action.session_id,
+            observed_at=post_observation.captured_at,
+            success=True,
+            page_id=page_id,
+            url_before=before_url,
+            url_after=after_url,
+            target_id=post_target.target_id,
+            postcondition="same_exact_target_slider_value_set",
             data=data,
         )
 
@@ -1673,6 +1918,10 @@ class PlaywrightManagedBrowser:
             scrubbed = str(redact_for_egress(url))
             return scrubbed[:_MAX_NETWORK_URL_CHARS]
         except Exception:
+            _LOG.warning(
+                "managed browser network URL sanitizer failed; failing closed to empty URL",
+                exc_info=True,
+            )
             return ""
 
     def _install_network_observer(
@@ -1886,26 +2135,85 @@ class PlaywrightManagedBrowser:
             raw = handle.evaluate(_TARGET_CHECKED_STATE_SCRIPT)
         except Exception as exc:
             raise ManagedBrowserError(
-                f"managed browser checkbox state provider failed: {type(exc).__name__}: {exc}"
+                f"managed browser checkable state provider failed: {type(exc).__name__}: {exc}"
             ) from exc
         if not isinstance(raw, dict):
             raise ManagedBrowserError(
-                "managed browser checkbox state provider returned invalid evidence"
+                "managed browser checkable state provider returned invalid evidence"
             )
         if not bool(raw.get("connected")):
-            raise ManagedBrowserError("managed browser checkbox target is detached")
+            raise ManagedBrowserError("managed browser checkable target is detached")
         if not bool(raw.get("supported")):
             raise ManagedBrowserError(
-                "managed browser checkbox mutation currently supports only native input[type=checkbox] targets"
+                "managed browser check mutation currently supports only native input[type=checkbox] and input[type=radio] targets"
             )
         if bool(raw.get("disabled")):
-            raise ManagedBrowserError("managed browser checkbox target is disabled")
+            raise ManagedBrowserError("managed browser checkable target is disabled")
         checked = raw.get("checked")
         if type(checked) is not bool:
             raise ManagedBrowserError(
-                "managed browser checkbox checked state is unavailable"
+                "managed browser checkable checked state is unavailable"
             )
         return checked
+
+    @staticmethod
+    def _read_target_slider_state(handle: Any) -> dict[str, float]:
+        """Read a native range input's bounds and current value from the page."""
+        try:
+            raw = handle.evaluate(_SLIDER_VALUE_SCRIPT)
+        except Exception as exc:
+            raise ManagedBrowserError(
+                f"managed browser slider state provider failed: {type(exc).__name__}: {exc}"
+            ) from exc
+        if not isinstance(raw, dict):
+            raise ManagedBrowserError(
+                "managed browser slider state provider returned invalid evidence"
+            )
+        if not bool(raw.get("connected")):
+            raise ManagedBrowserError("managed browser slider target is detached")
+        if not bool(raw.get("supported")):
+            raise ManagedBrowserError(
+                "managed browser slider mutation currently supports only native input[type=range] targets"
+            )
+        if bool(raw.get("disabled")):
+            raise ManagedBrowserError("managed browser slider target is disabled")
+
+        def _finite(key: str, default: float) -> float:
+            value = raw.get(key)
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                return default
+            number = float(value)
+            return number if math.isfinite(number) else default
+
+        value = raw.get("slider_value")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+        ):
+            raise ManagedBrowserError(
+                "managed browser slider value is unavailable"
+            )
+        return {
+            "min": _finite("slider_min", 0.0),
+            "max": _finite("slider_max", 100.0),
+            "step": _finite("slider_step", 1.0),
+            "value": float(value),
+        }
+
+    @staticmethod
+    def _validate_slider_value_arg(raw: Any) -> float:
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ManagedBrowserError(
+                "browser set_slider_value requires a numeric args.value"
+            ) from exc
+        if not math.isfinite(value):
+            raise ManagedBrowserError(
+                "browser set_slider_value requires a finite numeric args.value"
+            )
+        return value
 
     def _capture(
         self,

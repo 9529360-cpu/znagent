@@ -388,7 +388,7 @@ class ResidentBrowserRpcTests(unittest.TestCase):
                 self.assertIsNotNone(browser.last_action)
                 self.assertIs(browser.last_action.kind, BrowserActionKind.TYPE_TEXT)
 
-                with self.assertRaisesRegex(ValueError, "requires query kind"):
+                with self.assertRaisesRegex(ValueError, "requires one of query kinds"):
                     server.handle(
                         {
                             "id": "bad-semantic",
