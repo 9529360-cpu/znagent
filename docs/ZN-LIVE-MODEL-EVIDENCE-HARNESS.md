@@ -50,6 +50,53 @@ harness 记录的 evidence 条目（`relative_path` / `objective` / `result`）
 - `verification_gap`：终报结构成立但有验收项缺匹配证据（partial）；
 - `other` 兜底；`verified` 或被闸门跳过记 `none`。
 
+## 基线实测与任务集公平性修复（Q6，2026-10-20）
+
+第一份真实基线用 apikey.fan 专线通道（slb + deepseek-flash，用户授权）
+跑出后做了三跑对照，结论：**原样任务集量出的不是模型能力，而是任务集
+自身的三处公平性缺陷**。内容检查凡能跑的全过（事实标记 5/5、http 交叉
+命中、文件内容命中、python_run 退出码 0）：
+
+| 跑法 | 结果 | 卡点 |
+|---|---|---|
+| 任务集原样 | 0/6 verified | 提示词从未给 CP-3 终报 JSON 结构，6/6 挂在"终报提取失败" |
+| + 终报格式说明（REPORT_SHAPE_HINT） | 0/6 verified | 提取 6/6 成功、内容检查全过，但判定器要求 criterion 与 expected_output 逐字一致，提示词从未把验收项原文给模型 |
+| + 验收项原文 | 3 verified（file-01 / file-02 / cross-01） | research-01 partial、browser-01 / coding-01 rejected，见下 |
+
+第三跑剩余三项的判定理由逐项复现（判定器 reason 原文定位）：
+
+- `research-01`（partial）：账本里只有一条 harness 尾记条目
+  （objective「模型终报原文」），`fact_markers` 核查本身不登记证据——
+  模型无任何可引用的核查记录，引用必然落空。**harness 对接缺口**。
+- `browser-01`（rejected）：理由原文"终报 unfinished 引用了不在
+  expected_output 中的验收项：未能实际访问 https://example.com……"。
+  模型引用全部合规（criterion 逐字 + URL 命中账本「独立抓取」条目），
+  只是诚实地把"未能实时核验"写成了说明文字放进 unfinished——而逐字
+  契约从未在任务里讲清。**任务信息缺口**（模型无浏览工具，抓取本就由
+  harness 执行并登记）。
+- `coding-01`（rejected）：理由原文同类——unfinished 里写了"需执行
+  python solution.py，确认所有断言通过……"。测试由 harness 实际执行
+  并已登记 run_python 证据（退出码 0），模型引用亦合规。**任务信息缺口**。
+
+本次修复（不弱化判定器、不改 CP-3 语义、不放宽逐字匹配）：
+
+1. `evidence/live_model_taskset.json`：每个任务的 `system_guidance` 内嵌
+   REPORT_SHAPE_HINT 原文，并写明逐字引用契约（criterion / unfinished
+   只能逐字引用验收项原文、不得写说明文字）与验证分工（核查由 harness
+   执行并登记，不要把待核查事项写进 unfinished）；每个任务的
+   `user_prompt` 末尾附该任务 expected_output 原文清单；
+   research-01 补引用指引（evidence_ref 写"事实标记核查"）、
+   coding-01 / browser-01 补分工说明。
+2. `live_model_evidence_harness.py`：`fact_markers` 全命中时登记一条
+   objective 为「事实标记核查」的证据条目（缺标记不登记，引用落空、
+   保持 partial）；顺带删除从未被接线的 `_REPORT_SYSTEM_PROMPT` 死代码
+   （终报指引改由任务集随任务下发，为权威来源）。
+3. 测试锁定：任务集每个任务必须自带形状说明与验收项原文；fact 核查
+   登记 / 不登记两种路径各有 runner 级测试。
+
+修复后的正式基线在合入后于干净 main 上重跑（opt-in live），逐项 verdict
+见对应 PR 正文与运行报告（schema 不变，跨次可比）。
+
 ## 报告
 
 `evidence/runs/<run_id>.{json,md}`，schema `zn-live-model-evidence/v1`

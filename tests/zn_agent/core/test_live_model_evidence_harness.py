@@ -28,6 +28,7 @@ from zn_agent.core.live_model_evidence_harness import (
     FAILURE_VERIFICATION_GAP,
     EvidenceReport,
     TaskOutcome,
+    TaskSpec,
     classify,
     extract_completion_report,
     load_task_set,
@@ -71,6 +72,25 @@ class TestTaskSetSchema(unittest.TestCase):
             self.assertIn(domain, domains, f"任务集缺域：{domain}")
         ids = [task.task_id for task in tasks]
         self.assertEqual(len(ids), len(set(ids)))
+
+    def test_repo_taskset_prompts_carry_shape_hint_and_criteria(self):
+        # Q6 公平性：CP-3 契约要求 criterion 逐字引用验收项、终报为固定
+        # JSON 形状——被测模型必须在任务内拿到这两样信息，否则 2026-10-20
+        # 基线实测的"提取失败 / 引用越界"会重演（不是模型能力问题）。
+        tasks = load_task_set(TASKSET)
+        for task in tasks:
+            self.assertIn(
+                "<exact acceptance criterion>",
+                task.system_guidance,
+                f"{task.task_id} 的 system_guidance 缺终报结构说明",
+            )
+            self.assertIn("completion_report", task.system_guidance)
+            for item in task.expected_output:
+                self.assertIn(
+                    item,
+                    task.user_prompt,
+                    f"{task.task_id} 的 user_prompt 缺验收项原文：{item}",
+                )
 
     def _write(self, payload):
         tmp = tempfile.NamedTemporaryFile(
@@ -386,6 +406,81 @@ class TestRunner(unittest.TestCase):
         outcome = self._run("coding-01", fake)
         self.assertEqual(outcome.failure_class, FAILURE_MODEL_CAPABILITY)
         self.assertNotEqual(outcome.verdict, "verified")
+
+    def test_research_fact_check_ref_docks_to_registered_evidence(self):
+        # Q6 对接：fact_markers 全命中后登记 objective=「事实标记核查」的
+        # 证据条目；按任务集指引引用它的终报应 verified（修复前账本只有
+        # 「模型终报原文」一条，这类引用必然落空 → partial）。
+        task = self.tasks["research-01"]
+        markers = task.checks[0]["markers"]
+
+        def fake(question, context):
+            body = " ".join(markers)
+            report = {
+                "completion_report": {
+                    "conclusion": "已按资料作答，事实齐备。",
+                    "evidence": [
+                        {"criterion": criterion, "evidence_ref": "事实标记核查"}
+                        for criterion in task.expected_output
+                    ],
+                    "files": [],
+                    "unfinished": [],
+                }
+            }
+            return body + "\n" + json.dumps(report, ensure_ascii=False)
+
+        outcome = self._run("research-01", fake)
+        self.assertEqual(outcome.verdict, "verified", outcome.notes)
+        self.assertEqual(outcome.failure_class, FAILURE_NONE)
+        self.assertTrue(
+            any("事实标记核查" in excerpt for excerpt in outcome.evidence_excerpts),
+            outcome.evidence_excerpts,
+        )
+
+    def test_research_fact_check_not_registered_when_markers_missing(self):
+        # 缺标记时不登记核查条目：同样的引用落空，判定保持 partial，
+        # 且内容检查失败归类 model_capability，不借引用蒙混过关。
+        # 用合成任务：标记词不出现在验收项里，缺标记才可真实复现
+        # （仓库 research-01 的标记本身是验收项子串，引用即命中）。
+        task = TaskSpec(
+            task_id="research-synth",
+            domain="research",
+            title="合成研究任务",
+            system_guidance="",
+            user_prompt="作答",
+            expected_output=("验收项甲", "验收项乙"),
+            checks=({"kind": "fact_markers", "markers": ["标记X", "标记Y"]},),
+        )
+
+        def fake(question, context):
+            report = {
+                "completion_report": {
+                    "conclusion": "已作答。",
+                    "evidence": [
+                        {"criterion": criterion, "evidence_ref": "事实标记核查"}
+                        for criterion in task.expected_output
+                    ],
+                    "files": [],
+                    "unfinished": [],
+                }
+            }
+            return json.dumps(report, ensure_ascii=False)
+
+        outcome = run_task(
+            task,
+            model_invoke=fake,
+            scratch_root=self.scratch,
+            live=False,
+        )
+        self.assertEqual(outcome.verdict, "partial", outcome.notes)
+        self.assertEqual(outcome.failure_class, FAILURE_MODEL_CAPABILITY)
+        self.assertEqual(
+            sorted(outcome.missing_items), sorted(task.expected_output)
+        )
+        self.assertFalse(
+            any("事实标记核查" in excerpt for excerpt in outcome.evidence_excerpts),
+            outcome.evidence_excerpts,
+        )
 
     def test_malformed_report_is_rejected_model_capability(self):
         outcome = self._run("research-01", lambda q, c: "搞定了，相信我")

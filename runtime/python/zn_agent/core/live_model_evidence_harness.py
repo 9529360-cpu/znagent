@@ -18,7 +18,9 @@
 任务集：声明式 JSON（``evidence/live_model_taskset.json``），覆盖研究 /
 浏览器 / 文件 / 编码 / 跨面 五个域。每个任务自带 expected_output
 （CP-3 终报逐项举证的验收口径）与一组确定性检查：
-- ``fact_markers``: 模型输出原文必须命中的事实标记（研究类）。
+- ``fact_markers``: 模型输出原文必须命中的事实标记（研究类）。全命中时
+  登记一条 objective 为「事实标记核查」的证据条目，供终报引用；缺标记
+  时不登记，引用落空、判定保持 partial。
 - ``file_content``: 模型产物（终报 evidence 条目可选携带 ``artifact``
   字段）由 harness 写到隔离 scratch 目录后做存在性 / 内容命中 /
   JSON 或 Python 解析检查。
@@ -329,20 +331,11 @@ def classify(
     return FAILURE_OTHER
 
 
-_REPORT_SYSTEM_PROMPT = (
-    "你是 ZN 证据收集 harness 的被测模型。"
-    "你必须只输出一个 JSON 对象，不得有任何多余文字。"
-    "该 JSON 必须包含顶层键 completion_report，内含四个段："
-    "conclusion（字符串，一句话结论）、evidence（列表，每项为 "
-    '{"criterion": "<expected_output 原文逐字>", "evidence_ref": "<证据引用>", '
-    '"artifact": "<可选：该证据的产物原文>"}）、files（列表，产物路径，无产物写 []）、'
-    "unfinished（字符串列表，未完成/未证实的验收项原文，全部完成写 []）。"
-    "criterion 必须逐字引用任务给出的 expected_output 条目，"
-    "证据引用必须指向真实存在的证据（文件路径或观测摘要）。"
-)
-
-
-def _run_fact_markers(check: Mapping[str, Any], model_text: str) -> CheckOutcome:
+def _run_fact_markers(
+    check: Mapping[str, Any],
+    model_text: str,
+    evidence: list[dict[str, Any]],
+) -> CheckOutcome:
     markers = [str(m) for m in check.get("markers", [])]
     missing = [m for m in markers if m not in model_text]
     if missing:
@@ -351,6 +344,19 @@ def _run_fact_markers(check: Mapping[str, Any], model_text: str) -> CheckOutcome
             passed=False,
             detail=f"缺事实标记 {len(missing)}/{len(markers)}：{', '.join(missing[:5])}",
         )
+    # 全命中才登记证据条目：该条目即"Body 已验证"的核查记录，
+    # 终报以 objective「事实标记核查」引用它。缺标记时不登记，
+    # 引用落空，判定保持 partial，不让未核查的回答借引用过关。
+    evidence.append(
+        {
+            "relative_path": "",
+            "objective": "事实标记核查",
+            "result": (
+                f"模型终报命中全部 {len(markers)} 个事实标记："
+                f"{'、'.join(markers)}"
+            ),
+        }
+    )
     return CheckOutcome(
         name="fact_markers", passed=True, detail=f"事实标记 {len(markers)} 个全命中"
     )
@@ -592,7 +598,7 @@ def run_task(
         kind = check.get("kind")
         try:
             if kind == "fact_markers":
-                check_outcomes.append(_run_fact_markers(check, model_text))
+                check_outcomes.append(_run_fact_markers(check, model_text, evidence))
             elif kind == "file_content":
                 check_outcomes.append(
                     _run_file_content(check, artifacts, scratch, evidence)
