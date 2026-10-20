@@ -236,6 +236,24 @@ _EXACT_NODE_EQUAL_SCRIPT = r"""
 (element, other) => Boolean(element && other && element === other)
 """
 
+# Q5 action-dispatch audit: PRESS / WAIT handlers.
+_PRESS_MAX_KEY_LENGTH = 64
+
+_WAIT_DEFAULT_TIMEOUT_MS = 15_000
+_WAIT_MIN_TIMEOUT_MS = 100
+_WAIT_MAX_TIMEOUT_MS = 60_000
+
+_WAIT_TEXT_SCRIPT = r"""
+(texts) => {
+  const haystack =
+    (document.documentElement && document.documentElement.innerText) || "";
+  return texts.some(
+    (text) =>
+      typeof text === "string" && text.length > 0 && haystack.includes(text)
+  );
+}
+"""
+
 _TARGET_FOCUS_STATE_SCRIPT = r"""
 (element) => Boolean(
   element && element.isConnected && document.activeElement === element
@@ -613,12 +631,16 @@ class PlaywrightManagedBrowser:
                 return self._type_text(session, action)
             if action.kind is BrowserActionKind.SELECT_OPTION:
                 return perform_select_option(self, session, action)
+            if action.kind is BrowserActionKind.PRESS:
+                return self._press(session, action)
             if action.kind is BrowserActionKind.CHECK:
                 return self._check(session, action)
             if action.kind is BrowserActionKind.UNCHECK:
                 return self._uncheck(session, action)
             if action.kind is BrowserActionKind.SET_SLIDER_VALUE:
                 return self._set_slider_value(session, action)
+            if action.kind is BrowserActionKind.WAIT:
+                return self._wait(session, action)
             if action.kind is BrowserActionKind.DIALOG_ACCEPT:
                 return self._dialog_respond(session, action, accept=True)
             if action.kind is BrowserActionKind.DIALOG_DISMISS:
@@ -1470,6 +1492,184 @@ class PlaywrightManagedBrowser:
             target_id=post_target.target_id,
             postcondition="same_exact_target_unchecked",
             data=data,
+        )
+
+    def _press(
+        self,
+        session: _ManagedSession,
+        action: BrowserAction,
+    ) -> BrowserEffectEvidence:
+        """Press one keyboard key on the current page.
+
+        Shape: args exactly {"key"} (a non-empty Playwright key name such as
+        "Enter", "Escape" or "Tab"); expected exactly {} or {"url_equals"}.
+        An optional current target is focused on the exact node first so the
+        key lands on the intended element; otherwise the key goes to whatever
+        currently holds page focus. The postcondition is a fresh observation,
+        optionally asserting the observed URL.
+        """
+        if set(action.args.keys()) != {"key"}:
+            raise ManagedBrowserError(
+                "browser press args must be exactly {key}"
+            )
+        if set(action.expected.keys()) - {"url_equals"}:
+            raise ManagedBrowserError(
+                "browser press expected must be exactly {} or {url_equals}"
+            )
+        key = str(action.args.get("key") or "").strip()
+        if not key:
+            raise ManagedBrowserError("browser press requires a non-empty args.key")
+        if len(key) > _PRESS_MAX_KEY_LENGTH:
+            raise ManagedBrowserError(
+                "browser press args.key is longer than a single key name"
+            )
+
+        page_id = (
+            action.page_id
+            or (action.target.page_id if action.target is not None else "")
+            or self._default_page_id(session)
+        )
+        page = self._page(session, page_id)
+        binding = None
+        if action.target is not None:
+            binding = self._revalidate_target_binding(session, page_id, action.target)
+        before_url = str(getattr(page, "url", "") or "")
+        keyboard = getattr(page, "keyboard", None)
+        press = getattr(keyboard, "press", None)
+        if not callable(press):
+            raise ManagedBrowserError(
+                "browser provider does not expose page keyboard press"
+            )
+        try:
+            if binding is not None:
+                binding.handle.focus()
+            press(key)
+        except Exception as exc:
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            raise ManagedBrowserError(
+                f"managed browser press dispatch failed: {type(exc).__name__}: {exc}"
+            ) from exc
+
+        post_observation = self._capture(session, page_id)
+        expected_url = str(action.expected.get("url_equals") or "").strip()
+        if expected_url and post_observation.url != expected_url:
+            return BrowserEffectEvidence(
+                action_id=action.action_id,
+                session_id=action.session_id,
+                observed_at=post_observation.captured_at,
+                success=False,
+                page_id=page_id,
+                url_before=before_url,
+                url_after=post_observation.url,
+                target_id=action.target.target_id if action.target is not None else "",
+                postcondition="url_equals",
+                data={"key": key, "provider": session.identity.provider},
+                error="browser press postcondition did not match observed URL",
+            )
+        return BrowserEffectEvidence(
+            action_id=action.action_id,
+            session_id=action.session_id,
+            observed_at=post_observation.captured_at,
+            success=True,
+            page_id=page_id,
+            url_before=before_url,
+            url_after=post_observation.url,
+            target_id=action.target.target_id if action.target is not None else "",
+            postcondition="fresh_post_key_observation",
+            data={"key": key, "provider": session.identity.provider},
+        )
+
+    def _wait(
+        self,
+        session: _ManagedSession,
+        action: BrowserAction,
+    ) -> BrowserEffectEvidence:
+        """Wait until one of the requested texts appears in the page text.
+
+        Shape: args exactly {"text"} or {"text", "timeout_ms"}; text is a
+        non-empty string or a non-empty list of non-empty strings;
+        timeout_ms defaults to 15s and is bounded to 100ms..60s so a wait
+        can never block a pulse indefinitely. Expected must be exactly {}.
+        A wait never accepts an element target. WAIT is always permitted by
+        the permission model (it mutates nothing), but the shape and bounds
+        are still enforced before dispatch.
+        """
+        if set(action.args.keys()) - {"text", "timeout_ms"} or "text" not in action.args:
+            raise ManagedBrowserError(
+                "browser wait args must be exactly {text} or {text, timeout_ms}"
+            )
+        if action.expected:
+            raise ManagedBrowserError("browser wait expected must be exactly {}")
+        if action.target is not None:
+            raise ManagedBrowserError(
+                "browser wait does not accept a browser element target"
+            )
+        raw_text = action.args.get("text")
+        if isinstance(raw_text, str):
+            texts = [raw_text]
+        elif isinstance(raw_text, list):
+            texts = list(raw_text)
+        else:
+            texts = []
+        texts = [str(item) for item in texts if str(item or "").strip()]
+        if not texts:
+            raise ManagedBrowserError(
+                "browser wait requires a non-empty args.text string or list"
+            )
+        raw_timeout = action.args.get("timeout_ms", _WAIT_DEFAULT_TIMEOUT_MS)
+        try:
+            timeout_ms = int(raw_timeout)
+        except (TypeError, ValueError):
+            raise ManagedBrowserError(
+                "browser wait args.timeout_ms must be an integer"
+            ) from None
+        if timeout_ms < _WAIT_MIN_TIMEOUT_MS or timeout_ms > _WAIT_MAX_TIMEOUT_MS:
+            raise ManagedBrowserError(
+                "browser wait args.timeout_ms must be between "
+                f"{_WAIT_MIN_TIMEOUT_MS} and {_WAIT_MAX_TIMEOUT_MS} ms"
+            )
+
+        page_id = action.page_id or self._default_page_id(session)
+        page = self._page(session, page_id)
+        before_url = str(getattr(page, "url", "") or "")
+        wait_for_function = getattr(page, "wait_for_function", None)
+        if not callable(wait_for_function):
+            raise ManagedBrowserError(
+                "browser provider does not expose page wait_for_function"
+            )
+        try:
+            wait_for_function(_WAIT_TEXT_SCRIPT, arg=texts, timeout=timeout_ms)
+        except Exception as exc:
+            name = type(exc).__name__
+            if "Timeout" in name:
+                self._refresh_page_observation_after_failed_mutation(session, page_id)
+                return self._failure(
+                    action,
+                    error=(
+                        "browser wait condition was not observed within "
+                        f"{timeout_ms} ms"
+                    ),
+                    data={"texts": texts, "timeout_ms": timeout_ms},
+                )
+            raise ManagedBrowserError(
+                f"managed browser wait dispatch failed: {name}: {exc}"
+            ) from exc
+
+        post_observation = self._capture(session, page_id)
+        return BrowserEffectEvidence(
+            action_id=action.action_id,
+            session_id=action.session_id,
+            observed_at=post_observation.captured_at,
+            success=True,
+            page_id=page_id,
+            url_before=before_url,
+            url_after=post_observation.url,
+            postcondition="wait_condition_observed",
+            data={
+                "texts": texts,
+                "timeout_ms": timeout_ms,
+                "provider": session.identity.provider,
+            },
         )
 
     def _set_slider_value(
