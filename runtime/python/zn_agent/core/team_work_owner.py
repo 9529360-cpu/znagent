@@ -989,6 +989,16 @@ class TeamWorkOwner:
                 verification_status="pending",
                 metrics=dict(run.metrics or {}),
             )
+            # P1-5: a verified claim is a verified completion of this step's
+            # task shape -- count it and propose a skill draft on the 2nd.
+            # Best-effort: never break the claim landing.
+            self._record_skill_proposal(
+                run=run,
+                summary=summary,
+                acceptance_criteria=self._expected_output_for_run(
+                    team=team, work_item_id=str(run.work_item_id or "")
+                ),
+            )
             return {"landed": True, "verdict": verdict, "escalate_reason": None}
         tracking, escalate, escalate_reason = record_verdict_attempt(
             data.get(TEAM_VERDICT_STATE_KEY),
@@ -1001,6 +1011,43 @@ class TeamWorkOwner:
             "verdict": verdict,
             "escalate_reason": escalate_reason if escalate else None,
         }
+
+    def _record_skill_proposal(
+        self, *, run: Any, summary: str, acceptance_criteria: list[str]
+    ) -> None:
+        """P1-5: proactive skill proposal on a verified team claim.
+
+        Best-effort by design (see ``skill_proposal``): counts the step's
+        task shape and, on its 2nd verified completion, saves an inert
+        draft plus a proposal message in the work thread. Confirmation
+        stays with the existing ``skill_confirm`` flow; nothing here ever
+        auto-saves.
+        """
+        try:
+            from .skill_proposal import propose_skill_for_verified_completion
+
+            ledger = getattr(self, "ledger", None)
+            store = getattr(getattr(ledger, "resident", None), "store", None)
+            if store is None:
+                return
+            work_item = None
+            getter = getattr(ledger, "_work_item_by_id", None)
+            if callable(getter):
+                work_item = getter(str(getattr(run, "work_item_id", "") or ""))
+            if work_item is None:
+                return
+            propose_skill_for_verified_completion(
+                store=store,
+                ledger=ledger,
+                task=str(getattr(work_item, "title", "") or ""),
+                objective=str(getattr(work_item, "objective", "") or ""),
+                acceptance_criteria=list(acceptance_criteria or []),
+                response=str(summary or ""),
+                thread_id=str(getattr(work_item, "work_thread_id", "") or ""),
+                event_id=str(getattr(run, "worker_run_id", "") or ""),
+            )
+        except Exception:
+            return
 
     def advance(
         self,

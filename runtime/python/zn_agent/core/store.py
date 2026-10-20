@@ -56,6 +56,7 @@ class KernelStore:
             CREATE TABLE IF NOT EXISTS skills(skill_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
             CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status);
+            CREATE TABLE IF NOT EXISTS skill_proposal_counts(fingerprint TEXT PRIMARY KEY, verified_count INTEGER NOT NULL DEFAULT 0, first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, proposal_state TEXT NOT NULL DEFAULT 'none', proposal_skill_id TEXT NOT NULL DEFAULT '');
             CREATE TABLE IF NOT EXISTS runtime_metrics(id INTEGER PRIMARY KEY CHECK(id=1), tasks_total INTEGER NOT NULL DEFAULT 0, tasks_model INTEGER NOT NULL DEFAULT 0, model_invocations INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS resident_lease(id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL, pid INTEGER NOT NULL, hostname TEXT NOT NULL, started_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL);
             """)
@@ -1047,6 +1048,109 @@ class KernelStore:
         """Delete only the skill row; Work records are never touched."""
         with self._lock, self._conn:
             self._conn.execute("DELETE FROM skills WHERE skill_id=?", (str(skill_id or ""),))
+
+    # -- P1-5: verified-completion counters per task fingerprint -----------
+
+    def record_verified_task_completion(self, fingerprint: str) -> int:
+        """Increment the verified-completion counter for a task fingerprint.
+
+        Returns the new count. Durable in the same kernel DB, so the count
+        survives restarts. A blank fingerprint raises (fail-closed: the
+        caller must fingerprint a real task shape).
+        """
+        normalized = str(fingerprint or "").strip()
+        if not normalized:
+            raise ValueError("record_verified_task_completion requires a fingerprint")
+        now = utc_now()
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT verified_count FROM skill_proposal_counts WHERE fingerprint=?",
+                (normalized,),
+            ).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO skill_proposal_counts("
+                    "fingerprint, verified_count, first_seen_at, last_seen_at, "
+                    "proposal_state, proposal_skill_id"
+                    ") VALUES(?,?,?,?,?,?)",
+                    (normalized, 1, now, now, "none", ""),
+                )
+                return 1
+            count = int(row["verified_count"]) + 1
+            self._conn.execute(
+                "UPDATE skill_proposal_counts "
+                "SET verified_count=?, last_seen_at=? WHERE fingerprint=?",
+                (count, now, normalized),
+            )
+            return count
+
+    def get_skill_proposal_state(self, fingerprint: str) -> dict[str, Any] | None:
+        """The proposal row for a fingerprint, or None when never seen."""
+        normalized = str(fingerprint or "").strip()
+        if not normalized:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT fingerprint, verified_count, first_seen_at, last_seen_at, "
+                "proposal_state, proposal_skill_id "
+                "FROM skill_proposal_counts WHERE fingerprint=?",
+                (normalized,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "fingerprint": row["fingerprint"],
+            "verified_count": int(row["verified_count"]),
+            "first_seen_at": row["first_seen_at"],
+            "last_seen_at": row["last_seen_at"],
+            "proposal_state": row["proposal_state"],
+            "proposal_skill_id": row["proposal_skill_id"],
+        }
+
+    def set_skill_proposal_state(
+        self, fingerprint: str, *, state: str, skill_id: str = ""
+    ) -> None:
+        """Record the proposal lifecycle state for a fingerprint.
+
+        ``state`` is one of none/proposed/confirmed/declined. The row is
+        created when the fingerprint was never counted (defensive: the
+        normal path counts first).
+        """
+        normalized = str(fingerprint or "").strip()
+        state_name = str(state or "").strip() or "none"
+        if state_name not in {"none", "proposed", "confirmed", "declined"}:
+            raise ValueError(f"unknown proposal state: {state_name!r}")
+        if not normalized:
+            raise ValueError("set_skill_proposal_state requires a fingerprint")
+        now = utc_now()
+        with self._lock, self._conn:
+            updated = self._conn.execute(
+                "UPDATE skill_proposal_counts "
+                "SET proposal_state=?, proposal_skill_id=?, last_seen_at=? "
+                "WHERE fingerprint=?",
+                (state_name, str(skill_id or ""), now, normalized),
+            )
+            if updated.rowcount == 0:
+                self._conn.execute(
+                    "INSERT INTO skill_proposal_counts("
+                    "fingerprint, verified_count, first_seen_at, last_seen_at, "
+                    "proposal_state, proposal_skill_id"
+                    ") VALUES(?,?,?,?,?,?)",
+                    (normalized, 0, now, now, state_name, str(skill_id or "")),
+                )
+
+    def find_proposal_fingerprint_for_skill(self, skill_id: str) -> str | None:
+        """The fingerprint whose proposal points at this skill, if any."""
+        normalized = str(skill_id or "").strip()
+        if not normalized:
+            return None
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT fingerprint FROM skill_proposal_counts "
+                "WHERE proposal_skill_id=? LIMIT 1",
+                (normalized,),
+            ).fetchone()
+        return str(row["fingerprint"]) if row is not None else None
 
     def record_runtime_task(self, *, model_invocations: int, prompt_tokens: int = 0, completion_tokens: int = 0) -> None:
         inv = max(0, int(model_invocations))
