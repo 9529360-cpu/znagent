@@ -29,6 +29,7 @@ due" decision differs.
 """
 
 import hashlib
+import logging
 import os
 import sqlite3
 import threading
@@ -42,6 +43,9 @@ from .routine_schedule import (
     count_cron_occurrences,
     resolve_timezone,
 )
+
+
+_LOG = logging.getLogger(__name__)
 
 
 _INSTALL_MARKER = "_zn_recurring_will_behavior_installed"
@@ -1044,7 +1048,14 @@ def install_recurring_will_behavior(resident) -> None:
                     reason="file change trigger registration failed",
                 )
             except Exception:
-                pass
+                # pause() failed too: record it, then let the original
+                # trigger-admission exception propagate (the outer raise).
+                _LOG.warning(
+                    "failed to pause intention %s after file change trigger "
+                    "registration failed",
+                    intention.intention_id,
+                    exc_info=True,
+                )
             raise
         resident.nervous.perceive(
             "will",
