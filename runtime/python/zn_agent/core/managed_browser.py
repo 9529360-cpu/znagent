@@ -11,6 +11,9 @@ evidence after actions instead of treating provider dispatch as completion.
 
 import hashlib
 import logging
+import os
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable
 from urllib.parse import urlsplit, urlunsplit
@@ -37,6 +40,37 @@ from .url_safety import is_safe_url
 
 
 _LOG = logging.getLogger(__name__)
+
+
+# Managed session idle TTL cleanup (P2-10; ZN.md §4.5 "bounded persistence and
+# cleanup for managed sessions"). A managed session whose last activity is
+# older than the TTL is closed automatically by an opportunistic sweep. The
+# sweep runs on the managed entry points (throttled) and is also callable
+# directly through close_idle_sessions(). It only ever touches sessions owned
+# by this managed adapter; user-browser planes are never involved.
+_DEFAULT_SESSION_IDLE_TTL_SECONDS = 30 * 60
+_SESSION_IDLE_TTL_ENV_VAR = "ZN_MANAGED_BROWSER_SESSION_IDLE_TTL_SECONDS"
+_AUTO_SWEEP_MIN_INTERVAL_SECONDS = 60.0
+# Bounded in-memory journal of managed session lifecycle events ("explicit" and
+# "idle_ttl" closures). Oldest entries are dropped first so the journal itself
+# stays bounded; read it through session_events().
+_MAX_SESSION_EVENTS = 500
+
+
+def _resolve_session_idle_ttl(value: float | None) -> float:
+    """Resolve the idle TTL in seconds; zero or negative disables the sweep."""
+    if value is not None:
+        try:
+            return max(0.0, float(value))
+        except (TypeError, ValueError):
+            return float(_DEFAULT_SESSION_IDLE_TTL_SECONDS)
+    raw = str(os.environ.get(_SESSION_IDLE_TTL_ENV_VAR) or "").strip()
+    if raw:
+        try:
+            return max(0.0, float(raw))
+        except ValueError:
+            pass
+    return float(_DEFAULT_SESSION_IDLE_TTL_SECONDS)
 
 
 class ManagedBrowserError(RuntimeError):
@@ -265,6 +299,11 @@ class _ManagedSession:
     #   "total_count": number of console errors / pageerrors seen on the page
     #   "dropped_count": entries dropped because the per-page bound was hit
     console_error_state: dict[str, dict[str, Any]] = field(default_factory=dict)
+    # Monotonic timestamp of the last observe / observe_target / act on this
+    # session (set at open). Drives the idle TTL sweep. Monotonic, not wall
+    # clock, so a clock adjustment can neither keep a leaked session alive nor
+    # kill a live one.
+    last_activity_monotonic: float = field(default_factory=time.monotonic)
 
 
 class PlaywrightManagedBrowser:
@@ -280,12 +319,28 @@ class PlaywrightManagedBrowser:
         url_checker: UrlChecker = is_safe_url,
         navigation_timeout_ms: int = 30_000,
         action_timeout_ms: int = 15_000,
+        session_idle_ttl_seconds: float | None = None,
+        session_event_callback: Callable[[dict[str, Any]], None] | None = None,
     ):
         self._playwright_factory = playwright_factory
         self._url_checker = url_checker
         self.navigation_timeout_ms = max(1_000, int(navigation_timeout_ms))
         self.action_timeout_ms = max(1_000, int(action_timeout_ms))
+        # Idle TTL (seconds) after which an unused managed session is closed
+        # automatically. None resolves to the
+        # ZN_MANAGED_BROWSER_SESSION_IDLE_TTL_SECONDS env var, falling back to
+        # 30 minutes. Zero or negative disables automatic idle cleanup.
+        self.session_idle_ttl_seconds = _resolve_session_idle_ttl(
+            session_idle_ttl_seconds
+        )
+        # Optional sink for session lifecycle events (TTL closes included);
+        # never allowed to break the adapter if it raises.
+        self._session_event_callback = session_event_callback
         self._sessions: dict[str, _ManagedSession] = {}
+        self._session_events: deque[dict[str, Any]] = deque(
+            maxlen=_MAX_SESSION_EVENTS
+        )
+        self._last_auto_sweep_monotonic = 0.0
 
     def open_session(
         self,
@@ -293,6 +348,8 @@ class PlaywrightManagedBrowser:
         permission: BrowserPermissionContext | None = None,
         headless: bool = True,
     ) -> BrowserSessionIdentity:
+        # Reclaim leaked sessions before launching a new browser.
+        self._maybe_auto_sweep_idle_sessions()
         policy = permission or BrowserPermissionContext()
         if policy.allow_downloads or policy.allow_uploads:
             raise ManagedBrowserError(
@@ -346,8 +403,45 @@ class PlaywrightManagedBrowser:
         session = self._sessions.pop(str(session_id or "").strip(), None)
         if session is None:
             return
-        self._dispose_all_target_bindings(session)
-        self._best_effort_close(session.context, session.browser, session.playwright)
+        self._close_session_resources(session, reason="explicit")
+
+    def close_idle_sessions(
+        self,
+        *,
+        now: float | None = None,
+        ttl_seconds: float | None = None,
+    ) -> list[str]:
+        """Close managed sessions idle longer than the TTL.
+
+        Returns the closed session ids in sweep order. Active sessions are
+        untouched; a disabled TTL (<= 0) closes nothing. Every auto-close is
+        written to the session event journal.
+        """
+        ttl = (
+            self.session_idle_ttl_seconds
+            if ttl_seconds is None
+            else _resolve_session_idle_ttl(ttl_seconds)
+        )
+        if ttl <= 0:
+            return []
+        reference = time.monotonic() if now is None else float(now)
+        closed: list[str] = []
+        for session_id, session in tuple(self._sessions.items()):
+            idle_seconds = reference - float(session.last_activity_monotonic)
+            if idle_seconds > ttl:
+                self._sessions.pop(session_id, None)
+                self._close_session_resources(
+                    session,
+                    reason="idle_ttl",
+                    idle_seconds=idle_seconds,
+                    ttl_seconds=ttl,
+                )
+                closed.append(session_id)
+        return closed
+
+    def session_events(self) -> tuple[dict[str, Any], ...]:
+        """Bounded journal of managed session lifecycle events, oldest first."""
+        return tuple(dict(entry) for entry in self._session_events)
 
     def close(self) -> None:
         for session_id in tuple(self._sessions):
@@ -2042,10 +2136,83 @@ class PlaywrightManagedBrowser:
         return page
 
     def _session(self, session_id: str) -> _ManagedSession:
+        self._maybe_auto_sweep_idle_sessions()
         session = self._sessions.get(str(session_id or "").strip())
         if session is None:
             raise ManagedBrowserError("unknown managed browser session")
+        session.last_activity_monotonic = time.monotonic()
         return session
+
+    def _close_session_resources(
+        self,
+        session: _ManagedSession,
+        *,
+        reason: str,
+        idle_seconds: float = 0.0,
+        ttl_seconds: float = 0.0,
+    ) -> None:
+        self._dispose_all_target_bindings(session)
+        self._best_effort_close(session.context, session.browser, session.playwright)
+        self._record_session_event(
+            session,
+            reason=reason,
+            idle_seconds=idle_seconds,
+            ttl_seconds=ttl_seconds,
+        )
+
+    def _record_session_event(
+        self,
+        session: _ManagedSession,
+        *,
+        reason: str,
+        idle_seconds: float,
+        ttl_seconds: float,
+    ) -> None:
+        event = {
+            "event": "browser_session_closed",
+            "reason": reason,
+            "session_id": session.identity.session_id,
+            "provider": self.name,
+            "plane": BrowserPlane.MANAGED.value,
+            "idle_seconds": round(float(idle_seconds), 3),
+            "ttl_seconds": float(ttl_seconds) if reason == "idle_ttl" else None,
+            "closed_at": utc_now(),
+        }
+        self._session_events.append(event)
+        _LOG.info(
+            "managed browser session closed: reason=%s session_id=%s idle_seconds=%.1f",
+            reason,
+            session.identity.session_id,
+            idle_seconds,
+        )
+        callback = self._session_event_callback
+        if callback is None:
+            return
+        try:
+            callback(dict(event))
+        except Exception:
+            _LOG.exception("managed browser session event callback failed")
+
+    def _maybe_auto_sweep_idle_sessions(self) -> None:
+        """Opportunistic TTL sweep on the managed entry points.
+
+        Throttled so the request path stays cheap; never allowed to fail
+        loudly because cleanup must not break observe/act/open.
+        """
+        try:
+            ttl = self.session_idle_ttl_seconds
+            if ttl <= 0 or not self._sessions:
+                return
+            now = time.monotonic()
+            if (
+                now - self._last_auto_sweep_monotonic
+                < _AUTO_SWEEP_MIN_INTERVAL_SECONDS
+            ):
+                return
+            self._last_auto_sweep_monotonic = now
+            self.close_idle_sessions(now=now, ttl_seconds=ttl)
+        except Exception:
+            _LOG.exception("managed browser idle session auto-sweep failed")
 
     @staticmethod
     def _failure(
