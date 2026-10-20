@@ -79,7 +79,7 @@ class NativeBody:
         self.resident = resident
         self.store = store or (resident.store if resident is not None else None)
         # Extension handlers live INSIDE this Body, never as a second tool runner.
-        # Only explicitly admitted MCP/REST/CLI/RSS tools may use these entry points: read
+        # Only explicitly admitted MCP/REST/CLI/RSS/MAIL tools may use these entry points: read
         # tools via the read handlers, explicitly approved write tools via
         # the write handlers (M-7 contract: per-tool approval + replay
         # identity + postcondition verification).
@@ -99,7 +99,7 @@ class NativeBody:
     ) -> None:
         """Bind one approved read-only tool to the existing audited Body path."""
         normalized = str(kind or "").strip().lower()
-        if not re.fullmatch(r"zn_(mcp|rest|cli|rss)_read_[a-f0-9]{24}", normalized):
+        if not re.fullmatch(r"zn_(mcp|rest|cli|rss|mail)_read_[a-f0-9]{24}", normalized):
             raise ValueError(
                 "external Body kind must be a stable namespaced read kind"
             )
@@ -127,7 +127,7 @@ class NativeBody:
         have a per-tool verifier wired before the action can verify.
         """
         normalized = str(kind or "").strip().lower()
-        if not re.fullmatch(r"zn_(mcp|rest|cli|rss)_write_[a-f0-9]{24}", normalized):
+        if not re.fullmatch(r"zn_(mcp|rest|cli|rss|mail)_write_[a-f0-9]{24}", normalized):
             raise ValueError(
                 "external Body kind must be a stable namespaced write kind"
             )
