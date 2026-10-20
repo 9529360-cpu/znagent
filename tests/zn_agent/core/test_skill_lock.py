@@ -21,7 +21,7 @@ from zn_agent.core.skill_lock import (
 )
 from zn_agent.core.skills import SkillStore
 
-from skill_plugin_updates import bump_plugins  # noqa: E402
+from skill_plugin_updates import _git_url, bump_plugins, latest_sha_from_git  # noqa: E402
 
 SHA_A = "a" * 40
 SHA_B = "b" * 40
@@ -188,6 +188,58 @@ class NightlyCheckTests(unittest.TestCase):
         self.assertEqual(results[0].status, "dry-run")
         self.assertEqual(called, [])
         self.assertEqual(SkillLock(self.root).entry_for("plug-c").sha, SHA_C)
+
+
+class GitUrlTests(unittest.TestCase):
+    """P3-15 regression: ``_git_url`` stripped only 3 of the 4 ``git+`` chars.
+
+    ``git+https://...`` became ``+https://...`` and ``git ls-remote``
+    failed, so the first real ``git+https`` plugin check would always
+    report ``failed``. These tests pin the strip behavior and prove
+    ``latest_sha_from_git`` runs ``ls-remote`` against a real (tiny,
+    local) repo through the ``git+``-prefixed source.
+    """
+
+    def _tiny_repo(self, root: Path) -> tuple[Path, str]:
+        repo = root / "plug-repo"
+        repo.mkdir()
+
+        def git(*args: str) -> None:
+            subprocess.run(["git", *args], cwd=repo, check=True,
+                           capture_output=True, text=True)
+
+        git("init")
+        git("config", "user.email", "test@example.com")
+        git("config", "user.name", "test")
+        (repo / "README.md").write_text("plug", encoding="utf-8")
+        git("add", ".")
+        git("commit", "-m", "init")
+        head = subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=repo, check=True,
+            capture_output=True, text=True).stdout.strip()
+        return repo, head
+
+    def test_git_plus_prefix_strips_all_four_chars(self):
+        self.assertEqual(_git_url("git+https://example.com/org/plug"),
+                         "https://example.com/org/plug")
+        self.assertEqual(_git_url("git+ssh://example.com/org/plug.git"),
+                         "ssh://example.com/org/plug.git")
+
+    def test_plain_https_and_scp_sources_pass_through(self):
+        self.assertEqual(_git_url("https://example.com/org/plug"),
+                         "https://example.com/org/plug")
+        self.assertEqual(_git_url("git@github.com:org/plug.git"),
+                         "git@github.com:org/plug.git")
+
+    def test_ls_remote_works_with_git_plus_file_url(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        repo, head = self._tiny_repo(root)
+        self.assertEqual(latest_sha_from_git(f"git+file://{repo}"), head)
+
+    def test_ls_remote_works_with_plain_file_url(self):
+        root = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        repo, head = self._tiny_repo(root)
+        self.assertEqual(latest_sha_from_git(f"file://{repo}"), head)
 
 
 class ScriptBareRunnerTests(unittest.TestCase):
