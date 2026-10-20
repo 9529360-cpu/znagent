@@ -434,6 +434,198 @@ class ManagedBrowserNetworkObservationTests(unittest.TestCase):
         finally:
             adapter.close()
 
+    def test_status_boundary_399_ignored_400_recorded(self):
+        adapter, playwright, identity = self._build()
+        try:
+            page = playwright.browser.context.page
+            page.fire_response(
+                _FakeResponse(
+                    status=399,
+                    request=_FakeRequest(url="https://example.com/redirect-chain"),
+                )
+            )
+            page.fire_response(
+                _FakeResponse(
+                    status=400,
+                    request=_FakeRequest(url="https://example.com/bad-request"),
+                )
+            )
+            snapshot = self._network(adapter, identity)
+            self.assertEqual(snapshot["total_count"], 1)
+            self.assertEqual(snapshot["failed_requests"][0]["status"], 400)
+        finally:
+            adapter.close()
+
+    def test_failure_property_shape_is_supported(self):
+        adapter, playwright, identity = self._build()
+        try:
+            page = playwright.browser.context.page
+            page.fire_request_failed(
+                _PropertyShapeRequest(
+                    url="https://cdn.example.com/app.js",
+                    failure="net::ERR_NAME_NOT_RESOLVED",
+                )
+            )
+            snapshot = self._network(adapter, identity)
+            self.assertEqual(snapshot["total_count"], 1)
+            entry = snapshot["failed_requests"][0]
+            self.assertEqual(entry["kind"], "requestfailed")
+            self.assertEqual(entry["error"], "net::ERR_NAME_NOT_RESOLVED")
+        finally:
+            adapter.close()
+
+    def test_response_status_property_shape_is_supported(self):
+        adapter, playwright, identity = self._build()
+        try:
+            page = playwright.browser.context.page
+            page.fire_response(
+                _PropertyShapeResponse(
+                    status=503,
+                    request=_FakeRequest(url="https://api.example.com/rpc"),
+                )
+            )
+            snapshot = self._network(adapter, identity)
+            self.assertEqual(snapshot["total_count"], 1)
+            self.assertEqual(snapshot["failed_requests"][0]["status"], 503)
+        finally:
+            adapter.close()
+
+    def test_navigation_failure_without_network_events_gives_empty_snapshot(self):
+        adapter, playwright, identity = self._build()
+        try:
+            page = playwright.browser.context.page
+
+            def _explode_only(url, *, wait_until=None):
+                raise RuntimeError("Timeout 30000ms exceeded")
+
+            page.goto = _explode_only
+            observation = adapter.observe(identity.session_id)
+            action = BrowserAction.create(
+                session_id=identity.session_id,
+                kind=BrowserActionKind.NAVIGATE,
+                page_id=observation.page_id,
+                args={"url": "https://slow.example.com/"},
+            )
+            authority = BrowserActionAuthority.from_observation(
+                action,
+                observation,
+                BrowserPermissionContext(
+                    allow_navigation=True, allow_page_interaction=True
+                ),
+            )
+            evidence = adapter.act(action, authority)
+            self.assertFalse(evidence.success)
+            network = evidence.data.get("network") or {}
+            self.assertEqual(network.get("total_count"), 0)
+            self.assertEqual(network.get("failed_requests"), [])
+        finally:
+            adapter.close()
+
+    def test_exploding_handler_then_normal_event_still_recorded(self):
+        adapter, playwright, identity = self._build()
+        try:
+            page = playwright.browser.context.page
+
+            class _ExplodingRequest:
+                @property
+                def url(self):
+                    raise RuntimeError("provider url blew up")
+
+                @property
+                def method(self):
+                    raise RuntimeError("provider method blew up")
+
+                @property
+                def resource_type(self):
+                    raise RuntimeError("provider resource_type blew up")
+
+                def failure(self):
+                    raise RuntimeError("provider failure blew up")
+
+            page.fire_request_failed(_ExplodingRequest())
+            page.fire_request_failed(
+                _FakeRequest(
+                    url="https://cdn.example.com/app.js",
+                    failure="net::ERR_ABORTED",
+                )
+            )
+            snapshot = self._network(adapter, identity)
+            # The broken event was dropped, but the observer keeps working.
+            self.assertEqual(snapshot["total_count"], 1)
+            self.assertEqual(
+                snapshot["failed_requests"][0]["url"],
+                "https://cdn.example.com/app.js",
+            )
+        finally:
+            adapter.close()
+
+    def test_overlong_fields_are_truncated(self):
+        adapter, playwright, identity = self._build()
+        try:
+            page = playwright.browser.context.page
+            page.fire_request_failed(
+                _FakeRequest(
+                    url="https://example.com/" + "p" * 1000,
+                    failure="e" * 600,
+                    resource_type="r" * 100,
+                )
+            )
+            page.fire_response(
+                _FakeResponse(
+                    status=500,
+                    request=_FakeRequest(
+                        url="https://example.com/x",
+                        method="M" * 40,
+                    ),
+                )
+            )
+            snapshot = self._network(adapter, identity)
+            failed_entry, response_entry = snapshot["failed_requests"]
+            self.assertLessEqual(len(failed_entry["url"]), 512)
+            self.assertLessEqual(len(failed_entry["error"]), 256)
+            self.assertLessEqual(len(failed_entry["resource_type"]), 32)
+            self.assertLessEqual(len(response_entry["method"]), 16)
+        finally:
+            adapter.close()
+
+
+class _PropertyShapeRequest:
+    """Mimics real Playwright: failure and status are properties."""
+
+    def __init__(self, *, url, failure):
+        self._url = url
+        self._failure = failure
+
+    @property
+    def url(self):
+        return self._url
+
+    @property
+    def method(self):
+        return "GET"
+
+    @property
+    def resource_type(self):
+        return "document"
+
+    @property
+    def failure(self):
+        return self._failure
+
+
+class _PropertyShapeResponse:
+    def __init__(self, *, status, request):
+        self._status = status
+        self._request = request
+
+    @property
+    def status(self):
+        return self._status
+
+    @property
+    def request(self):
+        return self._request
+
 
 if __name__ == "__main__":
     unittest.main()
