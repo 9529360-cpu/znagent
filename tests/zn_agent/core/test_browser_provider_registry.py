@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from datetime import datetime
 
 from zn_agent.core.browser import (
     BrowserActionKind,
@@ -13,6 +14,7 @@ from zn_agent.core.browser_provider_registry import (
     BrowserProviderDescriptor,
     BrowserProviderRegistry,
     ManagedBrowserProviderRouter,
+    ProviderFailure,
     build_managed_browser_adapter,
     build_readable_managed_browser_adapter,
 )
@@ -41,6 +43,23 @@ class _Adapter:
 
     def act(self, action, authority):
         raise NotImplementedError
+
+
+class _FailingAdapter(_Adapter):
+    """Adapter whose session open always blows up like a dead browser."""
+
+    def open_session(self, *, permission=None, headless=True):
+        raise RuntimeError("chrome socket died")
+
+
+def _managed_descriptor(name, *, priority=100, available=True, factory=None):
+    return BrowserProviderDescriptor(
+        name=name,
+        plane=BrowserPlane.MANAGED,
+        priority=priority,
+        factory=factory or (lambda: _Adapter(name)),
+        available=lambda: available,
+    )
 
 
 class BrowserProviderRegistryTests(unittest.TestCase):
@@ -330,6 +349,159 @@ class BrowserProviderRegistryTests(unittest.TestCase):
                 preferred="mature",
                 registry=registry,
             )
+
+
+class BrowserProviderHealthTests(unittest.TestCase):
+    """P2-11: registry records last failure reason + timestamp per provider."""
+
+    def test_record_failure_stores_reason_and_utc_timestamp(self):
+        registry = BrowserProviderRegistry()
+        registry.register(_managed_descriptor("mature"))
+
+        registry.record_failure("mature", "chrome socket died")
+
+        failure = registry.last_failure("mature")
+        self.assertIsNotNone(failure)
+        self.assertIsInstance(failure, ProviderFailure)
+        self.assertEqual(failure.reason, "chrome socket died")
+        # parseable UTC ISO-8601 timestamp
+        self.assertIsNotNone(datetime.fromisoformat(failure.at))
+        self.assertIn("+00:00", failure.at)
+
+    def test_record_failure_keeps_latest_reason(self):
+        registry = BrowserProviderRegistry()
+        registry.register(_managed_descriptor("mature"))
+
+        registry.record_failure("mature", "first hiccup")
+        registry.record_failure("mature", "chrome binary missing")
+
+        self.assertEqual(registry.last_failure("mature").reason, "chrome binary missing")
+
+    def test_last_failure_is_none_without_record_and_for_unknown_names(self):
+        registry = BrowserProviderRegistry()
+        registry.register(_managed_descriptor("mature"))
+
+        self.assertIsNone(registry.last_failure("mature"))
+        self.assertIsNone(registry.last_failure("no-such-provider"))
+
+    def test_record_failure_is_fail_closed(self):
+        registry = BrowserProviderRegistry()
+        registry.register(_managed_descriptor("mature"))
+
+        with self.assertRaises(ValueError):
+            registry.record_failure("no-such-provider", "boom")
+        with self.assertRaises(ValueError):
+            registry.record_failure("mature", "   ")
+        with self.assertRaises(ValueError):
+            registry.record_failure("", "boom")
+
+    def test_resolve_preferred_unavailable_error_carries_last_failure(self):
+        registry = BrowserProviderRegistry()
+        registry.register(_managed_descriptor("mature", priority=200, available=False))
+        registry.record_failure("mature", "chrome binary missing")
+
+        with self.assertRaisesRegex(
+            RuntimeError, r"browser provider is unavailable: mature.*chrome binary missing"
+        ):
+            registry.resolve(plane=BrowserPlane.MANAGED, preferred="mature")
+
+    def test_resolve_unavailable_error_unchanged_without_recorded_failure(self):
+        registry = BrowserProviderRegistry()
+        registry.register(_managed_descriptor("mature", priority=200, available=False))
+
+        with self.assertRaises(RuntimeError) as ctx:
+            registry.resolve(plane=BrowserPlane.MANAGED, preferred="mature")
+        self.assertEqual(
+            str(ctx.exception), "browser provider is unavailable: mature"
+        )
+
+    def test_resolve_no_candidate_error_carries_last_failures(self):
+        registry = BrowserProviderRegistry()
+        registry.register(_managed_descriptor("mature", priority=200, available=False))
+        registry.register(_managed_descriptor("legacy", priority=100, available=False))
+        registry.record_failure("mature", "chrome binary missing")
+
+        with self.assertRaises(RuntimeError) as ctx:
+            registry.resolve(plane=BrowserPlane.MANAGED)
+        message = str(ctx.exception)
+        self.assertIn("no available browser provider for managed plane", message)
+        self.assertIn("mature", message)
+        self.assertIn("chrome binary missing", message)
+        # legacy has no recorded failure, so it must not appear in the notes
+        self.assertNotIn("legacy: last failure", message)
+
+    def test_recorded_failure_does_not_change_selection(self):
+        # No automatic failover: a recorded failure is observation only.
+        registry = BrowserProviderRegistry()
+        registry.register(_managed_descriptor("legacy", priority=100, available=True))
+        registry.register(_managed_descriptor("mature", priority=200, available=True))
+        registry.record_failure("mature", "transient hiccup earlier")
+
+        descriptor = registry.resolve(plane=BrowserPlane.MANAGED)
+        self.assertEqual(descriptor.name, "mature")
+
+    def test_router_records_failure_when_open_session_fails_and_reraises(self):
+        registry = BrowserProviderRegistry()
+        registry.register(
+            _managed_descriptor(
+                "mature",
+                priority=200,
+                available=True,
+                factory=lambda: _FailingAdapter("mature"),
+            )
+        )
+        router = ManagedBrowserProviderRouter(registry=registry, preferred="mature")
+
+        with self.assertRaisesRegex(RuntimeError, "chrome socket died"):
+            router.open_session(permission=BrowserPermissionContext())
+
+        failure = registry.last_failure("mature")
+        self.assertIsNotNone(failure)
+        self.assertIn("chrome socket died", failure.reason)
+        self.assertIn("RuntimeError", failure.reason)
+        self.assertIsNotNone(datetime.fromisoformat(failure.at))
+
+    def test_router_records_failure_when_factory_fails(self):
+        def broken_factory():
+            raise OSError("playwright driver missing")
+
+        registry = BrowserProviderRegistry()
+        registry.register(
+            _managed_descriptor(
+                "playwright",
+                priority=100,
+                available=True,
+                factory=broken_factory,
+            )
+        )
+        router = ManagedBrowserProviderRouter(registry=registry, preferred="playwright")
+
+        with self.assertRaisesRegex(OSError, "playwright driver missing"):
+            router.open_session(permission=BrowserPermissionContext())
+
+        failure = registry.last_failure("playwright")
+        self.assertIsNotNone(failure)
+        self.assertIn("playwright driver missing", failure.reason)
+        self.assertIn("OSError", failure.reason)
+
+    def test_router_still_fails_closed_without_failover_after_failure(self):
+        registry = BrowserProviderRegistry()
+        registry.register(
+            _managed_descriptor(
+                "mature",
+                priority=200,
+                available=True,
+                factory=lambda: _FailingAdapter("mature"),
+            )
+        )
+        registry.register(_managed_descriptor("legacy", priority=100, available=True))
+        router = ManagedBrowserProviderRouter(registry=registry, preferred="mature")
+
+        # The failing provider must not be silently skipped to the next one:
+        # selection behavior is unchanged, the error propagates.
+        with self.assertRaises(RuntimeError):
+            router.open_session(permission=BrowserPermissionContext())
+        self.assertEqual(router._sessions, {})
 
 
 if __name__ == "__main__":
