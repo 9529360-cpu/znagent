@@ -37,6 +37,7 @@ import os
 import re
 import tempfile
 import zipfile
+from contextlib import suppress
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
@@ -200,10 +201,8 @@ def _atomic_write_bytes(target: Path, data: bytes) -> None:
             handle.write(data)
         os.replace(tmp_name, target)
     except OSError as exc:
-        try:
+        with suppress(OSError):
             os.unlink(tmp_name)
-        except OSError:
-            pass
         raise DocArtifactError(
             f"cannot write artifact to {target}: {exc}"
         ) from exc
