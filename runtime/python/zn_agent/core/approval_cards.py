@@ -120,6 +120,11 @@ APPROVAL_KINDS = (
     # fact. The fact is written through the existing ``remember`` path only
     # after this card is approved; deny/expire means it is never written.
     "memory_capture",
+    # R3: the RSS/Atom feed connector's subscription write tools
+    # (add/remove a saved feed) change the user's subscription list.
+    # Reads (list/fetch/digest) are not gated; the two writes are
+    # registered only with per-tool host approval and ride this kind.
+    "feed_subscription",
 )
 
 APPROVAL_SOURCES = (
