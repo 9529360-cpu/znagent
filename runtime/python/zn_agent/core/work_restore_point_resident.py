@@ -210,7 +210,12 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
             "event_id": event.event_id,
             "thread_id": thread_id,
             "message_id": message_id,
-            "intent_id": intent.intent_id,
+            # intent_id is deliberately NOT part of the conflict check: a repeated
+            # dispatch of the same (event_id, action_signature, target_path) carries
+            # a fresh intent_id but is the same logical overwrite (the signature
+            # already pins kind+args, so the bytes to write are identical). Treating
+            # it as a conflict crashed the restore-point layer on re-dispatch
+            # (DSH-4 known boundary); the existing point is returned idempotently.
             "action_signature": action_signature,
             "target_path": str(identity.get("path") or ""),
             "content_sha256": str(identity.get("content_sha256") or ""),
@@ -220,7 +225,11 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
         for key, value in expected.items():
             if row[key] != value:
                 raise RuntimeError(f"durable Work restore point conflicts on {key}")
-        if stored_identity != identity:
+        # Semantic (not byte-wise) identity comparison: a re-observed identity of
+        # an unchanged file carries a fresh observed_at, which must not defeat
+        # idempotent reuse. Any real file change still fails closed here.
+        identity_comparison = compare_file_identities(stored_identity, identity)
+        if identity_comparison.get("exact") is not True:
             raise RuntimeError("durable Work restore point conflicts with pre-mutation identity")
         content = bytes(row["content"])
         if len(content) != expected["size_bytes"]:
@@ -387,6 +396,27 @@ class WorkRestorePointResidentRuntime(AtomicOverwriteNamespaceRecoveryResidentRu
                 )
                 conn.commit()
                 return public
+            except sqlite3.IntegrityError:
+                # Lost a concurrent insert race on the same
+                # (event_id, action_signature, target_path): the winner's row is the
+                # restore point for this triple, so verify and return it idempotently
+                # instead of surfacing the UNIQUE violation.
+                conn.rollback()
+                winner = conn.execute(
+                    f"SELECT * FROM {_TABLE} WHERE restore_point_id=?",
+                    (restore_point_id,),
+                ).fetchone()
+                if winner is None:
+                    raise
+                return self._verify_existing_restore_point(
+                    winner,
+                    event=event,
+                    thread_id=thread_id,
+                    message_id=message_id,
+                    intent=intent,
+                    action_signature=action_signature,
+                    identity=identity,
+                )
             except Exception:
                 conn.rollback()
                 raise
