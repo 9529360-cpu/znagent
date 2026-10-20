@@ -312,6 +312,60 @@ class ZnCliUnitTests(_CliHarness):
                     [("approval_decide", {"request_id": "req-1", "decision": decision})],
                 )
 
+    def test_memory_list_prints_facts_without_values(self):
+        facts = [
+            {
+                "key": "project",
+                "aliases": ["active project"],
+                "updated_at": "2026-10-20T06:00:00Z",
+                "tier": "hot",
+            },
+            {
+                "key": "old-note",
+                "aliases": [],
+                "updated_at": "2026-10-19T06:00:00Z",
+                "tier": "deep",
+            },
+        ]
+        code, out, err = self._run(
+            ["memory", "list"], self._handler({"memory_list": facts})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("project", out)
+        self.assertIn("tier=hot", out)
+        self.assertIn("active project", out)
+        self.assertIn("tier=deep", out)
+        self.assertNotIn("value", out)
+        self.assertEqual(self.calls, [("memory_list", {"limit": 20})])
+
+    def test_memory_list_limit_flag_and_json(self):
+        facts = [
+            {
+                "key": "k",
+                "aliases": [],
+                "updated_at": "2026-10-20T06:00:00Z",
+                "tier": "hot",
+            }
+        ]
+        code, out, err = self._run(
+            ["memory", "list", "--limit", "5"],
+            self._handler({"memory_list": facts}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.calls, [("memory_list", {"limit": 5})])
+        code, out, _ = self._run(
+            ["memory", "list", "--json"], self._handler({"memory_list": facts})
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), facts)
+
+    def test_memory_list_empty(self):
+        code, out, err = self._run(
+            ["memory", "list"], self._handler({"memory_list": []})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("no remembered facts", out)
+
     def test_unknown_command_and_conflicting_flags_exit_2_without_rpc(self):
         with self.assertRaises(SystemExit) as caught:
             run(["bogus"])
@@ -589,6 +643,26 @@ class ZnCliResidentIntegrationTests(unittest.TestCase):
                     )
                 self.assertEqual(code, 0, stderr.getvalue())
                 self.assertNotIn(request_id, stdout.getvalue())
+
+                # memory list against the real resident: key listed, value not leaked.
+                client.call(
+                    "remember",
+                    {"key": "cli-memory-key", "value": "cli-secret-value", "aliases": ["k"]},
+                )
+                stdout, stderr = io.StringIO(), io.StringIO()
+                with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+                    code = run(
+                        [
+                            "--endpoint",
+                            str(endpoint_path),
+                            "memory",
+                            "list",
+                        ]
+                    )
+                self.assertEqual(code, 0, stderr.getvalue())
+                self.assertIn("cli-memory-key", stdout.getvalue())
+                self.assertIn("tier=hot", stdout.getvalue())
+                self.assertNotIn("cli-secret-value", stdout.getvalue())
             finally:
                 _best_effort_shutdown(endpoint_path)
                 thread.join(timeout=10.0)

@@ -6,7 +6,7 @@ reads the resident endpoint file published by
 authenticates with the per-process session secret, and forwards one JSON-RPC
 call per command to the already-existing Daemon RPC methods
 (``work_list`` / ``work_get`` / ``work_create`` / ``work_submit`` /
-``approval_list`` / ``approval_decide``). All policy, execution, approval and
+``approval_list`` / ``approval_decide`` / ``memory_list``). All policy, execution, approval and
 persistence decisions stay server-side.
 
 Fail-closed rules:
@@ -449,6 +449,32 @@ def _cmd_approval_decide(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_memory_list(args: argparse.Namespace) -> int:
+    result = _client(args).call("memory_list", {"limit": args.limit})
+    if not isinstance(result, list):
+        raise CliError(f"resident returned an unexpected memory_list result: {result!r}")
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if not result:
+        print("no remembered facts")
+        return 0
+    for item in result:
+        if not isinstance(item, dict):
+            continue
+        aliases = item.get("aliases")
+        alias_text = (
+            ", ".join(_one_line(alias, limit=40) for alias in aliases)
+            if isinstance(aliases, list) and aliases
+            else "-"
+        )
+        print(
+            f"{_one_line(item.get('key'), limit=60)}  tier={_one_line(item.get('tier'))}  "
+            f"aliases={alias_text}  updated={_one_line(item.get('updated_at'))}"
+        )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zn",
@@ -532,6 +558,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     approval_decide.add_argument("--json", action="store_true", help="print raw JSON")
     approval_decide.set_defaults(func=_cmd_approval_decide)
+
+    memory = sub.add_parser("memory", help="inspect durable memory")
+    memory_sub = memory.add_subparsers(
+        dest="memory_command", metavar="subcommand", required=True
+    )
+
+    memory_list = memory_sub.add_parser("list", help="list remembered fact keys")
+    memory_list.add_argument(
+        "--limit", type=lambda v: _require_positive_int(v, name="--limit", maximum=200),
+        default=20,
+    )
+    memory_list.add_argument("--json", action="store_true", help="print raw JSON")
+    memory_list.set_defaults(func=_cmd_memory_list)
     return parser
 
 

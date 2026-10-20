@@ -26,6 +26,7 @@ from .sensitive_handover import parse_handover_done, resolve_handover
 from .team_disband import find_team_id_in_messages, parse_disband_request
 from .team_memory import team_shared_memory
 from .team_request import parse_team_request
+from .two_level_memory import TIER_DEEP, TIER_HOT, TwoLevelMemory
 from .team_timeline import (
     build_team_timeline,
     parse_team_role,
@@ -817,6 +818,21 @@ class ResidentRpcServer:
                 raise ValueError("forget requires key")
             self.resident.memory.forget(key)
             result = {"forgotten": True, "key": key}
+        elif method == "memory_list":
+            # Read-only inventory of durable facts. The fact *values* are
+            # deliberately omitted -- a value requires an explicit recall --
+            # so listing memory never leaks stored content.
+            facts = self.resident.memory.store.list_facts()
+            deep_keys = TwoLevelMemory(self.resident.memory).deep_keys()
+            result = [
+                {
+                    "key": fact["key"],
+                    "aliases": list(fact.get("aliases") or ()),
+                    "updated_at": fact.get("updated_at"),
+                    "tier": TIER_DEEP if fact["key"] in deep_keys else TIER_HOT,
+                }
+                for fact in facts[: self._limit(params)]
+            ]
         elif method == "shutdown":
             self._shutdown = True
             self._life_stop.set()
