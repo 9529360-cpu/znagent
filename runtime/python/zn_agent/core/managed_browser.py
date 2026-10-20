@@ -241,6 +241,12 @@ class _ManagedSession:
     next_page_sequence: int = 1
     last_observation: dict[str, BrowserObservation] = field(default_factory=dict)
     target_bindings: dict[str, _ManagedTargetBinding] = field(default_factory=dict)
+    # JavaScript dialog state, keyed by page_id. Each entry is a dict with:
+    #   "live": the provider dialog object while a JS dialog is open, else None
+    #   "snapshot": {"type","message","default_value","opened_at","auto_dismissed","handled"}
+    #   "auto_dismiss_count": number of beforeunload dialogs auto-dismissed on the page
+    #   "last_auto_dismissed": snapshot of the most recent auto-dismissed dialog
+    dialog_state: dict[str, dict[str, Any]] = field(default_factory=dict)
 
 
 class PlaywrightManagedBrowser:
@@ -384,6 +390,10 @@ class PlaywrightManagedBrowser:
                 return self._check(session, action)
             if action.kind is BrowserActionKind.UNCHECK:
                 return self._uncheck(session, action)
+            if action.kind is BrowserActionKind.DIALOG_ACCEPT:
+                return self._dialog_respond(session, action, accept=True)
+            if action.kind is BrowserActionKind.DIALOG_DISMISS:
+                return self._dialog_respond(session, action, accept=False)
             return self._failure(
                 action,
                 error=f"managed browser action is not implemented yet: {action.kind.value}",
@@ -1219,6 +1229,165 @@ class PlaywrightManagedBrowser:
             data=data,
         )
 
+    def _dialog_respond(
+        self,
+        session: _ManagedSession,
+        action: BrowserAction,
+        *,
+        accept: bool,
+    ) -> BrowserEffectEvidence:
+        """Explicitly accept or dismiss an open JavaScript dialog.
+
+        Safety lines: prompt text is never auto-filled (an explicit prompt_text
+        argument is rejected, not silently used); beforeunload dialogs are
+        auto-dismissed on arrival so navigation can never hang waiting on them.
+        """
+        if action.args.get("prompt_text") is not None:
+            return self._failure(
+                action,
+                error="managed browser never auto-fills prompt text; "
+                "dialog accept/dismiss takes no text argument",
+                data={"dispatch_state": "not_started", "requires_fresh_resense": True},
+            )
+        page_id = action.page_id or self._default_page_id(session)
+        page = self._page(session, page_id)
+        entry = session.dialog_state.get(page_id)
+        dialog = entry.get("live") if entry else None
+        if dialog is None:
+            return self._failure(
+                action,
+                error="no JavaScript dialog is open on this page",
+                data={"dispatch_state": "not_started", "requires_fresh_resense": True},
+            )
+        snapshot = dict(entry.get("snapshot") or {})
+        dialog_type = str(snapshot.get("type") or "unknown")
+        url_before = str(getattr(page, "url", "") or "")
+        prompt_value_used: str | None = None
+        try:
+            if accept:
+                if dialog_type == "prompt":
+                    # Playwright accepts a prompt with its default value when no
+                    # prompt text is passed; we never inject our own text.
+                    dialog.accept()
+                    prompt_value_used = "default"
+                else:
+                    dialog.accept()
+            else:
+                dialog.dismiss()
+        except Exception as exc:
+            entry["live"] = None
+            entry["snapshot"] = None
+            self._refresh_page_observation_after_failed_mutation(session, page_id)
+            return self._failure(
+                action,
+                error=f"managed browser dialog respond dispatch failed: {type(exc).__name__}: {exc}",
+            )
+        entry["live"] = None
+        handled = "accept" if accept else "dismiss"
+        snapshot["handled"] = handled
+        snapshot["handled_at"] = utc_now()
+        entry["snapshot"] = None
+
+        post_observation = self._capture(session, page_id)
+        after_url = post_observation.url
+        dialog_after = post_observation.metadata.get("dialog")
+        postcondition = "dialog_closed" if accept else "dialog_dismissed"
+        data: dict[str, Any] = {
+            "provider": session.identity.provider,
+            "dialog_type": dialog_type,
+            "dialog_handled": handled,
+        }
+        if snapshot.get("message"):
+            data["dialog_message"] = snapshot["message"]
+        if prompt_value_used is not None:
+            data["prompt_value_used"] = prompt_value_used
+        data["url_after"] = after_url
+        if dialog_after is not None:
+            # A new dialog opened while handling the previous one; it is now
+            # recorded in dialog_state and observable through the next capture.
+            data["dialog_reopened"] = True
+            data["reopened_dialog_type"] = str(dialog_after.get("type") or "unknown")
+        return BrowserEffectEvidence(
+            action_id=action.action_id,
+            session_id=action.session_id,
+            observed_at=post_observation.captured_at,
+            success=True,
+            page_id=page_id,
+            url_before=url_before,
+            url_after=after_url,
+            target_id=action.target.target_id if action.target is not None else "",
+            postcondition=postcondition,
+            data=data,
+        )
+
+    def _install_dialog_observer(
+        self,
+        session: _ManagedSession,
+        page_id: str,
+        page: Any,
+    ) -> None:
+        """Record JavaScript dialogs opened on a page so they stay observable.
+
+        beforeunload dialogs are dismissed immediately on arrival: they would
+        otherwise block navigation indefinitely. Everything else is recorded and
+        handled only through explicit dialog_accept/dialog_dismiss actions.
+        """
+        entry = session.dialog_state.setdefault(
+            page_id,
+            {
+                "live": None,
+                "snapshot": None,
+                "auto_dismiss_count": 0,
+                "last_auto_dismissed": None,
+            },
+        )
+
+        def handle_dialog(dialog: Any) -> None:
+            snapshot = {
+                "type": str(getattr(dialog, "type", "") or "unknown"),
+                "message": str(getattr(dialog, "message", "") or "")[:1024],
+                "default_value": str(getattr(dialog, "default_value", "") or "")[:1024],
+                "opened_at": utc_now(),
+                "auto_dismissed": False,
+            }
+            if snapshot["type"] == "beforeunload":
+                # Never hang on navigation-blocking dialogs: dismiss cancels the
+                # pending navigation and keeps the page usable.
+                try:
+                    dialog.dismiss()
+                except Exception:
+                    pass
+                snapshot["auto_dismissed"] = True
+                snapshot["handled"] = "dismiss"
+                snapshot["handled_at"] = utc_now()
+                entry["live"] = None
+                entry["snapshot"] = None
+                entry["auto_dismiss_count"] = int(entry.get("auto_dismiss_count") or 0) + 1
+                entry["last_auto_dismissed"] = snapshot
+                return
+            entry["live"] = dialog
+            entry["snapshot"] = snapshot
+
+        on = getattr(page, "on", None)
+        if callable(on):
+            try:
+                on("dialog", handle_dialog)
+            except Exception:
+                pass
+
+    @staticmethod
+    def _open_dialog_snapshot(session: _ManagedSession, page_id: str) -> dict[str, Any] | None:
+        entry = session.dialog_state.get(page_id)
+        if not entry or entry.get("live") is None:
+            return None
+        snapshot = dict(entry.get("snapshot") or {})
+        return {
+            "type": str(snapshot.get("type") or "unknown"),
+            "message": str(snapshot.get("message") or "")[:1024],
+            "default_value": str(snapshot.get("default_value") or "")[:1024],
+            "opened_at": str(snapshot.get("opened_at") or ""),
+        }
+
     @staticmethod
     def _validate_managed_text(value: Any) -> tuple[str, dict[str, Any]]:
         if not isinstance(value, str):
@@ -1362,6 +1531,16 @@ class PlaywrightManagedBrowser:
                 "default_page_id": session.default_page_id,
                 "service_workers": "blocked",
                 "profile_scope": session.identity.profile_scope,
+                "dialog": self._open_dialog_snapshot(session, page_id),
+                "dialog_auto_dismiss_count": int(
+                    (session.dialog_state.get(page_id) or {}).get(
+                        "auto_dismiss_count"
+                    )
+                    or 0
+                ),
+                "last_auto_dismissed_dialog": (
+                    session.dialog_state.get(page_id) or {}
+                ).get("last_auto_dismissed"),
             },
         )
         self._replace_target_binding(session, page_id, target_binding)
@@ -1653,6 +1832,7 @@ class PlaywrightManagedBrowser:
         session.pages[page_id] = page
         if not session.default_page_id:
             session.default_page_id = page_id
+        self._install_dialog_observer(session, page_id, page)
         return page_id
 
     def _reconcile_pages(self, session: _ManagedSession) -> None:
@@ -1703,6 +1883,7 @@ class PlaywrightManagedBrowser:
     def _evict_page(self, session: _ManagedSession, page_id: str) -> None:
         self._invalidate_target_binding(session, page_id)
         session.last_observation.pop(page_id, None)
+        session.dialog_state.pop(page_id, None)
         session.pages.pop(page_id, None)
         if session.default_page_id == page_id:
             session.default_page_id = ""
