@@ -1114,6 +1114,7 @@ class ResidentWorkLedger:
             self._record_completion_summary(
                 thread=thread, work_run=work_run, run=run, artifacts=new_artifacts
             )
+            self._record_memory_capture_proposal(thread=thread, work_run=work_run, run=run)
 
     def _record_completion_summary(self, *, thread, work_run, run, artifacts) -> None:
         """P2-6: persist a rule-based completion summary when a Work run finalizes.
@@ -1152,6 +1153,38 @@ class ResidentWorkLedger:
                 outcome=outcome,
             )
             save_completion_summary(memory, summary)
+        except Exception:
+            return
+
+    def _record_memory_capture_proposal(self, *, thread, work_run, run) -> None:
+        """P1-4: propose at most one memory-capture candidate when a Work run finalizes.
+
+        Best-effort by design: a proposal failure must never break Work
+        finalization. The candidate (if any) becomes a ``memory_capture``
+        approval card; only a recorded approval writes the fact through the
+        existing ``remember`` path. Deny/expire = never written. Secrets
+        never become candidates (privacy choke in the driver).
+        """
+        try:
+            memory = getattr(self.resident, "memory", None)
+            if memory is None:
+                return
+            driver = getattr(self, "_memory_capture_driver", None)
+            if driver is None:
+                from .memory_capture_proposal import build_memory_capture_driver
+
+                driver = build_memory_capture_driver(
+                    store=getattr(self.resident, "store", None), memory=memory
+                )
+                self._memory_capture_driver = driver
+            event = getattr(run, "event", None)
+            driver.on_work_completed(
+                task=getattr(work_run, "task", "") or "",
+                response=getattr(run, "response", "") or "",
+                reason=getattr(run, "reason", "") or "",
+                thread_id=getattr(thread, "thread_id", "") or "",
+                event_id=getattr(event, "event_id", "") or "",
+            )
         except Exception:
             return
 
