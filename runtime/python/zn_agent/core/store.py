@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import threading
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -12,6 +13,42 @@ from .models import (
     EventStatus, ExecutionPath, Experience, Goal, GoalStatus,
     ImprovementProposal, ProposalStatus, RuntimeMetrics, WorkingState, utc_now,
 )
+
+
+# Sentinel for "the caller did not mention expires_at": an existing fact
+# keeps its current expiry instead of being cleared. Explicit None clears
+# it; an explicit timestamp sets it. Shared with memory.py so both layers
+# agree on preserve-vs-set semantics.
+EXPIRES_UNSET: Any = object()
+
+
+def normalize_expires_at(value: Any) -> str | None:
+    """Normalize an ``expires_at`` argument to ``None`` or an ISO-8601 string.
+
+    Accepts ``None``, a ``datetime`` (uses ``isoformat()``), or a non-empty
+    ISO-8601 string. Anything else raises ``ValueError`` -- expiry is
+    compared as text against ``utc_now()``, so it must be real,
+    lexicographically comparable timestamp text.
+    """
+    if value is None:
+        return None
+    if hasattr(value, "isoformat"):
+        text = str(value.isoformat())
+    elif isinstance(value, str):
+        text = value.strip()
+    else:
+        raise ValueError(
+            "expires_at must be None, a datetime, or an ISO-8601 string"
+        )
+    if not text:
+        raise ValueError("expires_at must be a non-empty ISO-8601 string")
+    try:
+        datetime.fromisoformat(text)
+    except ValueError:
+        raise ValueError(
+            "expires_at must be a parseable ISO-8601 timestamp"
+        ) from None
+    return text
 
 
 class KernelStore:
@@ -52,7 +89,7 @@ class KernelStore:
             CREATE INDEX IF NOT EXISTS idx_session_events_request ON session_events(request_id, seq);
             CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id, seq);
             CREATE TABLE IF NOT EXISTS working_state(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS facts(fact_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, aliases_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS facts(fact_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, aliases_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT);
             CREATE TABLE IF NOT EXISTS skills(skill_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
             CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status);
@@ -60,6 +97,15 @@ class KernelStore:
             CREATE TABLE IF NOT EXISTS runtime_metrics(id INTEGER PRIMARY KEY CHECK(id=1), tasks_total INTEGER NOT NULL DEFAULT 0, tasks_model INTEGER NOT NULL DEFAULT 0, model_invocations INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS resident_lease(id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL, pid INTEGER NOT NULL, hostname TEXT NOT NULL, started_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL);
             """)
+            # Migration: databases created before fact expiry existed lack
+            # the expires_at column. NULL means "no expiry" -- recall treats
+            # such rows exactly like before.
+            columns = {
+                row[1]
+                for row in self._conn.execute("PRAGMA table_info(facts)").fetchall()
+            }
+            if "expires_at" not in columns:
+                self._conn.execute("ALTER TABLE facts ADD COLUMN expires_at TEXT")
             self._conn.execute(
                 "INSERT OR IGNORE INTO runtime_metrics VALUES(1,0,0,0,0,0,?)",
                 (utc_now(),),
@@ -969,7 +1015,19 @@ class KernelStore:
         self.save_working_state(state)
         return state
 
-    def put_fact(self, key: str, value: Any, *, aliases: tuple[str, ...] = ()) -> None:
+    def put_fact(
+        self, key: str, value: Any, *,
+        aliases: tuple[str, ...] = (),
+        expires_at: Any = EXPIRES_UNSET,
+    ) -> None:
+        """Upsert one fact row.
+
+        ``expires_at`` is optional: ``None`` (or an ISO-8601 string /
+        ``datetime``) sets or clears the fact's expiry; the default
+        (:data:`EXPIRES_UNSET`) leaves an existing row's expiry untouched.
+        Expired facts are filtered out of recall paths; ``NULL`` expiry
+        behaves exactly like before this feature existed.
+        """
         key = str(key or "").strip()
         if not key:
             raise ValueError("fact key must not be empty")
@@ -982,11 +1040,30 @@ class KernelStore:
         check_no_credential_value(value, where="memory:fact:value")
         for alias in aliases:
             check_no_credential_value(alias, where="memory:fact:alias")
+        expires = (
+            normalize_expires_at(expires_at)
+            if expires_at is not EXPIRES_UNSET
+            else EXPIRES_UNSET
+        )
         now = utc_now()
         with self._lock, self._conn:
-            existing = self._conn.execute("SELECT created_at FROM facts WHERE fact_key=?", (key,)).fetchone()
+            existing = self._conn.execute(
+                "SELECT created_at, expires_at FROM facts WHERE fact_key=?", (key,)
+            ).fetchone()
             created = existing["created_at"] if existing else now
-            self._conn.execute("INSERT OR REPLACE INTO facts VALUES(?,?,?,?,?)", (key, json.dumps(value, ensure_ascii=False), json.dumps(list(aliases), ensure_ascii=False), created, now))
+            if expires is EXPIRES_UNSET:
+                expires = existing["expires_at"] if existing else None
+            self._conn.execute(
+                "INSERT OR REPLACE INTO facts VALUES(?,?,?,?,?,?)",
+                (
+                    key,
+                    json.dumps(value, ensure_ascii=False),
+                    json.dumps(list(aliases), ensure_ascii=False),
+                    created,
+                    now,
+                    expires,
+                ),
+            )
 
     def get_fact(self, key: str) -> Any | None:
         with self._lock:
@@ -998,7 +1075,7 @@ class KernelStore:
             rows = self._conn.execute("SELECT * FROM facts ORDER BY fact_key").fetchall()
         return [{"key": r["fact_key"], "value": json.loads(r["value_json"]),
                  "aliases": tuple(json.loads(r["aliases_json"])), "created_at": r["created_at"],
-                 "updated_at": r["updated_at"]} for r in rows]
+                 "updated_at": r["updated_at"], "expires_at": r["expires_at"]} for r in rows]
 
     def delete_fact(self, key: str) -> None:
         with self._lock, self._conn:
