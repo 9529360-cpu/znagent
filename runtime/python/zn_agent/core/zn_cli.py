@@ -9,6 +9,12 @@ call per command to the already-existing Daemon RPC methods
 ``approval_list`` / ``approval_decide`` / ``memory_list`` / ``team_list``). All policy, execution, approval and
 persistence decisions stay server-side.
 
+``zn model check`` is the one local command: it reads the locally configured
+cognitive routes (the same resolution the resident uses) and runs one bounded
+minimal probe per route, so the model channel can be verified before/without
+a running resident. It never prints credentials: only route identities and
+scrubbed failure reasons are reported.
+
 Fail-closed rules:
 
 * Unknown commands, missing/invalid arguments, and conflicting decision
@@ -35,6 +41,11 @@ from pathlib import Path
 from typing import Any
 
 from .home import get_zn_home
+from .model_check import (
+    DEFAULT_PROBE_TIMEOUT_SECONDS,
+    check_model_routes,
+    format_no_config_hint,
+)
 
 __all__ = ["CliError", "ResidentClient", "build_parser", "main", "run"]
 
@@ -255,6 +266,16 @@ def _require_positive_int(value: str, *, name: str, maximum: int) -> int:
         raise argparse.ArgumentTypeError(f"{name} must be an integer") from None
     if parsed < 1 or parsed > maximum:
         raise argparse.ArgumentTypeError(f"{name} must be between 1 and {maximum}")
+    return parsed
+
+
+def _require_positive_float(value: str, *, name: str, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{name} must be a number") from None
+    if not parsed > 0 or parsed > maximum:
+        raise argparse.ArgumentTypeError(f"{name} must be between 0 and {maximum:g}")
     return parsed
 
 
@@ -504,6 +525,37 @@ def _cmd_team_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_model_check(args: argparse.Namespace) -> int:
+    """Probe the locally configured model routes. Local only, no resident RPC."""
+
+    report = check_model_routes(probe_timeout_seconds=args.probe_timeout)
+    if not report.configured:
+        print(format_no_config_hint())
+        if report.config_error:
+            print(f"configuration error: {_one_line(report.config_error)}")
+        return 3
+    if args.json:
+        print(json.dumps(report.to_dict(), ensure_ascii=False, indent=2, default=str))
+        return 0 if report.any_reachable else 1
+    for result in report.results:
+        identity = (
+            f"{_one_line(result.route_id, limit=40)} "
+            f"({_one_line(result.provider, limit=24)}/"
+            f"{_one_line(result.model, limit=60)})"
+        )
+        if result.reachable:
+            latency = (
+                f"{result.latency_seconds:.2f}s"
+                if result.latency_seconds is not None
+                else "?"
+            )
+            print(f"reachable   {identity}  {latency}")
+        else:
+            print(f"unreachable {identity}  {_one_line(result.detail, limit=160)}")
+    print(f"{report.reachable_count} of {len(report.results)} route(s) reachable")
+    return 0 if report.any_reachable else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zn",
@@ -613,6 +665,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     team_list.add_argument("--json", action="store_true", help="print raw JSON")
     team_list.set_defaults(func=_cmd_team_list)
+
+    model = sub.add_parser("model", help="check the local model channel")
+    model_sub = model.add_subparsers(
+        dest="model_command", metavar="subcommand", required=True
+    )
+
+    model_check = model_sub.add_parser(
+        "check", help="probe configured model routes (local, no resident needed)"
+    )
+    model_check.add_argument(
+        "--probe-timeout",
+        type=lambda v: _require_positive_float(
+            v, name="--probe-timeout", maximum=300.0
+        ),
+        default=DEFAULT_PROBE_TIMEOUT_SECONDS,
+        help="max seconds to wait per route probe "
+        f"(default {DEFAULT_PROBE_TIMEOUT_SECONDS:g})",
+    )
+    model_check.add_argument("--json", action="store_true", help="print raw JSON")
+    model_check.set_defaults(func=_cmd_model_check)
     return parser
 
 
