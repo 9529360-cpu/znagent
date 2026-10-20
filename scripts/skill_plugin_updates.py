@@ -78,7 +78,9 @@ class BumpResult:
 
 
 def _git_url(source: str) -> str:
-    return source[3:] if source.startswith("git+") else source
+    # ``git+`` is a 4-char scheme prefix (pip-style). Strip exactly it;
+    # plain https:// or scp-style git@... sources pass through untouched.
+    return source.removeprefix("git+")
 
 
 def latest_sha_from_git(source: str) -> str:
