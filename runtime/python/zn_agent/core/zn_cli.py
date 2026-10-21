@@ -46,13 +46,14 @@ import json
 import os
 import socket
 import sys
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .home import get_zn_home
-from .cli_format import kv, section, status_word
+from .cli_format import colorize, kv, section, status_word, symbol, use_color
 from .model_check import (
     DEFAULT_PROBE_TIMEOUT_SECONDS,
     check_model_routes,
@@ -361,36 +362,172 @@ def _cmd_work_get(args: argparse.Namespace) -> int:
     return 0
 
 
-def _cmd_work_submit(args: argparse.Namespace) -> int:
-    client = _client(args)
-    thread_id = args.thread_id
-    if not thread_id:
-        created = client.call(
-            "work_create",
-            {"title": args.title or args.task[:100]},
+# T2-2: `zn work submit` streams progress while the (unchanged, blocking)
+# work_submit RPC runs on a background thread. Polling only *observes* via
+# the read-only work_get (active_run discovery) and work_progress RPCs and
+# never changes what the resident does; the submit RPC stays the source of
+# truth for the final result. Presentation uses the cli_format contract only.
+_WORK_SUBMIT_GRACE_SECONDS = 0.5  # runs finishing faster skip the display
+_WORK_POLL_INTERVAL_SECONDS = 1.0  # TTY status-line refresh cadence
+_WORK_POLL_RPC_TIMEOUT_SECONDS = 30.0  # per-call timeout for progress polls
+_WORK_NONTTY_HEARTBEAT_SECONDS = 30.0  # piped/NO_COLOR heartbeat cadence
+
+
+def _submit_work_blocking(
+    client: ResidentClient,
+    thread_id: str,
+    task: str,
+    box: dict[str, Any],
+    done: threading.Event,
+) -> None:
+    """Run the blocking work_submit RPC; stash result/error for the watcher."""
+    try:
+        box["result"] = client.call(
+            "work_submit", {"thread_id": thread_id, "task": task}
         )
-        if not isinstance(created, dict) or not created.get("id"):
-            raise CliError(
-                f"resident returned an unexpected work_create result: {created!r}"
-            )
-        thread_id = str(created["id"])
-    result = client.call(
-        "work_submit",
-        {"thread_id": thread_id, "task": args.task},
-    )
-    if not isinstance(result, dict):
+    except Exception as exc:  # surfaced by the main thread, never swallowed
+        box["error"] = exc
+    finally:
+        done.set()
+
+
+def _progress_summary(
+    progress: dict[str, Any],
+    elapsed_s: float,
+    *,
+    stream=None,
+    environ=None,
+) -> str:
+    """One-line human summary of a work_progress payload (T2-2).
+
+    Uses only the cli_format contract (symbol/colorize/status_word/kv):
+    non-color streams degrade to the plain words by themselves.
+    """
+    stage = progress.get("stage") or progress.get("status") or "working"
+    parts = [kv("stage", status_word(stage, stream=stream, environ=environ))]
+    next_action = _one_line(progress.get("next_action"), limit=80)
+    if next_action:
+        parts.append(next_action)
+    invocations = progress.get("model_invocations")
+    if isinstance(invocations, int) and not isinstance(invocations, bool):
+        parts.append(kv("model_invocations", invocations))
+    head = symbol("pending", stream=stream, environ=environ)
+    head = f"{head} " if head else ""
+    working = colorize("working", "dim", stream=stream, environ=environ)
+    return f"{head}{working} {int(elapsed_s)}s  " + "  ".join(parts)
+
+
+def _watch_work_submit(
+    *,
+    progress_client: ResidentClient,
+    thread_id: str,
+    done: threading.Event,
+    args: argparse.Namespace,
+    print_head,
+) -> str | None:
+    """Poll work_progress while the background work_submit RPC runs.
+
+    Best-effort display only: any polling failure stops the watching, and the
+    blocking work_submit RPC remains the source of truth for the outcome.
+    Returns the thread title discovered via work_get (if any).
+    """
+    tty = use_color()
+    stream = sys.stdout
+    start = time.monotonic()
+    deadline = start + args.timeout
+    event_id: str | None = None
+    discovered_title: str | None = None
+    last_stage: str | None = None
+    status_len = 0
+    last_heartbeat = -_WORK_NONTTY_HEARTBEAT_SECONDS  # first tick prints
+    try:
+        while not done.is_set():
+            now = time.monotonic()
+            if now >= deadline:
+                break
+            elapsed = now - start
+            try:
+                if event_id is None:
+                    snapshot = progress_client.call(
+                        "work_get", {"thread_id": thread_id, "message_limit": 1}
+                    )
+                    if isinstance(snapshot, dict):
+                        title = snapshot.get("title")
+                        if isinstance(title, str) and title.strip():
+                            discovered_title = title
+                            print_head(title)
+                        active = snapshot.get("active_run")
+                        if isinstance(active, dict):
+                            eid = active.get("event_id")
+                            if isinstance(eid, str) and eid.strip():
+                                event_id = eid.strip()
+                    if event_id is None:
+                        if done.wait(0.5):
+                            break
+                        continue
+                presult = progress_client.call(
+                    "work_progress",
+                    {"thread_id": thread_id, "event_id": event_id},
+                )
+                progress = (
+                    presult.get("progress") if isinstance(presult, dict) else None
+                )
+                if not isinstance(progress, dict):
+                    break
+            except CliError:
+                break  # watching is best-effort; the submit RPC decides
+            stage = str(progress.get("stage") or progress.get("status") or "working")
+            if tty:
+                if last_stage is not None and stage != last_stage:
+                    stream.write("\r" + " " * status_len + "\r")
+                    stream.write(
+                        f"stage: {status_word(last_stage, stream=stream)} -> "
+                        f"{status_word(stage, stream=stream)}\n"
+                    )
+                    stream.flush()
+                    status_len = 0
+                last_stage = stage
+                line = _progress_summary(progress, elapsed, stream=stream)
+                stream.write("\r" + line + " " * max(0, status_len - len(line)))
+                stream.flush()
+                status_len = len(line)
+            else:
+                last_stage = stage
+                if elapsed - last_heartbeat >= _WORK_NONTTY_HEARTBEAT_SECONDS:
+                    last_heartbeat = elapsed
+                    print(
+                        f"progress thread={thread_id} event={event_id} "
+                        f"{_progress_summary(progress, elapsed, stream=stream)}",
+                        file=stream,
+                    )
+            if progress.get("finalized"):
+                break
+            if progress.get("terminal") and progress.get("error"):
+                break
+            done.wait(_WORK_POLL_INTERVAL_SECONDS if tty else 1.0)
+    except KeyboardInterrupt:
+        # Stop watching only: the run keeps going on the resident, and the
+        # user cancels it explicitly with `zn work cancel` if wanted.
+        where = f"thread={thread_id}" + (f" event={event_id}" if event_id else "")
+        hint = (
+            f"zn work cancel --thread-id {thread_id} --event-id {event_id}"
+            if event_id
+            else f"zn work get --thread-id {thread_id}"
+        )
         raise CliError(
-            f"resident returned an unexpected work_submit result: {result!r}"
-        )
-    if args.json:
-        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
-        return 0
+            f"interrupted: stopped watching progress; the work keeps running "
+            f"on the resident ({where}); use '{hint}' to stop it"
+        ) from None
+    if tty and status_len:
+        stream.write("\r" + " " * status_len + "\r")
+        stream.flush()
+    return discovered_title
+
+
+def _print_work_submit_result(result: dict[str, Any], thread_id: str) -> None:
+    """Final human summary of a work_submit result (pre-T2-2 format kept)."""
     thread = result.get("thread") if isinstance(result.get("thread"), dict) else {}
     run = result.get("run") if isinstance(result.get("run"), dict) else {}
-    print(
-        f"submitted to thread {thread_id}"
-        + (f"  ({_one_line(thread.get('title'), limit=60)})" if thread.get("title") else "")
-    )
     if result.get("recovery_required"):
         print("recovery required: the work was recorded and needs a recovery step")
     elif run:
@@ -401,6 +538,105 @@ def _cmd_work_submit(args: argparse.Namespace) -> int:
         )
         if run.get("response"):
             print(_one_line(run.get("response"), limit=500))
+
+
+def _cmd_work_submit(args: argparse.Namespace) -> int:
+    endpoint = load_endpoint(getattr(args, "endpoint", None))
+    client = ResidentClient(endpoint, timeout=args.timeout)
+    thread_id = args.thread_id
+    title = args.title
+    if not thread_id:
+        created = client.call(
+            "work_create",
+            {"title": args.title or args.task[:100]},
+        )
+        if not isinstance(created, dict) or not created.get("id"):
+            raise CliError(
+                f"resident returned an unexpected work_create result: {created!r}"
+            )
+        thread_id = str(created["id"])
+        created_title = created.get("title")
+        if isinstance(created_title, str) and created_title.strip():
+            title = created_title
+    if args.json:
+        result = client.call(
+            "work_submit",
+            {"thread_id": thread_id, "task": args.task},
+        )
+        if not isinstance(result, dict):
+            raise CliError(
+                f"resident returned an unexpected work_submit result: {result!r}"
+            )
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    head_printed = False
+
+    def print_head(head_title) -> None:
+        nonlocal head_printed
+        if head_printed:
+            return
+        head_printed = True
+        suffix = (
+            f"  ({_one_line(head_title, limit=60)})"
+            if isinstance(head_title, str) and head_title.strip()
+            else ""
+        )
+        print(f"submitted to thread {thread_id}{suffix}")
+
+    if args.thread_id is None:
+        # New thread: the title is already known from work_create.
+        print_head(title)
+    # The blocking submit RPC runs on a background thread with its historic
+    # semantics; the main thread only watches progress via work_progress.
+    box: dict[str, Any] = {}
+    done = threading.Event()
+    progress_client = ResidentClient(
+        endpoint, timeout=min(_WORK_POLL_RPC_TIMEOUT_SECONDS, args.timeout)
+    )
+    worker = threading.Thread(
+        target=_submit_work_blocking,
+        args=(client, thread_id, args.task, box, done),
+        name="zn-work-submit",
+        daemon=True,
+    )
+    worker.start()
+    try:
+        finished_fast = done.wait(_WORK_SUBMIT_GRACE_SECONDS)
+    except KeyboardInterrupt:
+        raise CliError(
+            "interrupted: stopped watching progress; the work keeps running "
+            f"on the resident (thread={thread_id}); use "
+            f"'zn work get --thread-id {thread_id}' to check on it"
+        ) from None
+    if not finished_fast:
+        _watch_work_submit(
+            progress_client=progress_client,
+            thread_id=thread_id,
+            done=done,
+            args=args,
+            print_head=print_head,
+        )
+    # The submit RPC is the source of truth: wait for it, then report.
+    try:
+        worker.join()
+    except KeyboardInterrupt:
+        raise CliError(
+            "interrupted: stopped watching progress; the work keeps running "
+            f"on the resident (thread={thread_id}); use "
+            f"'zn work get --thread-id {thread_id}' to check on it"
+        ) from None
+    if "error" in box:
+        raise box["error"]
+    result = box.get("result")
+    if not isinstance(result, dict):
+        raise CliError(
+            f"resident returned an unexpected work_submit result: {result!r}"
+        )
+    if not head_printed:
+        thread = result.get("thread") if isinstance(result.get("thread"), dict) else {}
+        print_head(thread.get("title"))
+    _print_work_submit_result(result, thread_id)
     return 0
 
 
