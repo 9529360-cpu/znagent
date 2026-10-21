@@ -2218,3 +2218,212 @@ class ZnCliHumanizedErrorsT25Tests(_CliHarness):
         with self.assertRaises(SystemExit) as caught:
             run(["--endpoint", str(self.endpoint_path), "work", "list", "--limit", "0"])
         self.assertEqual(caught.exception.code, 2)
+
+
+class ZnCliStatusT26Tests(_CliHarness):
+    """T2-6: ``zn status`` aggregate command.
+
+    Six rows (resident / summary / model / connectors / approvals /
+    autonomy), red highlighting + subcommand hints for abnormal rows,
+    offline degradation with unreachable markers, and ``--json`` output.
+    """
+
+    def _route_report(self, **overrides):
+        from zn_agent.core.model_check import ModelCheckReport, RouteCheckResult
+
+        results = overrides.pop(
+            "results",
+            (
+                RouteCheckResult("r1", "deepseek", "deepseek-chat", True, 0.10, ""),
+                RouteCheckResult("r2", "deepseek", "deepseek-reasoner", True, 0.20, ""),
+            ),
+        )
+        return ModelCheckReport(
+            configured=overrides.pop("configured", True),
+            config_error=None,
+            results=results,
+        )
+
+    def _stub_probe(self, report):
+        patcher = mock.patch(
+            "zn_agent.core.zn_cli.check_model_routes", return_value=report
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _stub_connector_eval(self, items):
+        patcher = mock.patch(
+            "zn_agent.core.connector_autoattach.evaluate_connector_status",
+            return_value=items,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _mapping(self):
+        return {
+            "ping": {"alive": True, "pulse_count": 7},
+            "status": {
+                "identity": {"name": "ZN", "version": "0.1.0"},
+                "model_dependency": {"model_invocations": 12},
+            },
+            "connector_status": {
+                "generated_at": "2026-10-21T23:00:00Z",
+                "mounted": 2,
+                "approved": 3,
+                "connectors": [
+                    {"name": "search", "r_series": "R1", "mounted": True,
+                     "approved": True, "reason": ""},
+                    {"name": "rss", "r_series": "R2", "mounted": True,
+                     "approved": True, "reason": ""},
+                    {"name": "mail", "r_series": "R9", "mounted": False,
+                     "approved": True, "reason": "needs auth"},
+                ],
+            },
+            "approval_list": {
+                "pending": [{"request_id": "a1"}, {"request_id": "a2"}],
+                "denied": [],
+                "expired": [],
+                "applied": [],
+            },
+            "autonomy_list": [
+                {"domain": "connector.mail", "level": "require_approval"},
+                {"domain": "recurring.interval", "level": "execute_reversible"},
+            ],
+        }
+
+    def _run_on_tty(self, argv, handler):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def test_status_rows_all_present(self):
+        self._stub_probe(self._route_report())
+        code, out, _ = self._run(["status"], self._handler(self._mapping()))
+        self.assertEqual(code, 0)
+        for label in (
+            "resident",
+            "summary",
+            "model",
+            "connectors",
+            "approvals",
+            "autonomy",
+        ):
+            self.assertIn(label, out)
+        self.assertIn("pulse_count=7", out)
+        self.assertIn("model_invocations=12", out)
+        self.assertIn("2 of 2 route(s) reachable", out)
+        self.assertIn("2 of 3 mounted, 1 failed", out)
+        self.assertIn("zn connector status", out)
+        self.assertIn("2 pending", out)
+        self.assertIn("zn approval list", out)
+        self.assertIn("2 explicit domain(s)", out)
+        self.assertIn("zn autonomy list", out)
+
+    def test_status_tty_highlights_abnormal_rows_and_hints(self):
+        # failed connector -> red; pending approvals -> warning yellow.
+        self._stub_probe(self._route_report())
+        code, out, _ = self._run_on_tty(
+            ["status"], self._handler(self._mapping())
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("\033[31m", out)  # err red on the connector row
+        self.assertIn("\033[33m", out)  # warn yellow on the approvals row
+        self.assertIn("zn connector status", out)
+        self.assertIn("zn approval list", out)
+
+    def test_status_tty_model_unreachable_is_red_with_hint(self):
+        from zn_agent.core.model_check import RouteCheckResult
+
+        self._stub_probe(
+            self._route_report(
+                results=(
+                    RouteCheckResult("r1", "deepseek", "deepseek-chat", False, None,
+                                     "dial timeout"),
+                )
+            )
+        )
+        code, out, _ = self._run_on_tty(
+            ["status"], self._handler(self._mapping())
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("0 of 1 route(s) reachable", out)
+        self.assertIn("\033[31m", out)
+        self.assertIn("zn model check", out)
+
+    def test_status_offline_marks_unreachable_and_still_reports(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        self._stub_probe(self._route_report())
+        self._stub_connector_eval(
+            [
+                {
+                    "approved": True,
+                    "name": "mail",
+                    "r_series": "R9",
+                    "last_mount": {"mounted": False, "reason": "needs auth"},
+                    "readiness": "will mount on next daemon start",
+                },
+                {
+                    "approved": True,
+                    "name": "search",
+                    "r_series": "R1",
+                    "last_mount": {"mounted": True, "reason": ""},
+                    "readiness": "ok",
+                },
+            ]
+        )
+        code, out, _ = self._run(["status"], refused)
+        self.assertEqual(code, 0)
+        self.assertIn("unreachable", out)
+        # local rows still report without a running resident
+        self.assertIn("2 of 2 route(s) reachable", out)
+        self.assertIn("local config evaluation", out)
+        self.assertIn("1 failed", out)
+        self.assertIn("zn connector status", out)
+
+    def test_status_json_structure(self):
+        self._stub_probe(self._route_report())
+        code, out, _ = self._run(
+            ["status", "--json"], self._handler(self._mapping())
+        )
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertTrue(data["daemon_reachable"])
+        self.assertNotIn("daemon_error", data)
+        self.assertEqual(data["resident"]["pulse_count"], 7)
+        self.assertEqual(data["summary"]["model_invocations"], 12)
+        self.assertEqual(data["model"]["reachable_count"], 2)
+        self.assertEqual(data["connectors"]["mounted"], 2)
+        self.assertEqual(data["connectors"]["failed"], 1)
+        self.assertFalse(data["connectors"]["local_evaluation"])
+        self.assertEqual(data["approvals"]["pending"], 2)
+        self.assertEqual(data["autonomy"]["explicit_domains"], 2)
+
+    def test_status_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        self._stub_probe(self._route_report())
+        self._stub_connector_eval([])
+        code, out, _ = self._run(["status", "--json"], refused)
+        self.assertEqual(code, 0)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertIn("daemon_error", data)
+        self.assertIsNone(data["resident"])
+        self.assertIsNone(data["summary"])
+        self.assertEqual(data["model"]["reachable_count"], 2)
+        self.assertTrue(data["connectors"]["local_evaluation"])
+        self.assertIsNone(data["approvals"]["pending"])
+        self.assertIsNone(data["autonomy"]["explicit_domains"])
