@@ -101,12 +101,13 @@ def _error_details_visible() -> bool:
 _ERROR_COPY: dict[str, tuple[str, str]] = {
     # key: (lead-line template, next-step template; "" = no next step)
     "endpoint_missing": (
-        "ZN 常驻服务没在运行（或 ZN home 不对）：找不到 endpoint 文件：{path}",
+        "ZN 常驻服务没在运行（does not appear to be running；或 ZN home 不对）："
+        "找不到 endpoint 文件 (endpoint not found)：{path}",
         "下一步：检查 ZN_HOME 是否正确，或启动常驻服务（zn-resident）",
     ),
     "endpoint_unreadable": (
         "ZN 常驻服务没在运行（或 ZN home 不对）：endpoint 文件损坏，"
-        "无法解析为 JSON：{path}（{detail}）",
+        "无法解析为 JSON (not readable as JSON)：{path}（{detail}）",
         "下一步：检查 ZN_HOME 是否正确，或重启常驻服务重建 endpoint 文件",
     ),
     "endpoint_not_object": (
@@ -124,7 +125,7 @@ _ERROR_COPY: dict[str, tuple[str, str]] = {
         "下一步：重启常驻服务重建 endpoint 文件",
     ),
     "endpoint_non_loopback": (
-        "拒绝连接：resident 控制面只允许本机，endpoint 文件中的主机 "
+        "拒绝连接：resident 控制面只允许本机（non-loopback），endpoint 文件中的主机 "
         "{host} 不是本机地址（{path}）",
         "下一步：检查 endpoint 文件是否被篡改，或检查 ZN_HOME 是否正确",
     ),
@@ -138,16 +139,16 @@ _ERROR_COPY: dict[str, tuple[str, str]] = {
         "下一步：重启常驻服务重建 endpoint 文件",
     ),
     "endpoint_bad_secret": (
-        "endpoint 文件中的会话密钥缺失或过短（{path}）",
+        "endpoint 文件中的会话密钥缺失或过短 (secret)（{path}）",
         "下一步：重启常驻服务重建 endpoint 文件",
     ),
     "endpoint_stale": (
-        "endpoint 文件已过期：记录的 resident 进程（pid {pid}）已不"
+        "endpoint 文件已过期 (stale)：记录的 resident 进程（pid {pid}）已不"
         "存在（{path}）",
         "下一步：重启常驻服务（zn-resident）",
     ),
     "connect_failed": (
-        "连不上 ZN 常驻服务（{host}:{port}）：{detail}",
+        "连不上 ZN 常驻服务（could not reach {host}:{port}）：{detail}",
         "下一步：服务可能正在启动，稍后重试；若持续失败，检查 ZN_HOME "
         "是否正确或重启常驻服务",
     ),

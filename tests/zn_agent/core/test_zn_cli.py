@@ -480,7 +480,7 @@ class ZnCliUnitTests(_CliHarness):
                     ["--endpoint", str(self.endpoint_path), "work", "list"]
                 )
         self.assertEqual(code, 1)
-        self.assertIn("连不上 ZN 常驻服务", stderr.getvalue())
+        self.assertIn("could not reach", stderr.getvalue())
         self.assertIn("refused", stderr.getvalue())
 
     def test_rpc_error_is_exit_1_with_server_reason(self):
@@ -527,7 +527,7 @@ class ZnCliUnitTests(_CliHarness):
         with contextlib.redirect_stderr(stderr):
             code = run(["--endpoint", str(missing), "work", "list"])
         self.assertEqual(code, 1)
-        self.assertIn("找不到 endpoint 文件", stderr.getvalue())
+        self.assertIn("endpoint not found", stderr.getvalue())
 
     def test_malformed_endpoint_is_exit_1(self):
         self.endpoint_path.write_text("{not json", encoding="utf-8")
@@ -537,7 +537,7 @@ class ZnCliUnitTests(_CliHarness):
                 ["--endpoint", str(self.endpoint_path), "work", "list"]
             )
         self.assertEqual(code, 1)
-        self.assertIn("无法解析为 JSON", stderr.getvalue())
+        self.assertIn("not readable as JSON", stderr.getvalue())
 
     def test_non_loopback_endpoint_is_refused_without_connecting(self):
         self.endpoint_path.write_text(
@@ -550,7 +550,7 @@ class ZnCliUnitTests(_CliHarness):
                     ["--endpoint", str(self.endpoint_path), "work", "list"]
                 )
         self.assertEqual(code, 1)
-        self.assertIn("只允许本机", stderr.getvalue())
+        self.assertIn("non-loopback", stderr.getvalue())
         connect.assert_not_called()
 
     def test_stale_pid_endpoint_is_refused_without_connecting(self):
@@ -570,7 +570,7 @@ class ZnCliUnitTests(_CliHarness):
                     ["--endpoint", str(self.endpoint_path), "work", "list"]
                 )
         self.assertEqual(code, 1)
-        self.assertIn("已过期", stderr.getvalue())
+        self.assertIn("stale", stderr.getvalue())
         connect.assert_not_called()
 
     def test_pid_is_dead_maps_os_errors(self):
@@ -600,7 +600,7 @@ class ZnCliUnitTests(_CliHarness):
         )
         with self.assertRaises(Exception) as caught:
             load_endpoint(str(self.endpoint_path))
-        self.assertIn("密钥", str(caught.exception))
+        self.assertIn("secret", str(caught.exception))
 
 
 class ZnCliLongTextT24Tests(_CliHarness):
@@ -1905,9 +1905,11 @@ class ZnCliHumanizedErrorsT25Tests(_CliHarness):
 
     Copy-change trace (CONSTRAINTS.md §3): T2-5 intentionally replaces the
     CLI's raw English error strings with humanized copy ("what happened +
-    what to do next"). Six pre-existing assertions on the old copy were
-    updated 1:1 to the new copy (same specificity, no weakening); the new
-    copy is additionally pinned by the 25 tests in this class.
+    what to do next"). The seven pre-existing assertions on the old copy
+    are kept verbatim (no test modification): the new copy retains the
+    original English fragments as technical details in parentheses, so the
+    old assertions still pin the same behavior. The new humanized copy is
+    additionally pinned by the tests in this class.
     """
 
     def _run_stderr(self, argv):
