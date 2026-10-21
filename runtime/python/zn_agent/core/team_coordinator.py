@@ -29,6 +29,7 @@ from typing import Any, Mapping, Protocol
 
 from .project_team import ProjectTeam, journal_message
 from .specialist_workspace import specialist_prompt_for
+from .team_task_state import TeamTaskStateStore
 from .worker_progress import worker_stalled
 
 
@@ -399,6 +400,7 @@ class TeamCoordinator:
         runs: Mapping[str, Any] | None = None,
         id_map: Mapping[str, str] | None = None,
         progress_ledger: ProgressLedger | None = None,
+        task_state_store: TeamTaskStateStore | None = None,
         paused_work_item_ids: Any | None = None,
     ) -> list[CoordinatorDecision]:
         """Compute the next decisions for the team, in plan order.
@@ -414,6 +416,18 @@ class TeamCoordinator:
         the decisions, never raises (unknown ids are skipped), and is
         off entirely when the ledger is None -- existing callers see
         zero behavior change.
+
+        DSH-2: when ``task_state_store`` is given, dispatch/complete
+        decisions are mirrored into the task state store via
+        ``TeamTaskStateStore.mirror_decision`` (dispatch -> in_progress,
+        complete -> done, read-then-CAS). Task snapshots are keyed by
+        plan item id (the ids ``sync_from_team`` creates), while
+        decisions carry work item ids, so ``id_map`` is reversed for the
+        lookup (no id_map: work ids ARE plan ids, no translation). The
+        store is an observer, never a second decider: mirroring never
+        changes the decisions and never raises -- it is off entirely
+        when the store is None, so existing callers see zero behavior
+        change.
         """
         runs = runs or {}
         thread_id = self.team.work_thread_id or ""
@@ -532,6 +546,8 @@ class TeamCoordinator:
             )
         if progress_ledger is not None:
             self._mirror_to_progress(progress_ledger, decisions)
+        if task_state_store is not None:
+            self._mirror_to_task_state(task_state_store, decisions, id_map)
         return decisions
 
     @staticmethod
@@ -560,6 +576,43 @@ class TeamCoordinator:
                     decision.work_item_id, target, reason=f"coordinator:{decision.action}"
                 )
             except (KeyError, ValueError):
+                continue
+
+    @staticmethod
+    def _mirror_to_task_state(
+        store: TeamTaskStateStore,
+        decisions: list[CoordinatorDecision],
+        id_map: Mapping[str, str] | None,
+    ) -> None:
+        """Mirror dispatch/complete into the DSH-2 task state store.
+
+        Best-effort by design, same observer contract as
+        ``_mirror_to_progress``: snapshots are keyed by plan item id,
+        decisions carry work item ids, so the decision's id is translated
+        back through the reversed ``id_map`` (no id_map means the work
+        ids are already plan ids). Decisions the store does not know,
+        tombstones, same-status targets, and non-state actions are
+        skipped by ``mirror_decision`` itself, which never raises; this
+        loop additionally never lets a mirror failure escape, so the
+        store can never change or break the decision flow.
+        """
+        wid_to_pid = {wid: pid for pid, wid in (id_map or {}).items()}
+        for decision in decisions:
+            if decision.action not in ("dispatch", "complete"):
+                continue
+            if decision.work_item_id is None:
+                continue
+            task_id = wid_to_pid.get(decision.work_item_id, decision.work_item_id)
+            try:
+                store.mirror_decision(
+                    CoordinatorDecision(
+                        action=decision.action,
+                        work_item_id=task_id,
+                    ),
+                    reason=f"coordinator:{decision.action}",
+                )
+            except Exception:
+                # Observer-only: a broken store must not break dispatch.
                 continue
 
     def _dispatch(self, item: Any, plan_item: Any) -> CoordinatorDecision:
