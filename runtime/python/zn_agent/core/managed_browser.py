@@ -314,14 +314,26 @@ _TARGET_CHECKED_STATE_SCRIPT = r"""
   const inputType = String(element && element.getAttribute("type") || "")
     .trim()
     .toLowerCase();
-  const supported = Boolean(
-    tag === "input" && (inputType === "checkbox" || inputType === "radio")
-  );
+  const roleAttr = String(element && element.getAttribute("role") || "")
+    .trim()
+    .toLowerCase();
+  const isSwitch = roleAttr === "switch";
+  const isInputCheckable = tag === "input" &&
+    (inputType === "checkbox" || inputType === "radio");
+  const supported = Boolean(isInputCheckable || isSwitch);
+  let checked = null;
+  if (connected && supported) {
+    if (isSwitch && !isInputCheckable) {
+      checked = element.getAttribute("aria-checked") === "true";
+    } else {
+      checked = Boolean(element.checked);
+    }
+  }
   return {
     connected,
     supported,
     disabled: Boolean(element && element.disabled),
-    checked: connected && supported ? Boolean(element.checked) : null,
+    checked,
   };
 }
 """
@@ -1201,9 +1213,9 @@ class PlaywrightManagedBrowser:
     ) -> BrowserEffectEvidence:
         if action.target is None:
             raise ManagedBrowserError("browser check requires a current target")
-        if action.target.role not in ("checkbox", "radio"):
+        if action.target.role not in ("checkbox", "radio", "switch"):
             raise ManagedBrowserError(
-                "browser check currently requires a native checkbox or radio target"
+                "browser check currently requires a native checkbox, radio, or switch target"
             )
 
         page_id = action.page_id or action.target.page_id or self._default_page_id(session)
@@ -1351,9 +1363,9 @@ class PlaywrightManagedBrowser:
     ) -> BrowserEffectEvidence:
         if action.target is None:
             raise ManagedBrowserError("browser uncheck requires a current target")
-        if action.target.role != "checkbox":
+        if action.target.role not in ("checkbox", "switch"):
             raise ManagedBrowserError(
-                "browser uncheck currently requires a native checkbox target"
+                "browser uncheck currently requires a native checkbox target or switch target"
             )
 
         page_id = action.page_id or action.target.page_id or self._default_page_id(session)
@@ -2374,7 +2386,7 @@ class PlaywrightManagedBrowser:
             raise ManagedBrowserError("managed browser checkable target is detached")
         if not bool(raw.get("supported")):
             raise ManagedBrowserError(
-                "managed browser check mutation currently supports only native input[type=checkbox] and input[type=radio] targets"
+                "managed browser check mutation currently supports only native input[type=checkbox], input[type=radio], and role=switch targets"
             )
         if bool(raw.get("disabled")):
             raise ManagedBrowserError("managed browser checkable target is disabled")

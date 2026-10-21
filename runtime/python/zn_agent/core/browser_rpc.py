@@ -460,13 +460,16 @@ class BrowserResidentRpcServer(ResidentRpcServer):
             BrowserActionKind.CLICK: (
                 BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
                 BrowserTargetQueryKind.ACCESSIBLE_LINK_NAME,
+                BrowserTargetQueryKind.ACCESSIBLE_TAB_NAME,
             ),
             BrowserActionKind.CHECK: (
                 BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
                 BrowserTargetQueryKind.ACCESSIBLE_RADIO_NAME,
+                BrowserTargetQueryKind.ACCESSIBLE_SWITCH_NAME,
             ),
             BrowserActionKind.UNCHECK: (
                 BrowserTargetQueryKind.ACCESSIBLE_CHECKBOX_NAME,
+                BrowserTargetQueryKind.ACCESSIBLE_SWITCH_NAME,
             ),
             BrowserActionKind.SET_SLIDER_VALUE: (
                 BrowserTargetQueryKind.ACCESSIBLE_SLIDER_NAME,
