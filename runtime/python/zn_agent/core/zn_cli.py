@@ -84,6 +84,41 @@ def _one_line(value: Any, *, limit: int = 120) -> str:
     return text
 
 
+_LONG_TEXT_MAX_LINES = 60  # T2-4: TTY pagination threshold for long text bodies
+
+
+def _long_text(
+    value: Any, *, max_lines: int = _LONG_TEXT_MAX_LINES, overflow_suffix: str = ""
+) -> str:
+    """Render untrusted long text for terminal output, keeping line structure.
+
+    Unlike :func:`_one_line`, newlines survive: replies stay readable as
+    written. Control characters are still neutralized (newlines and tabs
+    pass through; anything else unprintable becomes a space) so resident
+    text can never mangle the terminal.
+
+    Pagination rule (T2-4): text longer than *max_lines* lines is shown in
+    full whenever the output may be consumed by a script -- non-TTY,
+    ``NO_COLOR``, or ``TERM=dumb`` -- so content is never silently dropped.
+    Only on a real human terminal (:func:`use_color`) is the body cut to the
+    first *max_lines* lines, followed by an overflow note; *overflow_suffix*
+    lets the caller point the note at the full source (e.g. the command
+    that shows the complete text).
+    """
+    raw_lines = str(value or "").split("\n")
+    lines = [
+        "".join(ch if ch == "\t" or ch.isprintable() else " " for ch in raw).rstrip()
+        for raw in raw_lines
+    ]
+    # A trailing newline must not inflate the line count ("60 lines\\n" is 60).
+    while lines and not lines[-1]:
+        lines.pop()
+    if len(lines) <= max_lines or not use_color():
+        return "\n".join(lines)
+    note = f"…（全文共 {len(lines)} 行，仅显示前 {max_lines} 行{overflow_suffix}）"
+    return "\n".join(lines[:max_lines]) + "\n" + note
+
+
 @dataclass(frozen=True)
 class Endpoint:
     host: str
@@ -354,10 +389,13 @@ def _cmd_work_get(args: argparse.Namespace) -> int:
         for message in messages:
             if not isinstance(message, dict):
                 continue
-            print(
-                f"[{message.get('created_at') or '-'}] {message.get('role') or '?'}: "
-                f"{_one_line(message.get('text'), limit=500)}"
-            )
+            # T2-4: message bodies keep their line structure (this is the
+            # full-text view `zn work submit` points at); long bodies
+            # paginate on TTY only, never on non-TTY/NO_COLOR.
+            print(f"[{message.get('created_at') or '-'}] {message.get('role') or '?'}:")
+            body = _long_text(message.get("text"))
+            if body:
+                print("\n".join(f"  {line}" for line in body.splitlines()))
     else:
         print("(no messages)")
     return 0
@@ -538,7 +576,16 @@ def _print_work_submit_result(result: dict[str, Any], thread_id: str) -> None:
             f"model_invocations={run.get('model_invocations')}"
         )
         if run.get("response"):
-            print(_one_line(run.get("response"), limit=500))
+            # T2-4: the reply keeps its line structure instead of being
+            # crushed to one line. Long replies paginate to 60 lines on a
+            # human terminal (with a pointer to the full text); non-TTY /
+            # NO_COLOR output always stays complete for scripts.
+            print(
+                _long_text(
+                    run.get("response"),
+                    overflow_suffix=f"；全文见 `zn work get --thread-id {thread_id}`",
+                )
+            )
 
 
 def _cmd_work_submit(args: argparse.Namespace) -> int:
@@ -1020,9 +1067,9 @@ def _format_timeline_entry(entry: dict[str, Any]) -> str:
     item_title = _one_line(entry.get("item_title"), limit=60)
     if item_title:
         line += f"  {item_title}"
-    text = _one_line(entry.get("text"), limit=200)
-    if text:
-        line += f"\n    {text}"
+    body = _long_text(entry.get("text"))
+    if body:
+        line += "\n" + "\n".join(f"    {text_line}" for text_line in body.splitlines())
     return line
 
 
