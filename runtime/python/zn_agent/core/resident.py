@@ -47,12 +47,7 @@ _ORIENT_HYBRID_MIN_SCORE = 0.55
 # and skips run-log hits before picking the direct-answer candidate.
 # The prefixes are imported from completion_summary (single source of
 # truth); the window size is a locked constant the tests assert on.
-# 10 is recall_hybrid's hard max_facts cap. Widening only delays the
-# live failure mode (every failed question writes another run-log
-# fact, so the true fact keeps sinking) -- the structural fix is the
-# second, name-driven channel in _orient_memory_lookup, which does not
-# depend on BM25 ranking at all.
-_ORIENT_HYBRID_CANDIDATES = 10
+_ORIENT_HYBRID_CANDIDATES = 5
 _ORIENT_RUN_LOG_PREFIXES = (SUMMARY_KEY_PREFIX, PITFALL_KEY_PREFIX)
 
 # PERF-2 entity tier: a hybrid hit that carries *strong entity evidence* --

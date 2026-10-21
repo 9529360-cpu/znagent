@@ -113,11 +113,7 @@ class OrientRunLogFilterTests(unittest.TestCase):
         # The hybrid window widened by the fix is a locked constant;
         # the run-log prefixes must be the completion_summary single
         # source of truth, never a second hand-typed literal.
-        # PERF-2 second channel: the window is 10 (recall_hybrid's hard
-        # max_facts cap) as mitigation; the structural cure is the
-        # name-driven channel in _orient_memory_lookup, which needs no
-        # BM25 window at all.
-        self.assertEqual(_ORIENT_HYBRID_CANDIDATES, 10)
+        self.assertEqual(_ORIENT_HYBRID_CANDIDATES, 5)
         self.assertEqual(
             _ORIENT_RUN_LOG_PREFIXES, (SUMMARY_KEY_PREFIX, PITFALL_KEY_PREFIX)
         )
