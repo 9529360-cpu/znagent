@@ -33,42 +33,76 @@ from zn_agent.core.skill_evals import eval_skills_root
 REPO_ROOT = Path(__file__).resolve().parents[3]
 REPO_SKILLS_ROOT = REPO_ROOT / "skills"
 
-_FIXTURE_ICS = """\
-BEGIN:VCALENDAR
-VERSION:2.0
-PRODID:-//ZN//tests//EN
-BEGIN:VEVENT
-UID:evt-past-1
-DTSTAMP:20261020T000000Z
-DTSTART:20261010T090000Z
-DTEND:20261010T100000Z
-SUMMARY:Past standup
-END:VEVENT
-BEGIN:VEVENT
-UID:evt-soon-1
-DTSTAMP:20261020T000000Z
-DTSTART:20261021T090000Z
-DTEND:20261021T100000Z
-SUMMARY:Team sync
-DESCRIPTION:Weekly\\, with the team
-LOCATION:Meeting room A
-END:VEVENT
-BEGIN:VEVENT
-UID:evt-soon-2
-DTSTAMP:20261020T000000Z
-DTSTART:20261023
-SUMMARY:Release day
-END:VEVENT
-BEGIN:VEVENT
-UID:evt-far-1
-DTSTAMP:20261020T000000Z
-DTSTART:20261130T090000Z
-SUMMARY:Far future
-END:VEVENT
-END:VCALENDAR
-"""
+def _fixture_ics_times():
+    """Fixture event starts relative to import time.
 
-_FIXTURE_NOW = datetime(2026, 10, 20, 12, 0, 0, tzinfo=timezone.utc)
+    The fixture used to hardcode absolute dates (a time bomb: once "now"
+    moved past them, "upcoming" filtering excluded events the assertions
+    expected). Every event keeps its semantic slot:
+      evt-past-1  always in the past (now - 3 days)
+      evt-soon-1  near future (now + 6 hours), with a 1-hour span
+      evt-soon-2  near future all-day event (now + 3 days)
+      evt-far-1   far future (now + 45 days) -- inside a 60-day list
+                  window, outside a 7-day one
+    """
+    # Whole seconds only: the ICS text format keeps second precision, so
+    # fixture datetimes must round-trip exactly through parse.
+    now = datetime.now(timezone.utc).replace(microsecond=0)
+    starts = {
+        "evt-past-1": now - timedelta(days=3),
+        "evt-soon-1": now + timedelta(hours=6),
+        "evt-soon-2": now + timedelta(days=3),
+        "evt-far-1": now + timedelta(days=45),
+    }
+    return now, starts
+
+
+def _ics_ts(dt: datetime) -> str:
+    return dt.strftime("%Y%m%dT%H%M%SZ")
+
+
+def _build_fixture_ics(now: datetime, starts: dict[str, datetime]) -> str:
+    stamp = _ics_ts(now)
+    lines = [
+        "BEGIN:VCALENDAR",
+        "VERSION:2.0",
+        "PRODID:-//ZN//tests//EN",
+        "BEGIN:VEVENT",
+        "UID:evt-past-1",
+        f"DTSTAMP:{stamp}",
+        f"DTSTART:{_ics_ts(starts['evt-past-1'])}",
+        f"DTEND:{_ics_ts(starts['evt-past-1'] + timedelta(hours=1))}",
+        "SUMMARY:Past standup",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:evt-soon-1",
+        f"DTSTAMP:{stamp}",
+        f"DTSTART:{_ics_ts(starts['evt-soon-1'])}",
+        f"DTEND:{_ics_ts(starts['evt-soon-1'] + timedelta(hours=1))}",
+        "SUMMARY:Team sync",
+        "DESCRIPTION:Weekly\\, with the team",
+        "LOCATION:Meeting room A",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:evt-soon-2",
+        f"DTSTAMP:{stamp}",
+        f"DTSTART:{starts['evt-soon-2'].strftime('%Y%m%d')}",
+        "SUMMARY:Release day",
+        "END:VEVENT",
+        "BEGIN:VEVENT",
+        "UID:evt-far-1",
+        f"DTSTAMP:{stamp}",
+        f"DTSTART:{_ics_ts(starts['evt-far-1'])}",
+        "SUMMARY:Far future",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+_FIXTURE_NOW, _FIXTURE_STARTS = _fixture_ics_times()
+_FIXTURE_ICS = _build_fixture_ics(_FIXTURE_NOW, _FIXTURE_STARTS)
 
 
 class _FakeCalDav:
@@ -147,7 +181,7 @@ class CalendarIcsTests(unittest.TestCase):
         self.assertEqual(sync.location, "Meeting room A")
         self.assertEqual(
             sync.start,
-            datetime(2026, 10, 21, 9, 0, tzinfo=timezone.utc),
+            _FIXTURE_STARTS["evt-soon-1"],
         )
         release = by_uid["evt-soon-2"]
         self.assertTrue(release.all_day)
