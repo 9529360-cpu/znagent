@@ -110,3 +110,48 @@ harness 记录的 evidence 条目（`relative_path` / `objective` / `result`）
 分类逻辑、终报提取、闸门三态、runner 四条路径 + 干闸门跳过、
 报告往返与写出——全部 mock，不触网，随 CI 正常跑。
 真实模型调用只出现在 opt-in 路径，默认 CI 不受影响。
+
+## 基线对比（T5：报告 diff，守护基线不漂移）
+
+M-11 harness + Q6 修复后已有 6/6 verified 正式基线，但两次基线跑完没有
+"对比 verdict 漂移"的工具，回归靠人眼——基线不守护就白跑。
+
+`runtime/python/zn_agent/core/live_model_evidence_diff.py`：
+纯只读本地对比，输入两份 schema 为 `zn-live-model-evidence/v1` 的报告 JSON，
+按 task id 对齐 verdict + 失败分类，输出漂移清单。不调模型、不触网、
+无需凭证、不写报告（不进 CI 必需项）。
+
+```bash
+# 修复路径（旧→新，0/6 rejected → 6/6 verified）：绿
+PYTHONPATH=runtime/python python -m zn_agent.core.live_model_evidence_diff \
+  evidence/runs/20261020-174820.json evidence/runs/20261020-161858.json
+# 摘要：修复 6
+
+# 退化路径（6/6 verified → 0/6 rejected）：红，退出码 1
+PYTHONPATH=runtime/python python -m zn_agent.core.live_model_evidence_diff \
+  evidence/runs/20261020-161858.json evidence/runs/20261020-174820.json
+# 摘要：退化 6（research-01 的事实标记 5/5 全命中仍被 rejected：
+# 引用/证据缺口类 model_capability，正是 Q6 修复的那类失败）
+
+# 无变化的报告：摘要只收拢成一行
+# 基线对比：20261020-160252 → 20261020-161858
+# 摘要：无变化 6
+
+# 机器可读输出 / 禁用颜色
+PYTHONPATH=runtime/python python -m zn_agent.core.live_model_evidence_diff \
+  before.json after.json --json
+PYTHONPATH=runtime/python python -m zn_agent.core.live_model_evidence_diff \
+  before.json after.json --no-color
+```
+
+漂移语义（verdict 严重等级 verified > partial > rejected；skipped 不计等级）：
+- 退化（红）：after 等级低于 before（如 verified → rejected），退出码 1；
+- 修复（绿）：after 等级高于 before（如 rejected → verified）；
+- 分类漂移（黄）：verdict 相同但失败分类变了（原因换了，值得看一眼）；
+- 无变化：verdict 与失败分类都相同，渲染只收拢一行，不逐项列；
+- skipped / 新增 / 移除任务：中性列出，不计红绿。
+
+测试：`tests/zn_agent/core/test_live_model_evidence_diff.py`——
+对齐 / 退化 / 修复 / 无变化四条路 + 分类漂移 + 新增/移除/skipped/
+未知 verdict + schema 校验失败 + 渲染（红绿黄、--no-color）+ CLI 退出码
+（退化→1、无退化→0、报告坏→2），全部纯函数，不触网。
