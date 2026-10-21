@@ -655,7 +655,8 @@ class ZnChatWiringTests(unittest.TestCase):
             code = run(["--endpoint", str(missing), "chat"])
         self.assertEqual(code, 1)
         self.assertIn("zn: error:", stderr.getvalue())
-        self.assertIn("does not appear to be running", stderr.getvalue())
+        self.assertIn("ZN 常驻服务没在运行", stderr.getvalue())
+        self.assertIn("下一步", stderr.getvalue())
 
 
 if __name__ == "__main__":

@@ -23,9 +23,13 @@ from zn_agent.core.provider_bridge import (
 from zn_agent.core.resident_server import ResidentSocketService
 from zn_agent.core.zn_cli import (
     ResidentClient,
+    _cli_error,
     _format_approval_card,
     _long_text,
     _pid_is_dead,
+    _set_error_details,
+    _unexpected_result,
+    build_parser,
     load_endpoint,
     run,
 )
@@ -476,7 +480,7 @@ class ZnCliUnitTests(_CliHarness):
                     ["--endpoint", str(self.endpoint_path), "work", "list"]
                 )
         self.assertEqual(code, 1)
-        self.assertIn("could not reach", stderr.getvalue())
+        self.assertIn("连不上 ZN 常驻服务", stderr.getvalue())
         self.assertIn("refused", stderr.getvalue())
 
     def test_rpc_error_is_exit_1_with_server_reason(self):
@@ -523,7 +527,7 @@ class ZnCliUnitTests(_CliHarness):
         with contextlib.redirect_stderr(stderr):
             code = run(["--endpoint", str(missing), "work", "list"])
         self.assertEqual(code, 1)
-        self.assertIn("endpoint not found", stderr.getvalue())
+        self.assertIn("找不到 endpoint 文件", stderr.getvalue())
 
     def test_malformed_endpoint_is_exit_1(self):
         self.endpoint_path.write_text("{not json", encoding="utf-8")
@@ -533,7 +537,7 @@ class ZnCliUnitTests(_CliHarness):
                 ["--endpoint", str(self.endpoint_path), "work", "list"]
             )
         self.assertEqual(code, 1)
-        self.assertIn("not readable as JSON", stderr.getvalue())
+        self.assertIn("无法解析为 JSON", stderr.getvalue())
 
     def test_non_loopback_endpoint_is_refused_without_connecting(self):
         self.endpoint_path.write_text(
@@ -546,7 +550,7 @@ class ZnCliUnitTests(_CliHarness):
                     ["--endpoint", str(self.endpoint_path), "work", "list"]
                 )
         self.assertEqual(code, 1)
-        self.assertIn("non-loopback", stderr.getvalue())
+        self.assertIn("只允许本机", stderr.getvalue())
         connect.assert_not_called()
 
     def test_stale_pid_endpoint_is_refused_without_connecting(self):
@@ -566,7 +570,7 @@ class ZnCliUnitTests(_CliHarness):
                     ["--endpoint", str(self.endpoint_path), "work", "list"]
                 )
         self.assertEqual(code, 1)
-        self.assertIn("stale", stderr.getvalue())
+        self.assertIn("已过期", stderr.getvalue())
         connect.assert_not_called()
 
     def test_pid_is_dead_maps_os_errors(self):
@@ -596,7 +600,7 @@ class ZnCliUnitTests(_CliHarness):
         )
         with self.assertRaises(Exception) as caught:
             load_endpoint(str(self.endpoint_path))
-        self.assertIn("secret", str(caught.exception))
+        self.assertIn("密钥", str(caught.exception))
 
 
 class ZnCliLongTextT24Tests(_CliHarness):
@@ -1894,3 +1898,321 @@ class ZnCliAutonomySuggestionsTests(_CliHarness):
             run(["--endpoint", str(self.endpoint_path), "suggestions", "dismiss"])
         self.assertEqual(caught.exception.code, 2)
         self.assertEqual(self.connect_calls, [])
+
+
+class ZnCliHumanizedErrorsT25Tests(_CliHarness):
+    """T2-5: every error mapping renders the new humanized copy.
+
+    Copy-change trace (CONSTRAINTS.md §3): T2-5 intentionally replaces the
+    CLI's raw English error strings with humanized copy ("what happened +
+    what to do next"). Six pre-existing assertions on the old copy were
+    updated 1:1 to the new copy (same specificity, no weakening); the new
+    copy is additionally pinned by the 25 tests in this class.
+    """
+
+    def _run_stderr(self, argv):
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, stderr.getvalue()
+
+    def test_endpoint_missing_humanized(self):
+        missing = Path(self.tmp.name) / "no-such-endpoint.json"
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = run(["--endpoint", str(missing), "work", "list"])
+        err = stderr.getvalue()
+        self.assertEqual(code, 1)
+        self.assertTrue(err.startswith("zn: error:"))
+        self.assertIn("ZN 常驻服务没在运行", err)
+        self.assertIn("找不到 endpoint 文件", err)
+        self.assertIn("下一步", err)
+        self.assertIn("ZN_HOME", err)
+
+    def test_endpoint_malformed_humanized(self):
+        self.endpoint_path.write_text("{not json", encoding="utf-8")
+        code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("ZN 常驻服务没在运行", err)
+        self.assertIn("无法解析为 JSON", err)
+        self.assertIn("下一步", err)
+
+    def test_endpoint_not_object_humanized(self):
+        self.endpoint_path.write_text("[1, 2]", encoding="utf-8")
+        code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("ZN 常驻服务没在运行", err)
+        self.assertIn("不是 JSON 对象", err)
+
+    def test_endpoint_bad_port_humanized(self):
+        for bad_port in (99999, "abc", 0):
+            with self.subTest(bad_port=bad_port):
+                self.endpoint_path.write_text(
+                    json.dumps(_endpoint_payload(port=bad_port)), encoding="utf-8"
+                )
+                code, err = self._run_stderr(["work", "list"])
+                self.assertEqual(code, 1)
+                self.assertIn("ZN 常驻服务没在运行", err)
+                self.assertIn("端口非法", err)
+                self.assertIn("下一步", err)
+
+    def test_endpoint_stale_humanized_next_step(self):
+        self.endpoint_path.write_text(
+            json.dumps(_endpoint_payload(pid=424242)), encoding="utf-8"
+        )
+        with (
+            mock.patch("os.kill", side_effect=ProcessLookupError("no such process")),
+            mock.patch("socket.create_connection") as connect,
+        ):
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), "work", "list"])
+        err = stderr.getvalue()
+        self.assertEqual(code, 1)
+        self.assertIn("已过期", err)
+        self.assertIn("424242", err)
+        self.assertIn("下一步", err)
+        connect.assert_not_called()
+
+    def test_endpoint_bad_version_humanized(self):
+        self.endpoint_path.write_text(
+            json.dumps(_endpoint_payload(version=1)), encoding="utf-8"
+        )
+        code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("版本不一致", err)
+        self.assertIn("下一步", err)
+
+    def test_endpoint_bad_transport_humanized(self):
+        self.endpoint_path.write_text(
+            json.dumps(_endpoint_payload(transport="udp")), encoding="utf-8"
+        )
+        code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("传输方式不受支持", err)
+
+    def test_endpoint_bad_auth_scheme_humanized(self):
+        self.endpoint_path.write_text(
+            json.dumps(
+                _endpoint_payload(
+                    authentication={"scheme": "none", "secret": "x" * 64}
+                )
+            ),
+            encoding="utf-8",
+        )
+        code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("认证方式不受支持", err)
+
+    def test_endpoint_bad_secret_humanized(self):
+        self.endpoint_path.write_text(
+            json.dumps(
+                _endpoint_payload(
+                    authentication={"scheme": "session-secret-v1", "secret": "short"}
+                )
+            ),
+            encoding="utf-8",
+        )
+        code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("会话密钥缺失或过短", err)
+
+    def test_endpoint_non_loopback_humanized_next_step(self):
+        self.endpoint_path.write_text(
+            json.dumps(_endpoint_payload(host="192.168.1.10")), encoding="utf-8"
+        )
+        with mock.patch("socket.create_connection") as connect:
+            code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("只允许本机", err)
+        self.assertIn("下一步", err)
+        connect.assert_not_called()
+
+    def test_connect_timeout_humanized(self):
+        with mock.patch(
+            "socket.create_connection", side_effect=TimeoutError("timed out")
+        ):
+            code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("连不上 ZN 常驻服务", err)
+        self.assertIn("稍后重试", err)
+        self.assertIn("下一步", err)
+
+    def test_connect_refused_humanized_next_step(self):
+        with mock.patch(
+            "socket.create_connection",
+            side_effect=ConnectionRefusedError("refused"),
+        ):
+            code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("连不上 ZN 常驻服务", err)
+        self.assertIn("稍后重试", err)
+        self.assertIn("下一步", err)
+        self.assertIn("refused", err)  # raw OS error is preserved
+
+    def test_connection_lost_mid_rpc_humanized(self):
+        def handler(method, params):
+            raise OSError("broken pipe")
+
+        code, _, err = self._run(["work", "list"], handler)
+        self.assertEqual(code, 1)
+        self.assertIn("请求中途断开", err)
+        self.assertIn("work_list", err)
+        self.assertIn("下一步", err)
+
+    def test_auth_failed_humanized(self):
+        def handler(method, params):
+            return {"authenticated": False}
+
+        def connect(address, timeout=None):
+            fake = _FakeSocket(handler)
+            original = fake.sendall
+
+            def sendall(data):
+                original(data)
+                fake.stream.lines = [
+                    json.dumps(
+                        {"id": "x", "ok": False, "error": "authentication failed"}
+                    ).encode("utf-8")
+                    + b"\n"
+                ]
+
+            fake.sendall = sendall
+            return fake
+
+        with mock.patch("socket.create_connection", side_effect=connect):
+            code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("认证失败", err)
+        self.assertIn("authentication failed", err)  # server reason passes through
+        self.assertIn("下一步", err)
+
+    def test_rpc_rejected_gets_category_prefix(self):
+        code, _, err = self._run(
+            ["work", "list"],
+            self._handler({"work_list": (False, None, "thread not found")}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("服务端返回错误", err)
+        self.assertIn("thread not found", err)  # server message passes through
+
+    def test_response_closed_humanized(self):
+        def connect(address, timeout=None):
+            fake = _FakeSocket(lambda method, params: {})
+            original = fake.sendall
+
+            def sendall(data):
+                original(data)
+                fake.stream.lines.clear()
+
+            fake.sendall = sendall
+            return fake
+
+        with mock.patch("socket.create_connection", side_effect=connect):
+            code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("关闭了连接", err)
+        self.assertIn("下一步", err)
+
+    def test_response_bad_json_humanized(self):
+        def connect(address, timeout=None):
+            fake = _FakeSocket(lambda method, params: {})
+            original = fake.sendall
+
+            def sendall(data):
+                original(data)
+                request = json.loads(data.decode("utf-8").splitlines()[-1])
+                if request.get("method") != "authenticate":
+                    fake.stream.lines = [b"not json{{{\n"]
+
+            fake.sendall = sendall
+            return fake
+
+        with mock.patch("socket.create_connection", side_effect=connect):
+            code, err = self._run_stderr(["work", "list"])
+        self.assertEqual(code, 1)
+        self.assertIn("不是合法 JSON", err)
+
+    def test_unexpected_result_humanized_hides_raw_by_default(self):
+        code, _, err = self._run(
+            ["work", "list"],
+            self._handler({"work_list": {"wrong": "shape", "marker": "RAW42"}}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("无法识别的结果", err)
+        self.assertIn("版本可能不一致", err)
+        self.assertIn("下一步", err)
+        self.assertNotIn("RAW42", err)
+
+    def test_unexpected_result_verbose_shows_raw(self):
+        code, _, err = self._run(
+            ["--verbose", "work", "list"],
+            self._handler({"work_list": {"wrong": "shape", "marker": "RAW42"}}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("无法识别的结果", err)
+        self.assertIn("原始内容", err)
+        self.assertIn("RAW42", err)
+
+    def test_unexpected_result_zn_debug_env_shows_raw(self):
+        with mock.patch.dict(os.environ, {"ZN_DEBUG": "1"}):
+            code, _, err = self._run(
+                ["work", "list"],
+                self._handler({"work_list": {"wrong": "shape", "marker": "RAW42"}}),
+            )
+        self.assertEqual(code, 1)
+        self.assertIn("原始内容", err)
+        self.assertIn("RAW42", err)
+
+    def test_verbose_flag_does_not_leak_into_next_run(self):
+        handler = self._handler({"work_list": {"wrong": "shape"}})
+        self._run(["--verbose", "work", "list"], handler)
+        _, _, err = self._run(["work", "list"], handler)
+        self.assertNotIn("原始内容", err)
+
+    def test_unexpected_result_unit_gating(self):
+        _set_error_details(False)
+        try:
+            err = _unexpected_result("work_list", {"a": 1})
+            self.assertNotIn("{'a': 1}", str(err))
+            self.assertIn("无法识别的结果", str(err))
+            _set_error_details(True)
+            err = _unexpected_result("work_list", {"a": 1})
+            self.assertIn("原始内容", str(err))
+        finally:
+            _set_error_details(False)
+
+    def test_verbose_flag_parses(self):
+        args = build_parser().parse_args(["--verbose", "work", "list"])
+        self.assertTrue(args.verbose)
+        args = build_parser().parse_args(["work", "list"])
+        self.assertFalse(args.verbose)
+
+    def test_error_copy_table_renders(self):
+        import string
+
+        from zn_agent.core import zn_cli
+
+        for key, (lead, next_step) in zn_cli._ERROR_COPY.items():
+            with self.subTest(key=key):
+                fields = {
+                    fname: "X"
+                    for _, fname, _, _ in string.Formatter().parse(lead)
+                    if fname
+                }
+                err = _cli_error(key, **fields)
+                text = str(err)
+                self.assertTrue(text)
+                if next_step:
+                    self.assertIn("下一步", text)
+
+    def test_exit_code_contract_unchanged(self):
+        # exit 1 on business failure (resident down), exit 2 on bad args.
+        missing = Path(self.tmp.name) / "no-such-endpoint.json"
+        stderr = io.StringIO()
+        with contextlib.redirect_stderr(stderr):
+            code = run(["--endpoint", str(missing), "work", "list"])
+        self.assertEqual(code, 1)
+        with self.assertRaises(SystemExit) as caught:
+            run(["--endpoint", str(self.endpoint_path), "work", "list", "--limit", "0"])
+        self.assertEqual(caught.exception.code, 2)

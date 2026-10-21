@@ -37,6 +37,10 @@ Fail-closed rules:
   non-zero exit code. The CLI never prints a success message for a failed
   call and never retries a decision: ``approval decide`` is sent at most
   once per invocation.
+* Errors are humanized (T2-5): each failure maps to a "what happened +
+  what to do next" message (``zn: error:`` prefix, exit 1; exit 2 for bad
+  arguments stays). Raw server payloads never print by default; they only
+  appear with ``--verbose`` or ``ZN_DEBUG=1``.
 """
 
 from __future__ import annotations
@@ -71,6 +75,136 @@ _LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 class CliError(Exception):
     """A user-facing CLI failure: reported as ``zn: error: ...``, exit 1."""
+
+
+# --- T2-5: humanized error copy -------------------------------------------
+# Every failure the CLI can hit before (or without) a usable resident is
+# mapped here to a "what happened + what to do next" message in plain
+# language. The ``zn: error:`` prefix and the exit-code contract (1 =
+# business failure, 2 = bad arguments) are unchanged; only the copy is
+# humanized. Raw server payloads are never dumped by default: they only
+# print when the user passes ``--verbose`` or sets ``ZN_DEBUG=1``.
+
+_SHOW_ERROR_DETAILS = False
+
+
+def _set_error_details(verbose: bool) -> None:
+    """Enable raw error details for this process (``--verbose``)."""
+    global _SHOW_ERROR_DETAILS
+    _SHOW_ERROR_DETAILS = bool(verbose)
+
+
+def _error_details_visible() -> bool:
+    return _SHOW_ERROR_DETAILS or os.environ.get("ZN_DEBUG") == "1"
+
+
+_ERROR_COPY: dict[str, tuple[str, str]] = {
+    # key: (lead-line template, next-step template; "" = no next step)
+    "endpoint_missing": (
+        "ZN 常驻服务没在运行（或 ZN home 不对）：找不到 endpoint 文件：{path}",
+        "下一步：检查 ZN_HOME 是否正确，或启动常驻服务（zn-resident）",
+    ),
+    "endpoint_unreadable": (
+        "ZN 常驻服务没在运行（或 ZN home 不对）：endpoint 文件损坏，"
+        "无法解析为 JSON：{path}（{detail}）",
+        "下一步：检查 ZN_HOME 是否正确，或重启常驻服务重建 endpoint 文件",
+    ),
+    "endpoint_not_object": (
+        "ZN 常驻服务没在运行（或 ZN home 不对）：endpoint 文件内容不是 "
+        "JSON 对象：{path}",
+        "下一步：检查 ZN_HOME 是否正确，或重启常驻服务重建 endpoint 文件",
+    ),
+    "endpoint_bad_version": (
+        "CLI 与常驻服务版本不一致：endpoint 版本为 {version!r}，"
+        "本 CLI 只支持版本 2（{path}）",
+        "下一步：升级 ZN 到最新版本后重试",
+    ),
+    "endpoint_bad_transport": (
+        "endpoint 文件中的传输方式不受支持：{transport!r}（{path}）",
+        "下一步：重启常驻服务重建 endpoint 文件",
+    ),
+    "endpoint_non_loopback": (
+        "拒绝连接：resident 控制面只允许本机，endpoint 文件中的主机 "
+        "{host} 不是本机地址（{path}）",
+        "下一步：检查 endpoint 文件是否被篡改，或检查 ZN_HOME 是否正确",
+    ),
+    "endpoint_bad_port": (
+        "ZN 常驻服务没在运行（或 ZN home 不对）：endpoint 文件中的端口"
+        "非法：{port!r}（{path}）",
+        "下一步：检查 ZN_HOME 是否正确，或重启常驻服务重建 endpoint 文件",
+    ),
+    "endpoint_bad_auth": (
+        "endpoint 文件中的认证方式不受支持：{scheme!r}（{path}）",
+        "下一步：重启常驻服务重建 endpoint 文件",
+    ),
+    "endpoint_bad_secret": (
+        "endpoint 文件中的会话密钥缺失或过短（{path}）",
+        "下一步：重启常驻服务重建 endpoint 文件",
+    ),
+    "endpoint_stale": (
+        "endpoint 文件已过期：记录的 resident 进程（pid {pid}）已不"
+        "存在（{path}）",
+        "下一步：重启常驻服务（zn-resident）",
+    ),
+    "connect_failed": (
+        "连不上 ZN 常驻服务（{host}:{port}）：{detail}",
+        "下一步：服务可能正在启动，稍后重试；若持续失败，检查 ZN_HOME "
+        "是否正确或重启常驻服务",
+    ),
+    "connection_lost": (
+        "与 ZN 常驻服务的连接在请求中途断开（{method}）：{detail}",
+        "下一步：稍后重试；若持续失败，重启常驻服务",
+    ),
+    "auth_failed": (
+        "resident 认证失败：{detail}",
+        "下一步：endpoint 文件可能已过期，重启常驻服务（zn-resident）",
+    ),
+    "rpc_rejected": (
+        "服务端返回错误（{method}）：{detail}",
+        "",
+    ),
+    "response_closed": (
+        "服务在返回响应前关闭了连接（{what}）",
+        "下一步：稍后重试；若持续失败，重启常驻服务",
+    ),
+    "response_not_bytes": (
+        "服务返回了无法解析的响应（{what}）：不是字节流",
+        "下一步：重启常驻服务；若持续出现请反馈",
+    ),
+    "response_bad_json": (
+        "服务返回了无法解析的响应（{what}）：不是合法 JSON（{detail}）",
+        "下一步：重启常驻服务；若持续出现请反馈",
+    ),
+    "response_not_object": (
+        "服务返回了无法解析的响应（{what}）：不是 JSON 对象",
+        "下一步：重启常驻服务；若持续出现请反馈",
+    ),
+    "unexpected_result": (
+        "服务返回了无法识别的结果（版本可能不一致，方法 {method}）",
+        "下一步：升级 ZN 到最新版本；若已是最新版本请反馈",
+    ),
+}
+
+
+def _cli_error(key: str, **fields: Any) -> CliError:
+    """Build a humanized :class:`CliError` from the mapping table."""
+    lead, next_step = _ERROR_COPY[key]
+    message = lead.format(**fields)
+    if next_step:
+        message = f"{message}\n{next_step}"
+    return CliError(message)
+
+
+def _unexpected_result(method: str, result: Any) -> CliError:
+    """Humanized error for a server result the CLI cannot interpret.
+
+    The raw payload only prints with ``--verbose`` / ``ZN_DEBUG=1`` so a
+    version-skewed resident can never flood the terminal with a raw dict.
+    """
+    err = _cli_error("unexpected_result", method=method)
+    if _error_details_visible():
+        return CliError(f"{err}\n原始内容：{result!r}")
+    return err
 
 
 def _one_line(value: Any, *, limit: int = 120) -> str:
@@ -163,62 +297,44 @@ def load_endpoint(
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        raise CliError(
-            f"resident endpoint not found at {path}: the ZN resident does not "
-            "appear to be running (start the resident first; the desktop app "
-            "starts one, or run zn-resident)"
-        ) from None
+        raise _cli_error("endpoint_missing", path=path) from None
     except (OSError, ValueError) as exc:
-        raise CliError(
-            f"resident endpoint at {path} is not readable as JSON: {exc}"
-        ) from None
+        raise _cli_error("endpoint_unreadable", path=path, detail=exc) from None
     if not isinstance(payload, dict):
-        raise CliError(f"resident endpoint at {path} is not a JSON object")
+        raise _cli_error("endpoint_not_object", path=path)
 
     version = payload.get("version")
     if version is not None and version != 2:
-        raise CliError(
-            f"unsupported resident endpoint version {version!r} at {path}: "
-            "this CLI only speaks endpoint version 2"
-        )
+        raise _cli_error("endpoint_bad_version", version=version, path=path)
     transport = payload.get("transport")
     if transport is not None and transport != "tcp":
-        raise CliError(
-            f"unsupported resident endpoint transport {transport!r} at {path}"
-        )
+        raise _cli_error("endpoint_bad_transport", transport=transport, path=path)
     host = str(payload.get("host") or "").strip().lower()
     if host not in _LOOPBACK_HOSTS:
-        raise CliError(
-            f"refusing to connect to non-loopback resident host {host!r} "
-            f"from endpoint {path}: the resident control plane is loopback-only"
-        )
+        raise _cli_error("endpoint_non_loopback", host=host, path=path)
     if host == "localhost":
         host = "127.0.0.1"
     try:
         port = int(payload.get("port") or 0)
     except (TypeError, ValueError):
-        raise CliError(f"resident endpoint at {path} has an invalid port") from None
+        raise _cli_error(
+            "endpoint_bad_port", port=payload.get("port"), path=path
+        ) from None
     if not 0 < port < 65536:
-        raise CliError(
-            f"resident endpoint at {path} has an invalid port {payload.get('port')!r}"
-        )
+        raise _cli_error("endpoint_bad_port", port=payload.get("port"), path=path)
     auth = payload.get("authentication")
     if not isinstance(auth, dict) or auth.get("scheme") != _ENDPOINT_AUTH_SCHEME:
-        raise CliError(
-            f"resident endpoint at {path} does not carry the expected "
-            f"authentication scheme {_ENDPOINT_AUTH_SCHEME!r}"
+        raise _cli_error(
+            "endpoint_bad_auth",
+            scheme=auth.get("scheme") if isinstance(auth, dict) else auth,
+            path=path,
         )
     secret = auth.get("secret")
     if not isinstance(secret, str) or len(secret) < 32:
-        raise CliError(
-            f"resident endpoint at {path} has a missing or too-short session secret"
-        )
+        raise _cli_error("endpoint_bad_secret", path=path)
     pid = payload.get("pid")
     if isinstance(pid, int) and pid > 0 and pid != os.getpid() and _pid_is_dead(pid):
-        raise CliError(
-            f"resident endpoint at {path} is stale: the resident process "
-            f"(pid {pid}) no longer exists"
-        )
+        raise _cli_error("endpoint_stale", pid=pid, path=path)
     return Endpoint(host=host, port=port, secret=secret, path=path)
 
 
@@ -243,10 +359,11 @@ class ResidentClient:
                 (self.endpoint.host, self.endpoint.port), timeout=self.timeout
             )
         except (OSError, TimeoutError) as exc:
-            raise CliError(
-                "could not reach the ZN resident at "
-                f"{self.endpoint.host}:{self.endpoint.port}: {exc} "
-                "(the endpoint file may be stale; restart the resident)"
+            raise _cli_error(
+                "connect_failed",
+                host=self.endpoint.host,
+                port=self.endpoint.port,
+                detail=exc,
             ) from None
         try:
             if hasattr(raw_conn, "makefile"):
@@ -262,10 +379,9 @@ class ResidentClient:
                 )
                 auth = self._read(stream, "authentication")
                 if not auth.get("ok"):
-                    raise CliError(
-                        "resident authentication failed: "
-                        f"{auth.get('error') or 'unknown reason'} "
-                        "(the endpoint file may be stale; restart the resident)"
+                    raise _cli_error(
+                        "auth_failed",
+                        detail=auth.get("error") or "unknown reason",
                     )
                 self._send(
                     raw_conn,
@@ -275,12 +391,12 @@ class ResidentClient:
         except CliError:
             raise
         except (OSError, TimeoutError) as exc:
-            raise CliError(
-                f"lost connection to the ZN resident during {method!r}: {exc}"
-            ) from None
+            raise _cli_error("connection_lost", method=method, detail=exc) from None
         if not response.get("ok"):
-            raise CliError(
-                f"resident rejected {method!r}: {response.get('error') or 'unknown error'}"
+            raise _cli_error(
+                "rpc_rejected",
+                method=method,
+                detail=response.get("error") or "unknown error",
             )
         return response.get("result")
 
@@ -292,19 +408,15 @@ class ResidentClient:
     def _read(stream, what: str) -> dict[str, Any]:
         raw = stream.readline()
         if not raw:
-            raise CliError(
-                f"resident closed the connection without a response to {what}"
-            )
+            raise _cli_error("response_closed", what=what)
         if not isinstance(raw, (bytes, bytearray)):
-            raise CliError(
-                f"resident returned a non-bytes response to {what}"
-            )
+            raise _cli_error("response_not_bytes", what=what)
         try:
             parsed = json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError) as exc:
-            raise CliError(f"resident returned invalid JSON for {what}: {exc}") from None
+            raise _cli_error("response_bad_json", what=what, detail=exc) from None
         if not isinstance(parsed, dict):
-            raise CliError(f"resident returned a non-object response for {what}")
+            raise _cli_error("response_not_object", what=what)
         return parsed
 
 
@@ -350,7 +462,7 @@ def _emit(args: argparse.Namespace, result: Any, *, human: str) -> None:
 def _cmd_work_list(args: argparse.Namespace) -> int:
     result = _client(args).call("work_list", {"limit": args.limit})
     if not isinstance(result, list):
-        raise CliError(f"resident returned an unexpected work_list result: {result!r}")
+        raise _unexpected_result("work_list", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -378,7 +490,7 @@ def _cmd_work_get(args: argparse.Namespace) -> int:
         {"thread_id": args.thread_id, "message_limit": args.message_limit},
     )
     if not isinstance(result, dict):
-        raise CliError(f"resident returned an unexpected work_get result: {result!r}")
+        raise _unexpected_result("work_get", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -599,9 +711,7 @@ def _cmd_work_submit(args: argparse.Namespace) -> int:
             {"title": args.title or args.task[:100]},
         )
         if not isinstance(created, dict) or not created.get("id"):
-            raise CliError(
-                f"resident returned an unexpected work_create result: {created!r}"
-            )
+            raise _unexpected_result("work_create", created)
         thread_id = str(created["id"])
         created_title = created.get("title")
         if isinstance(created_title, str) and created_title.strip():
@@ -612,9 +722,7 @@ def _cmd_work_submit(args: argparse.Namespace) -> int:
             {"thread_id": thread_id, "task": args.task},
         )
         if not isinstance(result, dict):
-            raise CliError(
-                f"resident returned an unexpected work_submit result: {result!r}"
-            )
+            raise _unexpected_result("work_submit", result)
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
 
@@ -678,9 +786,7 @@ def _cmd_work_submit(args: argparse.Namespace) -> int:
         raise box["error"]
     result = box.get("result")
     if not isinstance(result, dict):
-        raise CliError(
-            f"resident returned an unexpected work_submit result: {result!r}"
-        )
+        raise _unexpected_result("work_submit", result)
     if not head_printed:
         thread = result.get("thread") if isinstance(result.get("thread"), dict) else {}
         print_head(thread.get("title"))
@@ -840,9 +946,7 @@ def _cmd_approval_show(args: argparse.Namespace) -> int:
     wanted = str(args.request_id)
     result = _client(args).call("approval_list", {})
     if not isinstance(result, dict):
-        raise CliError(
-            f"resident returned an unexpected approval_list result: {result!r}"
-        )
+        raise _unexpected_result("approval_list", result)
     item = _find_approval_card(result, wanted)
     if item is None:
         raise CliError(
@@ -859,9 +963,7 @@ def _cmd_approval_show(args: argparse.Namespace) -> int:
 def _cmd_approval_list(args: argparse.Namespace) -> int:
     result = _client(args).call("approval_list", {})
     if not isinstance(result, dict):
-        raise CliError(
-            f"resident returned an unexpected approval_list result: {result!r}"
-        )
+        raise _unexpected_result("approval_list", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -911,9 +1013,7 @@ def _cmd_approval_decide(args: argparse.Namespace) -> int:
         {"request_id": args.request_id, "decision": decision},
     )
     if not isinstance(result, dict) or not isinstance(result.get("request"), dict):
-        raise CliError(
-            f"resident returned an unexpected approval_decide result: {result!r}"
-        )
+        raise _unexpected_result("approval_decide", result)
     request = result["request"]
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
@@ -928,7 +1028,7 @@ def _cmd_approval_decide(args: argparse.Namespace) -> int:
 def _cmd_memory_list(args: argparse.Namespace) -> int:
     result = _client(args).call("memory_list", {"limit": args.limit})
     if not isinstance(result, list):
-        raise CliError(f"resident returned an unexpected memory_list result: {result!r}")
+        raise _unexpected_result("memory_list", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -955,7 +1055,7 @@ def _cmd_memory_list(args: argparse.Namespace) -> int:
 def _cmd_team_list(args: argparse.Namespace) -> int:
     result = _client(args).call("team_list", {"limit": args.limit})
     if not isinstance(result, list):
-        raise CliError(f"resident returned an unexpected team_list result: {result!r}")
+        raise _unexpected_result("team_list", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -989,9 +1089,7 @@ def _cmd_memory_remember(args: argparse.Namespace) -> int:
         params["sensitivity"] = args.sensitivity
     result = _client(args).call("remember", params)
     if not isinstance(result, dict) or not result.get("saved"):
-        raise CliError(
-            f"resident returned an unexpected remember result: {result!r}"
-        )
+        raise _unexpected_result("remember", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -1013,9 +1111,7 @@ def _cmd_memory_forget(args: argparse.Namespace) -> int:
             return 1
     result = _client(args).call("forget", {"key": args.key})
     if not isinstance(result, dict) or not result.get("forgotten"):
-        raise CliError(
-            f"resident returned an unexpected forget result: {result!r}"
-        )
+        raise _unexpected_result("forget", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -1028,9 +1124,7 @@ def _cmd_memory_export(args: argparse.Namespace) -> int:
     # server-side); the result tells the user where it went.
     result = _client(args).call("memory_export", {"path": args.out})
     if not isinstance(result, dict) or not isinstance(result.get("exported"), int):
-        raise CliError(
-            f"resident returned an unexpected memory_export result: {result!r}"
-        )
+        raise _unexpected_result("memory_export", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -1043,9 +1137,7 @@ def _cmd_memory_import(args: argparse.Namespace) -> int:
         "memory_import", {"path": args.in_file, "overwrite": args.overwrite}
     )
     if not isinstance(result, dict) or not isinstance(result.get("imported"), int):
-        raise CliError(
-            f"resident returned an unexpected memory_import result: {result!r}"
-        )
+        raise _unexpected_result("memory_import", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -1076,9 +1168,7 @@ def _format_timeline_entry(entry: dict[str, Any]) -> str:
 def _cmd_team_timeline(args: argparse.Namespace) -> int:
     result = _client(args).call("team_timeline", {"thread_id": args.thread_id})
     if not isinstance(result, dict) or not isinstance(result.get("entries"), list):
-        raise CliError(
-            f"resident returned an unexpected team_timeline result: {result!r}"
-        )
+        raise _unexpected_result("team_timeline", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -1106,9 +1196,7 @@ def _cmd_work_cancel(args: argparse.Namespace) -> int:
         {"thread_id": args.thread_id, "event_id": args.event_id},
     )
     if not isinstance(result, dict) or not isinstance(result.get("progress"), dict):
-        raise CliError(
-            f"resident returned an unexpected work_cancel result: {result!r}"
-        )
+        raise _unexpected_result("work_cancel", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -1153,7 +1241,7 @@ def _cmd_connector_status(args: argparse.Namespace) -> int:
     except CliError as exc:
         return _cmd_connector_status_offline(args, str(exc))
     if not isinstance(result, dict) or not isinstance(result.get("connectors"), list):
-        raise CliError(f"resident returned an unexpected connector_status result: {result!r}")
+        raise _unexpected_result("connector_status", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -1192,7 +1280,7 @@ def _cmd_connector_reload(args: argparse.Namespace) -> int:
         )
         return 2
     if not isinstance(result, dict) or not isinstance(result.get("connectors"), list):
-        raise CliError(f"resident returned an unexpected connector_reload result: {result!r}")
+        raise _unexpected_result("connector_reload", result)
     failed = sum(
         1
         for item in result["connectors"]
@@ -1238,9 +1326,7 @@ def _cmd_connector_reload(args: argparse.Namespace) -> int:
 def _cmd_autonomy_list(args: argparse.Namespace) -> int:
     result = _client(args).call("autonomy_list")
     if not isinstance(result, list):
-        raise CliError(
-            f"resident returned an unexpected autonomy_list result: {result!r}"
-        )
+        raise _unexpected_result("autonomy_list", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -1264,9 +1350,7 @@ def _cmd_autonomy_list(args: argparse.Namespace) -> int:
 def _cmd_autonomy_get(args: argparse.Namespace) -> int:
     result = _client(args).call("autonomy_get", {"domain": args.domain})
     if not isinstance(result, dict) or "level" not in result:
-        raise CliError(
-            f"resident returned an unexpected autonomy_get result: {result!r}"
-        )
+        raise _unexpected_result("autonomy_get", result)
     _emit(
         args,
         result,
@@ -1281,9 +1365,7 @@ def _cmd_autonomy_set(args: argparse.Namespace) -> int:
         "autonomy_set", {"domain": args.domain, "level": args.level}
     )
     if not isinstance(result, dict) or "level" not in result:
-        raise CliError(
-            f"resident returned an unexpected autonomy_set result: {result!r}"
-        )
+        raise _unexpected_result("autonomy_set", result)
     _emit(
         args,
         result,
@@ -1299,9 +1381,7 @@ def _cmd_autonomy_set(args: argparse.Namespace) -> int:
 def _cmd_suggestions_list(args: argparse.Namespace) -> int:
     result = _client(args).call("suggestions_list", {"limit": args.limit})
     if not isinstance(result, list):
-        raise CliError(
-            f"resident returned an unexpected suggestions_list result: {result!r}"
-        )
+        raise _unexpected_result("suggestions_list", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -1322,9 +1402,7 @@ def _cmd_suggestions_list(args: argparse.Namespace) -> int:
 def _cmd_suggestions_dismiss(args: argparse.Namespace) -> int:
     result = _client(args).call("suggestions_dismiss", {"key": args.key})
     if not isinstance(result, dict) or not result.get("dismissed"):
-        raise CliError(
-            f"resident returned an unexpected suggestions_dismiss result: {result!r}"
-        )
+        raise _unexpected_result("suggestions_dismiss", result)
     _emit(
         args,
         result,
@@ -1346,7 +1424,7 @@ def _goal_result_or_not_installed(
     printed before the error so machines still get parseable JSON.
     """
     if not isinstance(result, dict) or "enabled" not in result:
-        raise CliError(f"resident returned an unexpected {method} result: {result!r}")
+        raise _unexpected_result(method, result)
     if not result.get("enabled"):
         if args.json:
             print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
@@ -1359,7 +1437,7 @@ def _cmd_goal_list(args: argparse.Namespace) -> int:
     result = _goal_result_or_not_installed(args, result, "goal_list")
     goals = result.get("goals")
     if not isinstance(goals, list):
-        raise CliError(f"resident returned an unexpected goal_list result: {result!r}")
+        raise _unexpected_result("goal_list", result)
     if args.json:
         print(json.dumps(goals, ensure_ascii=False, indent=2, default=str))
         return 0
@@ -1620,6 +1698,11 @@ def build_parser() -> argparse.ArgumentParser:
         type=float,
         default=DEFAULT_TIMEOUT_SECONDS,
         help=f"seconds to wait for the resident per RPC (default {DEFAULT_TIMEOUT_SECONDS:g})",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="show raw server details in error output (same as ZN_DEBUG=1)",
     )
     sub = parser.add_subparsers(dest="command", metavar="command")
 
@@ -1989,6 +2072,7 @@ def run(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
+    _set_error_details(getattr(args, "verbose", False))
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
     if not hasattr(args, "func"):
