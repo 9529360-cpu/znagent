@@ -127,7 +127,7 @@ class ShippedPersonaTests(unittest.TestCase):
     def test_shipped_persona_loads_clean(self):
         persona = load_zn_persona()
         self.assertFalse(persona.degraded, persona.fallback_reason)
-        self.assertTrue(persona.loaded_from.endswith("agents/zn"), persona.loaded_from)
+        self.assertTrue(persona.loaded_from.replace("\\", "/").endswith("agents/zn"), persona.loaded_from)
         self.assertIn("You are ZN", persona.identity_text)
         for section in ("性格", "口头禅", "情绪"):
             self.assertIn(section, persona.soul_text)
