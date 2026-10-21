@@ -52,19 +52,23 @@ class _StubClient:
         return [method for method, _ in self.calls]
 
 
-def _input_from(lines):
-    items = iter(lines)
-    prompts: list[str] = []
+class _ScriptedInput:
+    """input() stand-in: replays lines, then raises EOFError like Ctrl-D."""
 
-    def read(prompt: str) -> str:
-        prompts.append(prompt)
+    def __init__(self, lines) -> None:
+        self._items = iter(lines)
+        self.prompts: list[str] = []
+
+    def __call__(self, prompt: str) -> str:
+        self.prompts.append(prompt)
         try:
-            return next(items)
+            return next(self._items)
         except StopIteration:
             raise EOFError from None
 
-    read.prompts = prompts  # type: ignore[attr-defined]
-    return read
+
+def _input_from(lines):
+    return _ScriptedInput(lines)
 
 
 def _snapshot(thread_id: str, *messages: tuple[str, str]) -> dict:
