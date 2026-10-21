@@ -10,7 +10,10 @@ and no model calls:
 * an enabled recurring Will trigger whose next due time is overdue or within
   the next 24 hours and which Will has not already picked up;
 * a memory fact the user explicitly declared as a routine (key starts with
-  ``routine:`` / ``例行:`` / ``例行任务:``);
+  ``routine:`` / ``例行:`` / ``例行任务:``), limited to normal-sensitivity
+  facts (Q16): ``non_retainable`` / ``sensitive`` facts -- and any unknown
+  future tier -- never enter the proactive surface, while explicit reads
+  (``memory_list`` / recall) still see them (Q11 semantics unchanged);
 * a due recurring occurrence held back by the user autonomy envelope
   (Q12): written durably by the autonomy policy store when a trigger
   fires in a domain below the suggest level, surfaced here with the
@@ -35,6 +38,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .models import utc_now
+from .store import SENSITIVITY_NORMAL
 
 _LOG = logging.getLogger(__name__)
 
@@ -309,6 +313,10 @@ class SuggestionEngine:
         suppression as every other suggestion: dismissing the key
         suppresses exactly this occurrence, and a retry never pushes a
         duplicate (the outbox key is the primary key).
+
+        Q16 note: these task names come from the user's own trigger
+        definitions, not from memory facts, so the memory sensitivity
+        envelope does not apply here.
         """
         try:
             rows = self._gated_occurrence_rows()
@@ -362,6 +370,19 @@ class SuggestionEngine:
             return []
         suggestions: list[dict[str, Any]] = []
         for fact in facts:
+            # Q16: sensitivity envelope for the proactive face. Only
+            # normal-tier facts may surface in the suggestion bar:
+            # non_retainable and sensitive facts are withheld entirely,
+            # and unknown future tiers are withheld too (fail closed).
+            # Skipping the whole item -- rather than rendering a
+            # key-derived label -- guarantees neither the fact value
+            # nor key-derived text can leak into the proactive surface
+            # (keys are user-chosen free text and can carry sensitive
+            # detail themselves). Explicit reads (memory_list / recall /
+            # forget) still see these facts: Q11 semantics are unchanged.
+            tier = str(fact.get("sensitivity") or SENSITIVITY_NORMAL).strip()
+            if tier != SENSITIVITY_NORMAL:
+                continue
             key = str(fact.get("key") or "")
             normalized = key.strip().lower()
             if not any(normalized.startswith(prefix) for prefix in _ROUTINE_KEY_PREFIXES):
