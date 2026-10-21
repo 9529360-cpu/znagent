@@ -127,12 +127,8 @@ class ShippedPersonaTests(unittest.TestCase):
     def test_shipped_persona_loads_clean(self):
         persona = load_zn_persona()
         self.assertFalse(persona.degraded, persona.fallback_reason)
-        # 路径比较在 Windows 上用反斜杠：两边同规范化后再 endswith，
-        # 保持原有断言强度（仍是后缀匹配，不是包含检查）。
-        self.assertTrue(
-            os.path.normpath(persona.loaded_from).endswith(os.path.normpath("agents/zn")),
-            persona.loaded_from,
-        )
+        # 路径比较 OS 无关：先把反斜杠统一为斜杠再做后缀匹配（断言强度不变）。
+        self.assertTrue(persona.loaded_from.replace("\\", "/").endswith("agents/zn"), persona.loaded_from)
         self.assertIn("You are ZN", persona.identity_text)
         for section in ("性格", "口头禅", "情绪"):
             self.assertIn(section, persona.soul_text)
