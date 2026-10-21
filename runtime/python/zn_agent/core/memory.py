@@ -265,6 +265,140 @@ def _hybrid_recency(valid_at: str | None) -> float:
     if age < 0:
         age = 0.0
     return 1.0 / (1.0 + age / _HYBRID_RECENCY_SCALE_SECONDS)
+
+
+# -- Q8: lightweight semantic fallback for recall_hybrid ------------------
+#
+# A second-chance recall for synonym / cross-language / word-form
+# misses, computed locally with zero tokens and no network: a curated
+# deterministic token-expansion table (bilingual synonym sets + an
+# explicit plural->singular map). It is deliberately NOT a vector
+# side and NOT a change to the keyword/entity/exact signals: those
+# keep their exact scores, order, and ``signals`` shape for every
+# candidate they already surfaced.
+#
+# The fallback only rescues candidates the primary signals dropped
+# (keyword == entity == exact == 0). Rescued candidates are appended
+# AFTER all primary hits -- never interleaved -- ranked among
+# themselves by semantic coverage, then the usual valid_at/key
+# tie-breaks. When the fallback finds nothing, the result list is
+# bit-for-bit identical to the pre-Q8 behaviour.
+#
+# The fallback runs inside recall_hybrid() only, over the same
+# candidate funnel (_hybrid_candidates), so GR-1/GR-2 validity,
+# supersession, expiry (Q7), forget/opt-out, and the key/alias-only
+# cognition-context path are all inherited unchanged. No facts-table
+# schema change: the table lives in code.
+
+#: Semantic weight for rescued (secondary) candidates only. Primary
+#: hits never see this term, so their scores are untouched.
+_HYBRID_WEIGHT_SEMANTIC = 0.10
+
+#: Bilingual synonym sets, matched at the _hybrid_tokens() token
+#: level. Sets must stay pairwise disjoint (enforced by test).
+_SEMANTIC_SYNONYM_SETS: tuple[tuple[str, ...], ...] = (
+    ("电话", "手机", "座机", "电话号码", "手机号码", "phone", "telephone", "tel"),
+    ("号码", "编号", "number"),
+    ("密码", "口令", "password", "passwd"),
+    ("地址", "住址", "住处", "address"),
+    ("邮箱", "邮件", "电子邮件", "email", "e-mail"),
+    ("生日", "出生日期", "寿辰", "birthday"),
+    ("名字", "姓名", "名称", "name"),
+    ("昵称", "外号", "nickname"),
+    ("妻子", "老婆", "太太", "丈夫", "老公", "先生", "配偶", "伴侣",
+     "wife", "husband", "spouse"),
+    ("孩子", "小孩", "儿子", "女儿", "child", "kid", "son", "daughter"),
+    ("父亲", "母亲", "爸爸", "妈妈", "双亲", "parent", "father", "mother"),
+    ("朋友", "好友", "哥们", "friend", "buddy"),
+    ("公司", "单位", "employer", "company"),
+    ("工作", "职业", "上班", "job", "work", "occupation"),
+    ("老板", "上司", "领导", "boss", "manager"),
+    ("会议", "开会", "例会", "meeting"),
+    ("提醒", "备忘", "备忘录", "reminder", "remind", "memo"),
+    ("付款", "支付", "付钱", "pay", "payment"),
+    ("价格", "费用", "价钱", "花费", "price", "cost"),
+    ("订单", "订购", "order"),
+    ("航班", "飞机", "机票", "flight"),
+    ("酒店", "宾馆", "住宿", "hotel"),
+    ("餐厅", "饭店", "餐馆", "饭馆", "restaurant"),
+    ("食物", "饭菜", "午餐", "晚餐", "food", "meal"),
+    ("喜欢", "喜爱", "偏好", "爱好", "like", "love", "prefer",
+     "favorite", "favourite"),
+    ("不喜欢", "讨厌", "反感", "厌恶", "dislike", "hate"),
+    ("语言", "语种", "language"),
+    ("医生", "大夫", "doctor"),
+    ("医院", "诊所", "hospital", "clinic"),
+    ("车", "汽车", "车辆", "car"),
+    ("家", "住所", "住宅", "home"),
+    ("无线网", "无线网络", "wifi", "wireless"),
+    ("账号", "账户", "account"),
+    ("用户名", "username", "user"),
+    ("网站", "网址", "站点", "website", "url"),
+    ("文档", "文件", "资料", "document", "file"),
+    ("照片", "图片", "相片", "photo", "picture", "image"),
+    ("视频", "影片", "video"),
+    ("音乐", "歌曲", "歌", "music", "song"),
+    ("书", "书籍", "读物", "book"),
+    ("电影", "film", "movie"),
+    ("运动", "体育", "锻炼", "sport", "exercise"),
+    ("健康", "身体", "health"),
+    ("咖啡", "coffee"),
+    ("过敏", "过敏原", "allergy"),
+)
+
+#: Deterministic word-form normalisation: explicit plural -> singular
+#: pairs only (no stemming rules, so no "addresse"-style accidents).
+_SEMANTIC_PLURAL_TO_SINGULAR: dict[str, str] = {
+    "windows": "window", "emails": "email", "phones": "phone",
+    "photos": "photo", "videos": "video", "files": "file",
+    "books": "book", "movies": "movie", "meetings": "meeting",
+    "reminders": "reminder", "payments": "payment", "orders": "order",
+    "addresses": "address", "passwords": "password", "numbers": "number",
+    "names": "name", "friends": "friend", "children": "child",
+    "documents": "document", "songs": "song", "flights": "flight",
+    "hotels": "hotel", "restaurants": "restaurant", "accounts": "account",
+    "websites": "website", "birthdays": "birthday", "nicknames": "nickname",
+}
+
+_SEMANTIC_TOKEN_MAP: dict[str, frozenset[str]] = {}
+for _synonym_group in _SEMANTIC_SYNONYM_SETS:
+    for _synonym_token in _synonym_group:
+        _SEMANTIC_TOKEN_MAP[_synonym_token] = frozenset(_synonym_group)
+del _synonym_group, _synonym_token
+
+
+def _semantic_expand(tokens: list[str]) -> set[str]:
+    """Token set plus deterministic expansions: synonym equivalents
+    and singular word forms. Additive only -- original tokens stay, so
+    expansion can only add recall, never remove it."""
+    expanded: set[str] = set(tokens)
+    for token in tokens:
+        equivalents = _SEMANTIC_TOKEN_MAP.get(token)
+        if equivalents:
+            expanded.update(equivalents)
+        singular = _SEMANTIC_PLURAL_TO_SINGULAR.get(token)
+        if singular:
+            expanded.add(singular)
+    return expanded
+
+
+def _semantic_score(
+    query_tokens: list[str], doc_tokens: list[str],
+) -> float:
+    """Fallback semantic coverage in [0, 1]: the share of the query's
+    expanded token set also present in the document's expanded set.
+    0.0 when nothing overlaps -- then the caller behaves exactly as
+    before Q8."""
+    query_expanded = _semantic_expand(query_tokens)
+    if not query_expanded:
+        return 0.0
+    doc_expanded = _semantic_expand(doc_tokens)
+    hits = query_expanded & doc_expanded
+    if not hits:
+        return 0.0
+    return len(hits) / len(query_expanded)
+
+
 _PREFERENCE_SCOPE_RE = re.compile(
     r"(?:回答|回复|回应|答复|answer|repl(?:y|ies)|respond|responses?)", re.IGNORECASE
 )
@@ -1705,6 +1839,12 @@ class StructuredMemory:
         their ``created_at`` is at or before ``as_of``) -- expiry does
         not rewrite history. No vector side, no Qdrant, no embedding, no
         network -- deterministic, zero-token.
+
+        Q8 adds a lightweight semantic fallback (deterministic
+        synonym/word-form expansion, code-local table): candidates the
+        primary signals drop can be rescued and are appended after all
+        primary hits with ``matched_by="semantic"``. When the fallback
+        finds nothing, the result is identical to the pre-Q8 behaviour.
         """
         count = max(0, min(10, int(max_facts)))
         query_norm = self._normalize(query)
@@ -1722,7 +1862,8 @@ class StructuredMemory:
         raw_scores = _hybrid_bm25(query_tokens, docs_tokens)
         top = max(raw_scores) if raw_scores else 0.0
         scored: list[dict[str, Any]] = []
-        for cand, raw in zip(candidates, raw_scores):
+        rescued: list[dict[str, Any]] = []
+        for cand, raw, doc_tokens in zip(candidates, raw_scores, docs_tokens):
             keyword = raw / top if top > 0 else 0.0
             entity, matched_alias = _hybrid_entity_score(
                 query_norm, query_tokens, cand["key"], cand["aliases"]
@@ -1734,9 +1875,37 @@ class StructuredMemory:
                     exact_alias = alias
                     break
             exact = 1.0 if exact_key or exact_alias is not None else 0.0
-            if keyword == 0.0 and entity == 0.0 and exact == 0.0:
-                continue
             recency = _hybrid_recency(cand["valid_at"])
+            if keyword == 0.0 and entity == 0.0 and exact == 0.0:
+                # Q8 secondary recall: the primary signals dropped this
+                # candidate; the lightweight semantic fallback gets one
+                # last look. Rescued candidates are appended AFTER all
+                # primary hits -- the fallback never reorders or rescores
+                # what the primary signals already returned.
+                semantic = _semantic_score(query_tokens, doc_tokens)
+                if semantic == 0.0:
+                    continue
+                rescued.append({
+                    "key": cand["key"],
+                    "value": cand["value"],
+                    "score": (
+                        _HYBRID_WEIGHT_SEMANTIC * semantic
+                        + _HYBRID_WEIGHT_RECENCY * recency
+                    ),
+                    "signals": {
+                        "keyword": 0.0,
+                        "entity": 0.0,
+                        "exact": 0.0,
+                        "recency": recency,
+                        "semantic": semantic,
+                    },
+                    "matched_by": "semantic",
+                    "valid_at": cand["valid_at"],
+                    "invalid_at": cand["invalid_at"],
+                    "id": cand["id"],
+                    "linked_memory_ids": cand["linked_memory_ids"],
+                })
+                continue
             score = (
                 _HYBRID_WEIGHT_KEYWORD * keyword
                 + _HYBRID_WEIGHT_ENTITY * entity
@@ -1770,11 +1939,16 @@ class StructuredMemory:
                 "linked_memory_ids": cand["linked_memory_ids"],
             })
         # Deterministic order: score desc, then valid_at desc, then key asc
-        # (stable sorts, least-significant key first).
+        # (stable sorts, least-significant key first). Rescued (semantic
+        # fallback) candidates always rank after every primary hit and
+        # are ordered among themselves the same way.
         scored.sort(key=lambda item: item["key"])
         scored.sort(key=lambda item: str(item["valid_at"] or ""), reverse=True)
         scored.sort(key=lambda item: item["score"], reverse=True)
-        return scored[:count]
+        rescued.sort(key=lambda item: item["key"])
+        rescued.sort(key=lambda item: str(item["valid_at"] or ""), reverse=True)
+        rescued.sort(key=lambda item: item["score"], reverse=True)
+        return (scored + rescued)[:count]
 
     def _hybrid_candidates(self, as_of: Any) -> list[dict[str, Any]]:
         """Candidate versions for hybrid retrieval (one per key).
