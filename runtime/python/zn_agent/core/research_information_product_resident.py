@@ -62,6 +62,16 @@ class ProductResearchInformationResidentRuntime(GenericActionResidentRuntime):
         # Semantic Action Fabric is descriptive/discovery-only. Real effects
         # still pass through this one Body plus existing authority/verification.
         self.action_fabric = build_machine_action_fabric(self.device_capabilities)
+        # Q13 production wiring: the product KernelStore closes the success-
+        # evidence loop. Retrieval asks the store for prior verified counts
+        # (advisory tie-break inside one (availability, score) segment only;
+        # a missing store or a failing lookup means "no evidence", never a
+        # penalty and never hidden -- the fabric treats those as zero).
+        kernel_store = getattr(self, "store", None)
+        if kernel_store is not None:
+            self.action_fabric.set_success_evidence_provider(
+                lambda action_id: kernel_store.get_action_verdict_counts(action_id)[0]
+            )
         # Workspace file actions (P0): the generic agent loop needs real file
         # actions, or "write X to a file" can never execute. They are
         # registered before the provider runtime so the zn.workspace provider
@@ -100,6 +110,17 @@ class ProductResearchInformationResidentRuntime(GenericActionResidentRuntime):
             device_capabilities=self.device_capabilities,
             approval_gate=approval_gate,
         )
+        # Q13 production wiring (continued): every settled post-verification
+        # verdict is written into the product KernelStore at the executor's
+        # settlement point. The executor counts observer failures and never
+        # lets them break execution, so the evidence path is fail-closed by
+        # construction (see register_success_observer's contract).
+        if kernel_store is not None:
+            self.action_executor.register_success_observer(
+                lambda action_id, verified: kernel_store.record_action_verdict(
+                    action_id, verified=verified
+                )
+            )
         register_workspace_file_verification(
             self.action_executor,
             workspace_root=workspace_root,
