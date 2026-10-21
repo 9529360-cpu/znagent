@@ -8,6 +8,7 @@ from typing import Any
 from .budget import CognitiveBudgetManager
 from .capabilities import CapabilityRegistry
 from .completion_observation import CompletionObservationJournal
+from .completion_summary import PITFALL_KEY_PREFIX, SUMMARY_KEY_PREFIX
 from .conversation_driver import ConversationDriver
 from .investigation import InvestigationResult, NativeInvestigator
 from .memory import FactMatch, StructuredMemory
@@ -35,6 +36,19 @@ from .self_model import TaskReadiness
 # falls through to the normal capability/model path -- the weak hit is
 # not injected and never rendered as the answer.
 _ORIENT_HYBRID_MIN_SCORE = 0.55
+
+# PERF-2 follow-up (zn-live regression): completion summaries and
+# pitfalls written by completion_summary.py (``work_summary:`` /
+# ``work_pitfall:`` keys) are system run-logs, not user knowledge --
+# their values are keyword magnets for natural questions, so they
+# crowd the true fact out of a top-1 hybrid window and would even be
+# direct-answered if one ever cleared the threshold. The orient
+# pre-check therefore widens the hybrid window to this many candidates
+# and skips run-log hits before picking the direct-answer candidate.
+# The prefixes are imported from completion_summary (single source of
+# truth); the window size is a locked constant the tests assert on.
+_ORIENT_HYBRID_CANDIDATES = 5
+_ORIENT_RUN_LOG_PREFIXES = (SUMMARY_KEY_PREFIX, PITFALL_KEY_PREFIX)
 
 # PERF-2: a hybrid hit may only short-circuit orient when the task is
 # phrased as a question (or an explicit tell-me lookup). A task that
@@ -1101,26 +1115,40 @@ class ZNResidentRuntime:
         """Orient pre-check memory lookup (PERF-2): exact, then hybrid.
 
         Exact ``recall()`` runs first and its semantics are unchanged.
-        Only when it returns ``None`` does ``recall_hybrid()`` get one
-        look: its top hit is promoted to a :class:`FactMatch` only when
+        Only when it returns ``None`` does ``recall_hybrid()`` get a
+        look over ``_ORIENT_HYBRID_CANDIDATES`` hits: run-log hits
+        (keys starting with the ``work_summary:`` / ``work_pitfall:``
+        prefixes owned by completion_summary.py) are skipped -- they
+        are system run-logs, never user knowledge, and direct-answering
+        one is worthless even when it clears the threshold. The first
+        remaining hit is promoted to a :class:`FactMatch` only when
         its fused score reaches ``_ORIENT_HYBRID_MIN_SCORE`` *and* the
         task is phrased as a question (see ``_is_memory_question`` -- an
         instruction that mentions a fact is never short-circuited). A
-        hit that fails either gate returns ``(None, score)`` so the
+        hit that fails either gate, or a window containing only run-log
+        hits, returns ``(None, score)`` / ``(None, None)`` so the
         caller falls through to the normal capability/model path
-        instead of answering from a weak or misused match. Returns
-        ``(match, hybrid_score)`` -- ``hybrid_score`` is ``None`` for an
-        exact hit or when hybrid found nothing at all.
+        instead of answering from a weak, misused, or run-log match.
+        Returns ``(match, hybrid_score)`` -- ``hybrid_score`` is
+        ``None`` for an exact hit or when hybrid found no usable hit.
         Sensitivity/expiry filtering is inherited from the recall paths
         themselves (non-retainable and expired facts surface in neither).
         """
         match = self.memory.recall(task)
         if match is not None:
             return match, None
-        hits = self.memory.recall_hybrid(task, max_facts=1)
-        if not hits:
+        hits = self.memory.recall_hybrid(
+            task, max_facts=_ORIENT_HYBRID_CANDIDATES
+        )
+        candidate = None
+        for hit in hits:
+            if str(hit.get("key") or "").startswith(_ORIENT_RUN_LOG_PREFIXES):
+                continue
+            candidate = hit
+            break
+        if candidate is None:
             return None, None
-        top = hits[0]
+        top = candidate
         try:
             score = float(top.get("score") or 0.0)
         except (TypeError, ValueError):
