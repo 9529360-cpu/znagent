@@ -287,11 +287,14 @@ class ActionExecutionRuntime:
         *,
         approval_gate: ApprovalGate | None = None,
         middlewares: Iterable[ExecutionMiddleware] | None = None,
+        success_observer: Callable[[str, bool], None] | None = None,
     ) -> None:
         self.fabric = fabric
         self.body = body
         self._approval_gate = approval_gate
         self._custom_middlewares: list[ExecutionMiddleware] = list(middlewares or [])
+        self._success_observer = success_observer
+        self._success_observer_failures = 0
         self._observers: dict[str, ObservationReader] = {}
         self._verifiers: dict[str, ObservationVerifier] = {}
         self._approval_scopes: dict[
@@ -304,6 +307,40 @@ class ActionExecutionRuntime:
         self._argument_binders: dict[
             str, Callable[[Mapping[str, Any]], Mapping[str, Any]]
         ] = {}
+
+    def register_success_observer(
+        self, observer: Callable[[str, bool], None] | None
+    ) -> None:
+        """Attach the prior-success evidence recorder (Q13).
+
+        Called once per settled post-verification verdict with
+        ``(action_id, verified)``. Observer errors never fail the execution.
+        """
+        self._success_observer = observer
+
+    def _record_success_evidence(self, execution: ActionExecution) -> None:
+        """Record one settled verdict as per-action success evidence.
+
+        This is the post-verification settlement point: every execute /
+        re-observe path materializes its final verdict here via
+        ``_execution``. Only settled verdicts count; pending / uncertain
+        outcomes are not post-verification evidence. The verdict semantics
+        are untouched -- recording never changes status, verification, or
+        error propagation.
+        """
+        observer = self._success_observer
+        if observer is None:
+            return
+        status = execution.verification.status
+        if status not in ("verified", "failed"):
+            return
+        try:
+            observer(execution.request.action_id, status == "verified")
+        except Exception:
+            # Evidence is advisory: a failing recorder must never change or
+            # break the execution. Count the failure for diagnostics; the
+            # verdict above stands.
+            self._success_observer_failures += 1
 
     def register_middleware(self, middleware: ExecutionMiddleware) -> None:
         """Add a custom middleware run before the approval stage.
@@ -809,8 +846,8 @@ class ActionExecutionRuntime:
             error=error,
         )
 
-    @staticmethod
     def _execution(
+        self,
         request: ActionRequest,
         descriptor: ActionDescriptor,
         started: str,
@@ -823,7 +860,7 @@ class ActionExecutionRuntime:
         execution_id: str | None = None,
     ) -> ActionExecution:
         status: ExecutionStatus = verification.status
-        return ActionExecution(
+        execution = ActionExecution(
             execution_id=execution_id or f"action-{uuid.uuid4().hex[:12]}",
             request=request,
             descriptor=descriptor,
@@ -836,6 +873,11 @@ class ActionExecutionRuntime:
             started_at=started,
             completed_at=utc_now(),
         )
+        # Q13: record settled verdicts as prior success evidence. This is
+        # the single settlement point -- every execution path funnels
+        # through here, and recording changes nothing about the verdict.
+        self._record_success_evidence(execution)
+        return execution
 
 
 def build_machine_action_execution_runtime(
