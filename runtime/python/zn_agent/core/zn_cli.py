@@ -9,11 +9,16 @@ call per command to the already-existing Daemon RPC methods
 ``approval_list`` / ``approval_decide`` / ``memory_list`` / ``team_list``). All policy, execution, approval and
 persistence decisions stay server-side.
 
-``zn model check`` is the one local command: it reads the locally configured
-cognitive routes (the same resolution the resident uses) and runs one bounded
-minimal probe per route, so the model channel can be verified before/without
-a running resident. It never prints credentials: only route identities and
-scrubbed failure reasons are reported.
+``zn model check`` and ``zn skill usage`` / ``zn skill prune`` are local
+commands too: ``model check`` reads the locally configured cognitive routes
+(the same resolution the resident uses) and runs one bounded minimal probe
+per route, so the model channel can be verified before/without a running
+resident; the ``skill`` commands read the local skills root through the T2
+read-only query surface (usage_count / last_used / zero-hit / dormant
+lists) and never write or delete. ``zn skill prune`` is always a dry run:
+deleting a dormant skill still needs human confirmation and is not wired
+into the CLI. The model probe never prints credentials: only route
+identities and scrubbed failure reasons are reported.
 
 Fail-closed rules:
 
@@ -678,6 +683,123 @@ def _cmd_connector_status_offline(args: argparse.Namespace, error: str) -> int:
     return 0
 
 
+def _skill_store():
+    """Local skill store for the read-only ``skill`` commands (no RPC)."""
+
+    from .skills import SkillStore
+
+    return SkillStore()
+
+
+def _cmd_skill_usage(args: argparse.Namespace) -> int:
+    """Show per-skill body-load usage stats. Local only, no resident RPC.
+
+    Reuses the T2 read-only query surface (:meth:`SkillStore.list_skill_usage`
+    and :meth:`SkillStore.dormant_skills`): usage_count / last_used, the
+    zero-hit (never loaded) case, and the long-dormant list. Never records,
+    never writes, never deletes.
+    """
+
+    store = _skill_store()
+    dormant_days = args.dormant_days
+    dormant_names = {
+        item.name for item in store.dormant_skills(dormant_days=dormant_days)
+    }
+    rows = [
+        {
+            "name": item.name,
+            "usage_count": item.usage_count,
+            "last_used": item.last_used or None,
+            "never_used": item.never_used,
+            "dormant": item.name in dormant_names,
+        }
+        for item in store.list_skill_usage()
+    ]
+    if args.json:
+        print(
+            json.dumps(
+                {"dormant_days": dormant_days, "skills": rows},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    if not rows:
+        print("no skills discovered")
+        return 0
+    print(f"skill usage (dormant = body unused for > {dormant_days} days):")
+    for row in rows:
+        last = row["last_used"] or "never"
+        flags = "dormant" if row["dormant"] else ""
+        print(
+            f"{_one_line(row['name'], limit=32):32} "
+            f"uses={row['usage_count']:<6} "
+            f"last_used={_one_line(last, limit=32):32} "
+            f"{flags}"
+        )
+    return 0
+
+
+def _cmd_skill_prune(args: argparse.Namespace) -> int:
+    """List dormant skill candidates. Always dry-run: never deletes anything.
+
+    Deletion still needs human confirmation and is deliberately not wired
+    into this command; passing ``--no-dry-run`` is refused outright.
+    """
+
+    if not args.dry_run:
+        raise CliError(
+            "refusing to prune skills: deleting a dormant skill needs human "
+            "confirmation; rerun without --no-dry-run to list the candidates"
+        )
+    store = _skill_store()
+    dormant_days = args.dormant_days
+    dormant = store.dormant_skills(dormant_days=dormant_days)
+    rows = [
+        {
+            "name": item.name,
+            "usage_count": item.usage_count,
+            "last_used": item.last_used or None,
+        }
+        for item in dormant
+    ]
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "dry_run": True,
+                    "deleted": [],
+                    "dormant_days": dormant_days,
+                    "dormant": rows,
+                },
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
+        return 0
+    if not rows:
+        print(
+            f"no dormant skills (all bodies used within the last "
+            f"{dormant_days} days); nothing to prune"
+        )
+        return 0
+    print(
+        f"dry-run: nothing deleted; {len(rows)} dormant skill(s) "
+        f"(body unused for > {dormant_days} days):"
+    )
+    for row in rows:
+        print(
+            f"{_one_line(row['name'], limit=32):32} "
+            f"uses={row['usage_count']:<6} "
+            f"last_used={_one_line(row['last_used'] or 'never', limit=32):32}"
+        )
+    print(
+        "deleting a dormant skill needs human confirmation; "
+        "this command only lists candidates"
+    )
+    return 0
+
+
 def _cmd_model_check(args: argparse.Namespace) -> int:
     """Probe the locally configured model routes. Local only, no resident RPC."""
 
@@ -818,6 +940,47 @@ def build_parser() -> argparse.ArgumentParser:
     )
     team_list.add_argument("--json", action="store_true", help="print raw JSON")
     team_list.set_defaults(func=_cmd_team_list)
+
+    skill = sub.add_parser("skill", help="inspect skill usage statistics")
+    skill_sub = skill.add_subparsers(
+        dest="skill_command", metavar="subcommand", required=True
+    )
+
+    skill_usage = skill_sub.add_parser(
+        "usage",
+        help="show per-skill usage stats (local, read-only, no resident needed)",
+    )
+    skill_usage.add_argument(
+        "--dormant-days",
+        type=lambda v: _require_positive_int(
+            v, name="--dormant-days", maximum=3650
+        ),
+        default=30,
+        help="skills unused longer than this are flagged dormant (default 30)",
+    )
+    skill_usage.add_argument("--json", action="store_true", help="print raw JSON")
+    skill_usage.set_defaults(func=_cmd_skill_usage)
+
+    skill_prune = skill_sub.add_parser(
+        "prune",
+        help="list dormant skill candidates (dry-run only, never deletes)",
+    )
+    skill_prune.add_argument(
+        "--dormant-days",
+        type=lambda v: _require_positive_int(
+            v, name="--dormant-days", maximum=3650
+        ),
+        default=30,
+        help="skills unused longer than this are listed as dormant (default 30)",
+    )
+    skill_prune.add_argument(
+        "--dry-run",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="list candidates without deleting (default); --no-dry-run is refused",
+    )
+    skill_prune.add_argument("--json", action="store_true", help="print raw JSON")
+    skill_prune.set_defaults(func=_cmd_skill_prune)
 
     model = sub.add_parser("model", help="check the local model channel")
     model_sub = model.add_subparsers(

@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -754,3 +755,154 @@ class ZnCliResidentIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ZnCliSkillUsageTests(unittest.TestCase):
+    """``zn skill usage`` / ``zn skill prune`` against the real T2 query surface."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.now = datetime.now(timezone.utc)
+        self.skills_root = self._make_skills_root(
+            {
+                "alpha": (5, (self.now - timedelta(hours=2)).isoformat()),
+                "beta": (2, (self.now - timedelta(days=60)).isoformat()),
+                "gamma": (0, None),
+            }
+        )
+
+    def _make_skills_root(self, entries: dict[str, tuple[int, str | None]]) -> Path:
+        root = Path(self.tmp.name) / "skills"
+        for name in entries:
+            bundle = root / name
+            bundle.mkdir(parents=True, exist_ok=True)
+            (bundle / "skill.md").write_text(
+                f"---\nname: {name}\ndescription: test skill {name}\n"
+                f"version: 0.1.0\n---\n\nBody for {name}.\n",
+                encoding="utf-8",
+            )
+        payload = {
+            "version": 1,
+            "skills": {
+                name: {"usage_count": count, "last_used": last_used or ""}
+                for name, (count, last_used) in entries.items()
+            },
+        }
+        (root / "skills.usage.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+        return root
+
+    def _patch_store(self):
+        from zn_agent.core import zn_cli
+        from zn_agent.core.skills import SkillStore
+
+        patcher = mock.patch.object(
+            zn_cli, "_skill_store", lambda: SkillStore(root=self.skills_root)
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _run_local(self, argv: list[str]) -> tuple[int, str, str]:
+        from zn_agent.core.zn_cli import run
+
+        self._patch_store()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = run(argv)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def _line_for(self, out: str, name: str) -> str:
+        for line in out.splitlines():
+            if name in line:
+                return line
+        self.fail(f"no output line mentions {name!r}:\n{out}")
+
+    def _snapshot(self) -> set[str]:
+        return {
+            str(path.relative_to(self.skills_root))
+            for path in self.skills_root.rglob("*")
+        }
+
+    def test_skill_usage_queries_real_query_surface(self):
+        code, out, err = self._run_local(
+            ["skill", "usage", "--dormant-days", "30"]
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("uses=5", self._line_for(out, "alpha"))
+        self.assertNotIn("dormant", self._line_for(out, "alpha"))
+        self.assertIn("uses=2", self._line_for(out, "beta"))
+        self.assertIn("dormant", self._line_for(out, "beta"))
+        gamma_line = self._line_for(out, "gamma")
+        self.assertIn("uses=0", gamma_line)
+        self.assertIn("never", gamma_line)
+        self.assertIn("dormant", gamma_line)
+
+    def test_skill_usage_json_and_dormant_days_threshold(self):
+        code, out, err = self._run_local(
+            ["skill", "usage", "--dormant-days", "90", "--json"]
+        )
+        self.assertEqual(code, 0, err)
+        parsed = json.loads(out)
+        self.assertEqual(parsed["dormant_days"], 90)
+        rows = {row["name"]: row for row in parsed["skills"]}
+        self.assertEqual(
+            [rows[name]["usage_count"] for name in ("alpha", "beta", "gamma")],
+            [5, 2, 0],
+        )
+        self.assertFalse(rows["alpha"]["dormant"])
+        # 60 days old is under the 90-day threshold, so only the zero-hit
+        # skill counts as dormant.
+        self.assertFalse(rows["beta"]["dormant"])
+        self.assertTrue(rows["beta"]["never_used"] is False)
+        self.assertTrue(rows["gamma"]["never_used"])
+        self.assertTrue(rows["gamma"]["dormant"])
+
+    def test_skill_prune_dry_run_deletes_nothing(self):
+        before = self._snapshot()
+        code, out, err = self._run_local(
+            ["skill", "prune", "--dormant-days", "30"]
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("dry-run", out)
+        self.assertIn("nothing deleted", out)
+        self.assertIn("beta", out)
+        self.assertIn("gamma", out)
+        self.assertNotIn("alpha", out)
+        self.assertEqual(self._snapshot(), before)
+
+    def test_skill_prune_no_dry_run_refused_with_readable_reason(self):
+        before = self._snapshot()
+        code, out, err = self._run_local(["skill", "prune", "--no-dry-run"])
+        self.assertEqual(code, 1)
+        self.assertIn("human confirmation", err)
+        self.assertEqual(self._snapshot(), before)
+
+    def test_skill_usage_invalid_dormant_days_exit_2(self):
+        from zn_agent.core.zn_cli import run
+
+        for argv in (["skill", "usage", "--dormant-days", "0"],
+                     ["skill", "prune", "--dormant-days", "99999"]):
+            with self.subTest(argv=argv):
+                with self.assertRaises(SystemExit) as caught:
+                    run(argv)
+                self.assertEqual(caught.exception.code, 2)
+
+    def test_skill_usage_no_skills_discovered(self):
+        empty_root = Path(self.tmp.name) / "empty-skills"
+        from zn_agent.core import zn_cli
+        from zn_agent.core.skills import SkillStore
+
+        with mock.patch.object(
+            zn_cli, "_skill_store", lambda: SkillStore(root=empty_root)
+        ):
+            stdout, stderr = io.StringIO(), io.StringIO()
+            from zn_agent.core.zn_cli import run
+
+            with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
+                stderr
+            ):
+                code = run(["skill", "usage"])
+        self.assertEqual(code, 0, stderr.getvalue())
+        self.assertIn("no skills discovered", stdout.getvalue())
