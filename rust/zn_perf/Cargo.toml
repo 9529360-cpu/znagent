@@ -1,0 +1,16 @@
+[package]
+name = "zn_perf_ext"
+version = "0.1.0"
+edition = "2021"
+description = "ZN performance-variant pilot: Rust port of CPU hotspots (PyO3 extension, optional import with pure-Python fallback)"
+
+[lib]
+name = "zn_perf_ext"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.23", features = ["extension-module"] }
+
+[profile.release]
+lto = true
+codegen-units = 1

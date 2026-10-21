@@ -36,6 +36,7 @@ proves task completion.
 """
 
 import math
+import os
 import re
 import stat
 import unicodedata
@@ -61,6 +62,24 @@ _NO_SKILL_FALLBACK = (
     "this request, do not claim a skill was applied, and ask the user for "
     "clarification when the task needs a skill-specific procedure."
 )
+
+
+# PERF-1: optional Rust variant of the per-header cue matcher (see
+# ``rust/zn_perf``). The extension is built separately and imported
+# opportunistically: when it is absent (CI, clean installs, platforms without
+# a Rust build) the pure-Python path below runs instead, with identical
+# behavior. ``ZN_PERF_RUST=0`` forces the Python path for diagnosis.
+def _load_rust_cue_matcher():
+    if os.environ.get("ZN_PERF_RUST", "").strip() == "0":
+        return None
+    try:
+        from zn_perf_ext import best_cue_for_header as rust_best_cue
+    except ImportError:
+        return None
+    return rust_best_cue
+
+
+_RUST_BEST_CUE = _load_rust_cue_matcher()
 
 
 def _clean(value: object) -> str:
@@ -202,6 +221,26 @@ class SkillMatch:
 
 
 def _best_cue_for_header(normalized_query: str, header: SkillHeader) -> str:
+    # PERF-1: the Rust variant takes over when the extension is importable.
+    # Inputs are the same normalized strings the Python path uses; the
+    # result contract (longest occurring cue, "" when none) is identical.
+    if _RUST_BEST_CUE is not None:
+        return _RUST_BEST_CUE(
+            normalized_query,
+            _normalize(header.name),
+            _normalize(header.description),
+        )
+    return _best_cue_for_header_py(normalized_query, header)
+
+
+def _best_cue_for_header_py(normalized_query: str, header: SkillHeader) -> str:
+    """Pure-Python cue matcher: reference implementation and fallback.
+
+    ``_best_cue_for_header`` delegates here when the Rust extension is not
+    importable. Behavior must stay identical to the Rust port
+    (``rust/zn_perf/src/lib.rs``); the equivalence test
+    ``test_skill_routing_rust_equiv.py`` pins them together.
+    """
     cues = {_normalize(header.name), _normalize(header.description)}
     words = _normalize(header.description).split()
     for width in range(min(4, len(words)), 1, -1):
