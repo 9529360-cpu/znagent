@@ -9,6 +9,12 @@ call per command to the already-existing Daemon RPC methods
 ``approval_list`` / ``approval_decide`` / ``memory_list`` / ``team_list``). All policy, execution, approval and
 persistence decisions stay server-side.
 
+Running ``zn`` with no subcommand (or ``zn chat``) opens the interactive
+chat REPL (:mod:`zn_agent.core.cli_repl`, TERM-1): natural-language turns
+on one durable work thread, driven entirely through the same existing
+RPC surface (``work_create`` / ``work_start`` / ``work_progress`` /
+``work_cancel`` / ``work_get``).
+
 ``zn model check`` and ``zn skill usage`` / ``zn skill prune`` are local
 commands too: ``model check`` reads the locally configured cognitive routes
 (the same resolution the resident uses) and runs one bounded minimal probe
@@ -1046,6 +1052,14 @@ def _cmd_skill_prune(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_chat(args: argparse.Namespace) -> int:
+    """Open the interactive chat REPL (TERM-1) on the resident endpoint."""
+
+    from .cli_repl import ChatSession
+
+    return ChatSession(_client(args)).run()
+
+
 def _cmd_model_check(args: argparse.Namespace) -> int:
     """Probe the locally configured model routes. Local only, no resident RPC."""
 
@@ -1080,8 +1094,9 @@ def _cmd_model_check(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zn",
-        description="ZN terminal client: submit work and decide approvals "
-        "through the running resident. The resident owns all execution.",
+        description="ZN terminal client: talk to ZN through the running "
+        "resident. The resident owns all execution. Run with no command "
+        "(or `zn chat`) to open the interactive conversation.",
     )
     parser.add_argument(
         "--endpoint",
@@ -1096,6 +1111,12 @@ def build_parser() -> argparse.ArgumentParser:
         help=f"seconds to wait for the resident per RPC (default {DEFAULT_TIMEOUT_SECONDS:g})",
     )
     sub = parser.add_subparsers(dest="command", metavar="command")
+
+    chat = sub.add_parser(
+        "chat",
+        help="talk to ZN interactively (same as running zn with no command)",
+    )
+    chat.set_defaults(func=_cmd_chat)
 
     work = sub.add_parser("work", help="list, inspect, or submit resident work")
     work_sub = work.add_subparsers(dest="work_command", metavar="subcommand", required=True)
@@ -1421,11 +1442,12 @@ def run(argv: list[str] | None = None) -> int:
 
     parser = build_parser()
     args = parser.parse_args(argv)
-    if not hasattr(args, "func"):
-        parser.print_help(file=sys.stderr)
-        return 2
     if args.timeout <= 0:
         parser.error("--timeout must be positive")
+    if not hasattr(args, "func"):
+        # TERM-1: bare `zn` is the front door -- it opens the interactive
+        # chat REPL instead of printing help at the user.
+        args.func = _cmd_chat
     try:
         return int(args.func(args))
     except CliError as exc:
