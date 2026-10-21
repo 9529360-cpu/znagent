@@ -7,6 +7,7 @@ from zn_agent.core.models import utc_now
 from zn_agent.core.project_team import assemble_team
 from zn_agent.core.steerable_work import WorkItem
 from zn_agent.core.team_coordinator import TeamCoordinator
+from zn_agent.core.team_task_state import TeamTaskStateStore
 
 
 def make_item(item_id, thread_id, title, status="proposed", deps=(), parent="root-1"):
@@ -152,6 +153,114 @@ class CoordinatorTests(unittest.TestCase):
         coord = TeamCoordinator(team=team, root_work_item_id="root-1")
         decisions = coord.step(ledger, runs={})
         self.assertTrue(all(d.action == "wait" for d in decisions))
+
+
+class TaskStateMirrorTests(unittest.TestCase):
+    """DSH-2 (T1): mirror_decision wired into the coordinator dispatch /
+    complete path as a never-raising observer (AF-3 progress-ledger
+    pattern: optional-in, off when None)."""
+
+    def test_dispatch_then_complete_mirror_to_snapshots(self):
+        team = make_team()
+        pid = team.plan[0].item_id
+        item1 = make_item(pid, "thread-1", "t1")
+        ledger = FakeLedger([item1], {pid: ready()})
+        store = TeamTaskStateStore()
+        store.sync_from_team(team)
+        coord = TeamCoordinator(team=team, root_work_item_id="root-1")
+
+        decisions = coord.step(ledger, runs={}, task_state_store=store)
+        self.assertEqual(decisions[0].action, "dispatch")
+        snap = store.get_task(pid)
+        self.assertEqual(snap.status, "in_progress")
+        self.assertEqual(snap.revision, 2)
+        self.assertEqual(snap.history[-1]["reason"], "coordinator:dispatch")
+
+        run = make_run(pid, claimed_completion=True,
+                       verification_status="verified", state="finished")
+        decisions = coord.step(
+            ledger, runs={pid: run}, task_state_store=store)
+        self.assertEqual(decisions[0].action, "complete")
+        snap = store.get_task(pid)
+        self.assertEqual(snap.status, "done")
+        self.assertEqual(snap.revision, 3)
+        self.assertEqual(snap.history[-1]["reason"], "coordinator:complete")
+
+    def test_mirror_never_changes_decisions(self):
+        team = make_team()
+        pid = team.plan[0].item_id
+        item1 = make_item(pid, "thread-1", "t1")
+        ledger = FakeLedger([item1], {pid: ready()})
+        store = TeamTaskStateStore()
+        store.sync_from_team(team)
+        coord = TeamCoordinator(team=team, root_work_item_id="root-1")
+
+        plain = coord.step(ledger, runs={})
+        mirrored = coord.step(ledger, runs={}, task_state_store=store)
+        self.assertEqual(
+            [(d.action, d.work_item_id, d.reason) for d in mirrored],
+            [(d.action, d.work_item_id, d.reason) for d in plain],
+        )
+
+    def test_mirror_skips_unknown_tasks(self):
+        team = make_team()
+        pid = team.plan[0].item_id
+        item1 = make_item(pid, "thread-1", "t1")
+        ledger = FakeLedger([item1], {pid: ready()})
+        store = TeamTaskStateStore()  # never synced: knows no tasks
+        coord = TeamCoordinator(team=team, root_work_item_id="root-1")
+
+        decisions = coord.step(ledger, runs={}, task_state_store=store)
+        self.assertEqual(decisions[0].action, "dispatch")
+        self.assertEqual(store.list_tasks(), [])
+
+    def test_mirror_translates_id_map(self):
+        team = make_team()
+        pid = team.plan[0].item_id
+        item1 = make_item("work-1", "thread-1", "t1")
+        ledger = FakeLedger([item1], {"work-1": ready()})
+        store = TeamTaskStateStore()
+        store.sync_from_team(team)  # snapshots keyed by plan item id
+        coord = TeamCoordinator(team=team, root_work_item_id="root-1")
+
+        decisions = coord.step(
+            ledger, runs={}, id_map={pid: "work-1"}, task_state_store=store)
+        self.assertEqual(decisions[0].action, "dispatch")
+        self.assertEqual(decisions[0].work_item_id, "work-1")
+        snap = store.get_task(pid)
+        self.assertEqual(snap.status, "in_progress")
+
+    def test_mirror_skips_same_status_no_revision_consumed(self):
+        team = make_team()
+        pid = team.plan[0].item_id
+        item1 = make_item(pid, "thread-1", "t1")
+        ledger = FakeLedger([item1], {pid: ready()})
+        store = TeamTaskStateStore()
+        store.sync_from_team(team)
+        before = store.update_task(pid, expected_revision=1,
+                                   status="in_progress")
+        coord = TeamCoordinator(team=team, root_work_item_id="root-1")
+
+        decisions = coord.step(ledger, runs={}, task_state_store=store)
+        self.assertEqual(decisions[0].action, "dispatch")
+        after = store.get_task(pid)
+        self.assertEqual(after.status, "in_progress")
+        self.assertEqual(after.revision, before.revision)
+
+    def test_mirror_never_raises_on_broken_store(self):
+        class BrokenStore(TeamTaskStateStore):
+            def mirror_decision(self, decision, *, reason=""):
+                raise RuntimeError("boom")
+
+        team = make_team()
+        pid = team.plan[0].item_id
+        item1 = make_item(pid, "thread-1", "t1")
+        ledger = FakeLedger([item1], {pid: ready()})
+        coord = TeamCoordinator(team=team, root_work_item_id="root-1")
+
+        decisions = coord.step(
+            ledger, runs={}, task_state_store=BrokenStore())
+        self.assertEqual(decisions[0].action, "dispatch")
 
 
 if __name__ == "__main__":
