@@ -913,10 +913,15 @@ class ResidentRpcServer:
             aliases = params.get("aliases") or []
             if not isinstance(aliases, list):
                 raise ValueError("aliases must be a list")
+            # Q11: optional sensitivity tier; validated inside
+            # StructuredMemory.remember / normalize_sensitivity.
+            from .store import SENSITIVITY_UNSET
+
             self.resident.memory.remember(
                 key,
                 params.get("value"),
                 aliases=tuple(str(value) for value in aliases),
+                sensitivity=params.get("sensitivity", SENSITIVITY_UNSET),
             )
             result = {"saved": True, "key": key}
         elif method == "forget":
@@ -928,7 +933,9 @@ class ResidentRpcServer:
         elif method == "memory_list":
             # Read-only inventory of durable facts. The fact *values* are
             # deliberately omitted -- a value requires an explicit recall --
-            # so listing memory never leaks stored content.
+            # so listing memory never leaks stored content. Q11: the
+            # sensitivity tier is shown so the marker is visible (the fact
+            # itself stays manageable even when it is non_retainable).
             facts = self.resident.memory.store.list_facts()
             deep_keys = TwoLevelMemory(self.resident.memory).deep_keys()
             result = [
@@ -937,6 +944,7 @@ class ResidentRpcServer:
                     "aliases": list(fact.get("aliases") or ()),
                     "updated_at": fact.get("updated_at"),
                     "tier": TIER_DEEP if fact["key"] in deep_keys else TIER_HOT,
+                    "sensitivity": fact.get("sensitivity") or "normal",
                 }
                 for fact in facts[: self._limit(params)]
             ]

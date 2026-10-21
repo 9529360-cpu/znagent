@@ -491,6 +491,7 @@ def _cmd_memory_list(args: argparse.Namespace) -> int:
         )
         print(
             f"{_one_line(item.get('key'), limit=60)}  tier={_one_line(item.get('tier'))}  "
+            f"sensitivity={_one_line(item.get('sensitivity') or 'normal')}  "
             f"aliases={alias_text}  updated={_one_line(item.get('updated_at'))}"
         )
     return 0

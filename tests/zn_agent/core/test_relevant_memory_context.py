@@ -133,7 +133,7 @@ class RelevantMemoryContextTests(unittest.TestCase):
         self.memory.remember("good", "available", aliases=("active project",))
         self.memory.remember("huge", "x" * 100000, aliases=("active project",))
         with self.store._lock, self.store._conn:
-            self.store._conn.execute("INSERT INTO facts VALUES(?,?,?,?,?,?)", ("bad", "{", "[]", "", "", None))
+            self.store._conn.execute("INSERT INTO facts VALUES(?,?,?,?,?,?,?)", ("bad", "{", "[]", "", "", None, "normal"))
         result = self.memory.relevant_context("active project")
         # CM-3: the oversized value is replaced whole at capture, so it
         # now surfaces as a short redaction marker instead of being
