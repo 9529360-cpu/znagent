@@ -24,6 +24,7 @@ from zn_agent.core.resident_server import ResidentSocketService
 from zn_agent.core.zn_cli import (
     ResidentClient,
     _format_approval_card,
+    _long_text,
     _pid_is_dead,
     load_endpoint,
     run,
@@ -596,6 +597,182 @@ class ZnCliUnitTests(_CliHarness):
         with self.assertRaises(Exception) as caught:
             load_endpoint(str(self.endpoint_path))
         self.assertIn("secret", str(caught.exception))
+
+
+class ZnCliLongTextT24Tests(_CliHarness):
+    """T2-4: replies keep their line structure; long text paginates on TTY only.
+
+    Non-TTY / NO_COLOR output always carries the full text (script-safe, no
+    silent drops); only a real human terminal truncates to 60 lines, with an
+    overflow note pointing at the full source.
+    """
+
+    def _submit_result(self, response):
+        return {
+            "thread": {"id": "thread-1", "title": "T"},
+            "run": {
+                "event_id": "ev-1",
+                "success": True,
+                "cancelled": False,
+                "execution_path": "direct",
+                "model_invocations": 2,
+                "response": response,
+            },
+            "recovery_required": False,
+        }
+
+    def _run_on_tty(self, argv, handler, no_color=False):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        if no_color:
+            env["NO_COLOR"] = "1"
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def test_long_text_unit_keeps_structure_and_sanitizes(self):
+        with mock.patch("zn_agent.core.zn_cli.use_color", return_value=False):
+            self.assertEqual(_long_text("a\nb\nc"), "a\nb\nc")
+            self.assertEqual(_long_text("a\tb"), "a\tb")  # tabs survive
+            # control characters are neutralized, newlines are not
+            self.assertEqual(_long_text("a\x00b\nc\x07d"), "a b\nc d")
+            # a trailing newline does not inflate the line count
+            self.assertEqual(_long_text("x\ny\n"), "x\ny")
+            self.assertEqual(_long_text(""), "")
+            # non-TTY: over-long text is complete, never silently dropped
+            long_text = "\n".join(f"LN{i:03d}" for i in range(100))
+            self.assertEqual(_long_text(long_text), long_text)
+
+    def test_long_text_unit_paginates_on_tty(self):
+        with mock.patch("zn_agent.core.zn_cli.use_color", return_value=True):
+            long_text = "\n".join(f"LN{i:03d}" for i in range(100))
+            rendered = _long_text(long_text)
+            self.assertIn("LN059", rendered)
+            self.assertNotIn("LN060", rendered)
+            self.assertIn("全文共 100 行，仅显示前 60 行", rendered)
+            # exactly 60 lines: no truncation even on TTY
+            sixty = "\n".join(f"LN{i:03d}" for i in range(60))
+            self.assertEqual(_long_text(sixty), sixty)
+            noted = _long_text(
+                long_text, overflow_suffix="；全文见 `zn work get --thread-id t`"
+            )
+            self.assertIn("全文见 `zn work get --thread-id t`", noted)
+
+    def test_submit_response_keeps_multiline(self):
+        response = "第一行\n第二行\n第三行"
+        code, out, err = self._run(
+            ["work", "submit", "--thread-id", "thread-1", "--task", "do it"],
+            self._handler({"work_submit": self._submit_result(response)}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("第一行\n第二行\n第三行", out)
+
+    def test_submit_long_response_truncates_on_tty_with_pointer(self):
+        response = "\n".join(f"LN{i:03d}" for i in range(100))
+        code, out, err = self._run_on_tty(
+            ["work", "submit", "--thread-id", "thread-1", "--task", "do it"],
+            self._handler({"work_submit": self._submit_result(response)}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("LN059", out)
+        self.assertNotIn("LN060", out)
+        self.assertIn("全文见 `zn work get --thread-id thread-1`", out)
+
+    def test_submit_long_response_full_on_non_tty(self):
+        response = "\n".join(f"LN{i:03d}" for i in range(100))
+        code, out, err = self._run(
+            ["work", "submit", "--thread-id", "thread-1", "--task", "do it"],
+            self._handler({"work_submit": self._submit_result(response)}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("LN099", out)
+        self.assertNotIn("全文见", out)
+
+    def test_submit_long_response_full_with_no_color(self):
+        response = "\n".join(f"LN{i:03d}" for i in range(100))
+        code, out, err = self._run_on_tty(
+            ["work", "submit", "--thread-id", "thread-1", "--task", "do it"],
+            self._handler({"work_submit": self._submit_result(response)}),
+            no_color=True,
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("LN099", out)
+        self.assertNotIn("全文见", out)
+
+    def test_work_get_message_keeps_multiline(self):
+        snapshot = {
+            "id": "thread-1",
+            "title": "T",
+            "created_at": "2026-10-19T05:00:00Z",
+            "updated_at": "2026-10-19T06:00:00Z",
+            "messages": [
+                {
+                    "created_at": "2026-10-19T05:02:00Z",
+                    "role": "assistant",
+                    "text": "第一段\n\n第二段\n- 列表项",
+                },
+            ],
+        }
+        code, out, err = self._run(
+            ["work", "get", "--thread-id", "thread-1"],
+            self._handler({"work_get": snapshot}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("  第一段\n  \n  第二段\n  - 列表项", out)
+
+    def test_timeline_long_text_full_on_non_tty(self):
+        entry = {
+            "at": "2026-10-21T10:00:00Z",
+            "kind": "message",
+            "from_author": "agent-a",
+            "text": "\n".join(f"TL{i:03d}" for i in range(70)),
+        }
+        code, out, err = self._run(
+            ["team", "timeline", "--thread-id", "thread-1"],
+            self._handler(
+                {
+                    "team_timeline": {
+                        "team_id": "team-1",
+                        "members": [],
+                        "entries": [entry],
+                    }
+                }
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("TL069", out)
+        self.assertNotIn("仅显示前", out)
+
+    def test_timeline_long_text_truncates_on_tty(self):
+        entry = {
+            "at": "2026-10-21T10:00:00Z",
+            "kind": "message",
+            "from_author": "agent-a",
+            "text": "\n".join(f"TL{i:03d}" for i in range(70)),
+        }
+        code, out, err = self._run_on_tty(
+            ["team", "timeline", "--thread-id", "thread-1"],
+            self._handler(
+                {
+                    "team_timeline": {
+                        "team_id": "team-1",
+                        "members": [],
+                        "entries": [entry],
+                    }
+                }
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("TL060", out)
+        self.assertIn("仅显示前 60 行", out)
 
 
 class ZnCliApprovalUxT23Tests(_CliHarness):
