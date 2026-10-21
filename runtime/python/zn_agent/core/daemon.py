@@ -36,6 +36,22 @@ from .team_work_owner import TEAM_SPEC_KEY
 from .team_runner import TeamRunner
 
 
+def _try_write_mount_report(report: Any) -> bool:
+    """Persist the connector mount report; False when the cache write fails.
+
+    The status file is only a convenience cache for the daemon-down
+    case, so a failed write is non-fatal (floor-guard-safe quiet
+    helper: the failure is returned, never silently swallowed).
+    """
+    from .connector_autoattach import write_mount_report
+
+    try:
+        write_mount_report(report)
+    except OSError:
+        return False
+    return True
+
+
 class ResidentRpcServer:
     """Newline-delimited JSON-RPC over stdio for the Electron host.
 
@@ -150,6 +166,47 @@ class ResidentRpcServer:
             self._approval_store = ApprovalCardStore(store_path)
         return self._approval_store
 
+    def _connector_reload(self) -> dict[str, Any]:
+        """Hot-reload connectors.yaml: re-read, diff, apply only the delta.
+
+        Q10. A whitelist that fails to load/validate aborts the reload
+        (fail closed): nothing is detached or mounted, the old report
+        stays live, and the failure is reported explicitly instead of
+        being raised. Per-connector mount failures land in the report.
+        """
+        # Local import: keeps the connector wiring in its own merge hunk
+        # (P1-3 precedent) instead of the shared top-level import block.
+        from .connector_autoattach import reload_approved_connectors
+
+        fabric = getattr(self.resident, "action_fabric", None)
+        body = getattr(self.resident, "body", None)
+        if fabric is None or body is None:
+            raise RuntimeError(
+                "connector_reload unavailable: resident exposes no "
+                "action_fabric/body"
+            )
+        try:
+            self.connector_report = reload_approved_connectors(
+                self.connector_report,
+                fabric,
+                body,
+                executor=getattr(self.resident, "action_executor", None),
+            )
+        except ValueError as exc:
+            return {
+                "reload_ok": False,
+                "error": f"connector whitelist failed to load: {exc}",
+                **self.connector_report.to_dict(),
+            }
+        # The status file is only a convenience cache for the
+        # daemon-down case; a failed write never fails the reload.
+        _try_write_mount_report(self.connector_report)
+        return {
+            "reload_ok": True,
+            "error": None,
+            **self.connector_report.to_dict(),
+        }
+
     def serve_forever(self) -> int:
         self.service.acquire()
         self.resident.live_once()
@@ -228,6 +285,10 @@ class ResidentRpcServer:
             if params:
                 raise ValueError("connector_status accepts no execution parameters")
             result = self.connector_report.to_dict()
+        elif method == "connector_reload":
+            if params:
+                raise ValueError("connector_reload accepts no execution parameters")
+            result = self._connector_reload()
         elif method == "suggestions_list":
             result = self.suggestions.list_suggestions(
                 limit=max(1, min(50, int(params.get("limit") or 8))),

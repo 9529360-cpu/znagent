@@ -26,6 +26,14 @@ This module closes that gap:
 - :func:`write_mount_report` persists the last daemon-start report next
   to the config so ``zn connector status`` can show ground truth even
   when the daemon is down.
+- Q10: :func:`reload_approved_connectors` hot-reloads the whitelist
+  without restarting the daemon. It re-reads ``connectors.yaml``,
+  diffs it against the live report, and only mounts newly enabled
+  connectors, detaches removed ones, and remounts changed ones. A
+  whitelist that fails to load/validate aborts the whole reload (fail
+  closed): nothing is detached or mounted and the old report stays
+  live. Per-connector mount failures are recorded in the report and
+  never affect the other connectors or the daemon.
 
 Raw secrets never belong in ``connectors.yaml``: the loader refuses
 credential-shaped values (see :mod:`zn_agent.core.credential_isolation`).
@@ -324,13 +332,33 @@ class ConnectorMountAttempt:
         }
 
 
+def _detach_quietly(attachment: Any) -> bool:
+    """Detach one attachment handle; False when the teardown itself fails.
+
+    A failing detach is reported, never raised: one connector's broken
+    teardown must not block the others (floor-guard-safe quiet helper).
+    """
+    detach = getattr(attachment, "detach", None)
+    if not callable(detach):
+        return True
+    try:
+        detach()
+    except Exception:
+        return False
+    return True
+
+
 @dataclass
 class ConnectorMountReport:
     generated_at: str
     config_path: str
     attempts: list[ConnectorMountAttempt] = field(default_factory=list)
-    # Attachment handles (for detach); never serialized.
-    attachments: list[Any] = field(default_factory=list, repr=False)
+    # Attachment handles keyed by connector name (for selective detach on
+    # hot reload); never serialized.
+    attachments_by_name: dict[str, list[Any]] = field(default_factory=dict, repr=False)
+    # The whitelist entry each connector was mounted with (change
+    # detection for hot reload); never serialized.
+    mounted_config: dict[str, dict[str, Any]] = field(default_factory=dict, repr=False)
 
     @classmethod
     def empty(cls, reason: str) -> "ConnectorMountReport":
@@ -361,11 +389,18 @@ class ConnectorMountReport:
         return sum(1 for attempt in self.attempts if attempt.mounted)
 
     def detach_all(self) -> None:
-        for attachment in self.attachments:
-            detach = getattr(attachment, "detach", None)
-            if callable(detach):
-                detach()
-        self.attachments.clear()
+        self.detach_connectors(list(self.attachments_by_name))
+
+    def detach_connectors(self, names: list[str]) -> None:
+        """Detach (and forget) the named connectors' attachment handles.
+
+        A failing detach never aborts the loop: one connector's broken
+        teardown must not block the others.
+        """
+        for name in names:
+            for attachment in self.attachments_by_name.pop(name, []):
+                _detach_quietly(attachment)
+            self.mounted_config.pop(name, None)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -709,6 +744,68 @@ _WIRES: dict[str, Callable[[_WireContext, Mapping[str, Any]], str]] = {
 # ---------------------------------------------------------------------------
 
 
+def _not_approved_attempt(descriptor: ConnectorDescriptor) -> ConnectorMountAttempt:
+    return ConnectorMountAttempt(
+        name=descriptor.name,
+        r_series=descriptor.r_series,
+        approved=False,
+        mounted=False,
+        reason="not approved in connectors.yaml (default off)",
+        planes=descriptor.planes,
+        requires_credentials=descriptor.requires_credentials,
+    )
+
+
+def _mount_one(
+    descriptor: ConnectorDescriptor,
+    cfg: Mapping[str, Any],
+    ctx: _WireContext,
+    report: ConnectorMountReport,
+) -> None:
+    """Wire one approved connector; failures are recorded, never raised.
+
+    New attachment handles are attributed to the connector by name so a
+    later hot reload can detach exactly this connector.
+    """
+    check = _CHECKS.get(descriptor.name)
+    readiness = check(cfg) if check is not None else None
+    wire = _WIRES[descriptor.name]
+    before = len(ctx.handles)
+    try:
+        note = wire(ctx, cfg)
+    except Exception as exc:
+        # Recorded in the mount report; never silently swallowed.
+        report.attempts.append(
+            ConnectorMountAttempt(
+                name=descriptor.name,
+                r_series=descriptor.r_series,
+                approved=True,
+                mounted=False,
+                reason=f"{type(exc).__name__}: {exc}",
+                planes=descriptor.planes,
+                requires_credentials=descriptor.requires_credentials,
+            )
+        )
+        return
+    if readiness:
+        note = f"{note}; {readiness}"
+    report.attachments_by_name.setdefault(descriptor.name, []).extend(
+        ctx.handles[before:]
+    )
+    report.mounted_config[descriptor.name] = dict(cfg)
+    report.attempts.append(
+        ConnectorMountAttempt(
+            name=descriptor.name,
+            r_series=descriptor.r_series,
+            approved=True,
+            mounted=True,
+            reason=note,
+            planes=descriptor.planes,
+            requires_credentials=descriptor.requires_credentials,
+        )
+    )
+
+
 def attach_approved_connectors(
     fabric: Any,
     body: Any,
@@ -753,53 +850,82 @@ def attach_approved_connectors(
         entry = loaded.get(descriptor.name)
         approved = isinstance(entry, Mapping) and entry.get("enabled") is True
         if not approved:
-            report.attempts.append(
-                ConnectorMountAttempt(
-                    name=descriptor.name,
-                    r_series=descriptor.r_series,
-                    approved=False,
-                    mounted=False,
-                    reason="not approved in connectors.yaml (default off)",
-                    planes=descriptor.planes,
-                    requires_credentials=descriptor.requires_credentials,
-                )
-            )
+            report.attempts.append(_not_approved_attempt(descriptor))
             continue
         cfg: Mapping[str, Any] = entry if isinstance(entry, Mapping) else {}
-        check = _CHECKS.get(descriptor.name)
-        readiness = check(cfg) if check is not None else None
-        wire = _WIRES[descriptor.name]
-        try:
-            note = wire(ctx, cfg)
-        except Exception as exc:
-            # Recorded in the mount report; never silently swallowed.
-            report.attempts.append(
-                ConnectorMountAttempt(
-                    name=descriptor.name,
-                    r_series=descriptor.r_series,
-                    approved=True,
-                    mounted=False,
-                    reason=f"{type(exc).__name__}: {exc}",
-                    planes=descriptor.planes,
-                    requires_credentials=descriptor.requires_credentials,
-                )
-            )
-            continue
-        if readiness:
-            note = f"{note}; {readiness}"
-        report.attempts.append(
-            ConnectorMountAttempt(
-                name=descriptor.name,
-                r_series=descriptor.r_series,
-                approved=True,
-                mounted=True,
-                reason=note,
-                planes=descriptor.planes,
-                requires_credentials=descriptor.requires_credentials,
-            )
-        )
-    report.attachments.extend(ctx.handles)
+        _mount_one(descriptor, cfg, ctx, report)
     return report
+
+
+def reload_approved_connectors(
+    report: ConnectorMountReport,
+    fabric: Any,
+    body: Any,
+    *,
+    executor: Any | None = None,
+    credential_store: Any | None = None,
+    config_path: str | Path | None = None,
+    environ: Mapping[str, str] | None = None,
+) -> ConnectorMountReport:
+    """Hot-reload the connector whitelist: re-read, diff, apply only the delta.
+
+    Only connectors whose approval or config entry changed are touched:
+    newly enabled connectors are mounted, removed ones are detached, and
+    changed ones are detached and remounted; untouched connectors keep
+    their live handles. A single connector's mount failure is recorded
+    in the returned report and never affects the others or the daemon.
+
+    Raises :class:`ValueError` when the whitelist fails to load or
+    validate — in that case nothing is detached or mounted (fail closed)
+    and the caller keeps the old report and the existing mounts.
+    """
+    resolved_path = (
+        Path(config_path).expanduser()
+        if config_path is not None
+        else connector_config_path(environ=environ)
+    )
+    loaded = load_connector_whitelist(resolved_path, environ=environ)
+    ctx = _WireContext(
+        fabric=fabric,
+        body=body,
+        executor=executor,
+        credential_store=credential_store,
+    )
+    new_report = ConnectorMountReport(
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        config_path=str(resolved_path),
+    )
+    old_attempts = {attempt.name: attempt for attempt in report.attempts}
+    for descriptor in CONNECTOR_REGISTRY:
+        entry = loaded.get(descriptor.name)
+        approved = isinstance(entry, Mapping) and entry.get("enabled") is True
+        old_attempt = old_attempts.get(descriptor.name)
+        was_mounted = old_attempt is not None and old_attempt.mounted
+        old_cfg = report.mounted_config.get(descriptor.name)
+        if (
+            approved
+            and was_mounted
+            and old_cfg is not None
+            and isinstance(entry, Mapping)
+            and dict(entry) == old_cfg
+        ):
+            # Unchanged: carry the live attempt, handles, and config over.
+            new_report.attempts.append(old_attempt)
+            handles = report.attachments_by_name.get(descriptor.name)
+            if handles:
+                new_report.attachments_by_name[descriptor.name] = handles
+            new_report.mounted_config[descriptor.name] = old_cfg
+            continue
+        if was_mounted:
+            # Removed or changed: detach the old handles first, so a
+            # failed remount never leaves both the old and the new live.
+            report.detach_connectors([descriptor.name])
+        if not approved:
+            new_report.attempts.append(_not_approved_attempt(descriptor))
+            continue
+        cfg: Mapping[str, Any] = dict(entry) if isinstance(entry, Mapping) else {}
+        _mount_one(descriptor, cfg, ctx, new_report)
+    return new_report
 
 
 # ---------------------------------------------------------------------------

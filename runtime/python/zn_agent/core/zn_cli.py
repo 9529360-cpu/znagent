@@ -579,6 +579,61 @@ def _cmd_connector_status(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _cmd_connector_reload(args: argparse.Namespace) -> int:
+    """Hot-reload connectors.yaml on the running daemon (no restart)."""
+
+    try:
+        result = _client(args).call("connector_reload", {})
+    except CliError as exc:
+        print(
+            "daemon unreachable; connector reload needs a running daemon "
+            f"({_one_line(str(exc), limit=120)})"
+        )
+        return 2
+    if not isinstance(result, dict) or not isinstance(result.get("connectors"), list):
+        raise CliError(f"resident returned an unexpected connector_reload result: {result!r}")
+    failed = sum(
+        1
+        for item in result["connectors"]
+        if isinstance(item, dict) and item.get("approved") and not item.get("mounted")
+    )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+    else:
+        if result.get("reload_ok"):
+            print(
+                "connector reload ok "
+                f"({result.get('generated_at') or 'unknown time'})"
+            )
+        else:
+            print(
+                "connector reload failed: "
+                f"{_one_line(result.get('error'), limit=200)}"
+            )
+        for item in result["connectors"]:
+            if not isinstance(item, dict):
+                continue
+            if item.get("approved") and not item.get("mounted"):
+                state = "FAILED "
+            elif item.get("mounted"):
+                state = "mounted"
+            else:
+                state = "off    "
+            print(
+                f"{_one_line(item.get('r_series'), limit=4):4} "
+                f"{_one_line(item.get('name'), limit=16):16} "
+                f"{state}  {_one_line(item.get('reason'), limit=100)}"
+            )
+        print(
+            f"{result.get('mounted', 0)} of {result.get('approved', 0)} "
+            "approved connector(s) mounted"
+        )
+    if not result.get("reload_ok"):
+        # Fail closed: the whitelist did not parse, so nothing changed.
+        return 3
+    return 1 if failed else 0
+
+
 def _cmd_connector_status_offline(args: argparse.Namespace, error: str) -> int:
     """Local config evaluation when the daemon is unreachable."""
 
@@ -799,6 +854,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     connector_status.add_argument("--json", action="store_true", help="print raw JSON")
     connector_status.set_defaults(func=_cmd_connector_status)
+
+    connector_reload = connector_sub.add_parser(
+        "reload", help="hot-reload connectors.yaml (no daemon restart)"
+    )
+    connector_reload.add_argument("--json", action="store_true", help="print raw JSON")
+    connector_reload.set_defaults(func=_cmd_connector_reload)
     return parser
 
 
