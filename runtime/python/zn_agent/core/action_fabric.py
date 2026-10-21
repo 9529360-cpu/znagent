@@ -206,10 +206,12 @@ class ActionFabricRegistry:
         self,
         *,
         success_evidence: Callable[[str], int] | None = None,
+        failed_evidence: Callable[[str], int] | None = None,
     ) -> None:
         self._descriptors: dict[str, ActionDescriptor] = {}
         self._probes: dict[str, AvailabilityProbe] = {}
         self._success_evidence = success_evidence
+        self._failed_evidence = failed_evidence
 
     def set_success_evidence_provider(
         self, provider: Callable[[str], int] | None
@@ -225,6 +227,26 @@ class ActionFabricRegistry:
         it only breaks ties inside one (availability, score) segment.
         """
         self._success_evidence = provider
+
+    def set_failed_evidence_provider(
+        self, provider: Callable[[str], int] | None
+    ) -> None:
+        """Attach prior-failed counts for retrieval ranking (Q17).
+
+        The provider maps an action_id to its durable failed-execution
+        count. It joins the Q13 success-evidence tie-break as a *failure
+        rate* (``failed / (verified + failed)``), not a raw count, so an
+        old burst of environmental failures cannot bury an action
+        forever: later verified runs pull the rate back down. Inside one
+        (availability, score) segment, actions still sort verified-high
+        first; the failure rate only demotes inside a verified tie. A
+        missing provider, a failing lookup, or no history means rate
+        0.0 -- never a penalty, never hidden. Like the verified
+        provider, this is advisory ranking input only: it can never
+        admit or exclude an action, and it can never reorder across
+        availability states or relevance scores.
+        """
+        self._failed_evidence = provider
 
     def register(
         self,
@@ -413,21 +435,46 @@ class ActionFabricRegistry:
         # one (availability, relevance score) segment. Token relevance stays
         # the primary order and availability priority is untouched; a missing
         # provider or failing lookup means "no evidence", never a penalty.
+        # Q17: prior *failed* evidence joins the same tie-break as a failure
+        # rate (failed / (verified + failed)), not a raw count. Verified-high
+        # still ranks first inside the segment; the rate only demotes inside
+        # a verified tie. Because it is a rate, an action can recover from an
+        # old burst of environmental failures as later verified runs pull
+        # the rate down. No history means rate 0.0: never a penalty, never
+        # hidden (Q13 acceptance semantics preserved).
         provider = self._success_evidence
+        failed_provider = self._failed_evidence
         _verified_counts: dict[str, int] = {}
-        if provider is not None:
+        _failure_rates: dict[str, float] = {}
+        if provider is not None or failed_provider is not None:
             for item in scored:
                 try:
-                    _verified_counts[item.action_id] = max(
-                        0, int(provider(item.action_id) or 0)
+                    verified = (
+                        max(0, int(provider(item.action_id) or 0))
+                        if provider is not None
+                        else 0
                     )
                 except Exception:
-                    _verified_counts[item.action_id] = 0
+                    verified = 0
+                try:
+                    failed = (
+                        max(0, int(failed_provider(item.action_id) or 0))
+                        if failed_provider is not None
+                        else 0
+                    )
+                except Exception:
+                    failed = 0
+                _verified_counts[item.action_id] = verified
+                total = verified + failed
+                _failure_rates[item.action_id] = (
+                    failed / total if total > 0 else 0.0
+                )
         scored.sort(
             key=lambda item: (
                 _availability_rank(item.availability.state),
                 -item.score,
                 -_verified_counts.get(item.action_id, 0),
+                _failure_rates.get(item.action_id, 0.0),
                 item.action_id,
             )
         )
