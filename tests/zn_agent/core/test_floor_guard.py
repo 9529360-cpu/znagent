@@ -204,6 +204,52 @@ class FloorGuardDeletionTests(unittest.TestCase):
         self.assertFalse(result.passed)
         self.assertTrue(any("deleted test" in v for v in _violations(result)))
 
+    def test_updated_assertion_value_not_flagged(self):
+        # Same assertion method, same locked target, new expected value:
+        # the lock stands, only the constant changed (e.g. PR #633 widened
+        # _ORIENT_HYBRID_CANDIDATES 5 -> 10 and updated the assertion).
+        body = (
+            " def test_kept(self):\n"
+            "-    self.assertEqual(_ORIENT_HYBRID_CANDIDATES, 5)\n"
+            "+    self.assertEqual(_ORIENT_HYBRID_CANDIDATES, 10)\n"
+        )
+        result = check_diff(_diff("tests/test_a.py", body))
+        self.assertTrue(result.passed, result.violations)
+
+    def test_assertion_method_change_still_flagged(self):
+        # Same target but a different assertion method: the lock itself
+        # changed, still a deletion.
+        body = (
+            " def test_kept(self):\n"
+            "-    self.assertEqual(_X, 5)\n"
+            "+    self.assertTrue(_X)\n"
+        )
+        result = check_diff(_diff("tests/test_a.py", body))
+        self.assertFalse(result.passed)
+        self.assertTrue(any("deleted test" in v for v in _violations(result)))
+
+    def test_assertion_target_change_still_flagged(self):
+        # Same method but a different locked target: the lock itself
+        # changed, still a deletion.
+        body = (
+            " def test_kept(self):\n"
+            "-    self.assertEqual(_X, 5)\n"
+            "+    self.assertEqual(_Y, 5)\n"
+        )
+        result = check_diff(_diff("tests/test_a.py", body))
+        self.assertFalse(result.passed)
+        self.assertTrue(any("deleted test" in v for v in _violations(result)))
+
+    def test_assertion_removed_without_replacement_still_flagged(self):
+        body = (
+            " def test_kept(self):\n"
+            "-    self.assertEqual(_X, 5)\n"
+            "+    # lock removed\n"
+        )
+        result = check_diff(_diff("tests/test_a.py", body))
+        self.assertFalse(result.passed)
+        self.assertTrue(any("deleted test" in v for v in _violations(result)))
+
     def test_moved_test_not_flagged(self):
         body = "-def test_moved():\n+def test_moved():\n"
         result = check_diff(_diff("tests/test_a.py", body))

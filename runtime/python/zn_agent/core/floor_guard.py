@@ -118,6 +118,27 @@ _TEST_DELETE_PATTERNS = (
     re.compile(r"\bassert\.\w+\s*\("),
 )
 
+#: Assertion-update pairing for the deletion check above. Captures
+#: ``self.assert<Method>(<target>, ...)`` as (method, target): a removed
+#: assertion whose method and locked target reappear in an added line of
+#: the same file is an *updated* assertion (new expected value, same
+#: lock), not a deletion. A different assertion method or a different
+#: locked target is still a deletion -- the lock itself changed. Only
+#: the single-line unittest style is paired; bare ``assert`` statements
+#: and multi-line assertions keep the stricter behaviour.
+_ASSERT_LOCK_RE = re.compile(r"^\s*self\.(assert\w+)\s*\(\s*([^,)]+)")
+
+
+def _assert_lock_key(line_text: str) -> tuple[str, str] | None:
+    """Return the (method, locked-target) pair of a unittest assertion line.
+
+    ``None`` when the line is not a single-line ``self.assert...`` call.
+    """
+    match = _ASSERT_LOCK_RE.match(line_text)
+    if match is None:
+        return None
+    return (match.group(1), _normalize(match.group(2)))
+
 #: Removed production-code assertions are a warning, not a violation:
 #: refactoring sometimes removes a redundant runtime assert.
 _PROD_ASSERT_RE = re.compile(r"^\s*assert\b")
@@ -448,12 +469,26 @@ def _check_deletions(
     if not removed:
         return
     is_test = _is_test_file(path)
+    # Assertion-update pairing: a removed ``self.assert<Method>(<target>,
+    # ...)`` whose (method, locked-target) key reappears among this file's
+    # added lines is an *updated* assertion (new expected value, same
+    # lock), not a deletion. See _ASSERT_LOCK_RE.
+    added_locks: set[tuple[str, str]] = set()
+    for added_line in file_diff.lines:
+        if added_line.kind != "+":
+            continue
+        lock_key = _assert_lock_key(added_line.text)
+        if lock_key is not None:
+            added_locks.add(lock_key)
     gone: list[str] = []
     for line in removed:
         normalized = _normalize(line.text)
         if not normalized or normalized in added_normalized:
             continue
         if is_test and any(p.search(line.text) for p in _TEST_DELETE_PATTERNS):
+            lock_key = _assert_lock_key(line.text)
+            if lock_key is not None and lock_key in added_locks:
+                continue
             gone.append(
                 f"{path}: deleted test/assertion: {line.text.strip()[:120]}"
             )
