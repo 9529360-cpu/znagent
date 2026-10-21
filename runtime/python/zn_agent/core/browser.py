@@ -78,6 +78,9 @@ class BrowserTargetQueryKind(str, Enum):
     ACCESSIBLE_LINK_NAME = "accessible_link_name"
     ACCESSIBLE_RADIO_NAME = "accessible_radio_name"
     ACCESSIBLE_SLIDER_NAME = "accessible_slider_name"
+    ACCESSIBLE_SWITCH_NAME = "accessible_switch_name"
+    ACCESSIBLE_TAB_NAME = "accessible_tab_name"
+    ACCESSIBLE_MENUITEM_NAME = "accessible_menuitem_name"
 
 
 _NAVIGATION_ACTIONS = frozenset(
