@@ -170,6 +170,16 @@ class ResidentRpcServer:
             self._autonomy_policy_store = AutonomyPolicyStore(self.resident)
         return self._autonomy_policy_store
 
+    def _self_drive(self):
+        """Return the installed M-14 SelfDriveDriver, or None.
+
+        The driver is exposed as ``resident.self_drive`` by
+        ``install_self_drive_behavior``; minimal/test residents that never
+        installed it simply have no attribute, which the goal_* RPCs
+        report honestly as "not enabled" instead of an empty list.
+        """
+        return getattr(self.resident, "self_drive", None)
+
     def _checkpoint_store(
         self, params: dict[str, Any], *, allowed: set[str]
     ) -> CheckpointStore:
@@ -356,6 +366,35 @@ class ResidentRpcServer:
             result = self._autonomy_store().set_level(
                 params.get("domain"), params.get("level")
             )
+        elif method == "goal_list":
+            # M16: read-only visibility into the M-14 self-drive loop.
+            # Not to be confused with user_goals.py (a separate user goal
+            # system); this surfaces resident.self_drive.list_goals.
+            unknown = set(params) - {"limit"}
+            if unknown:
+                raise ValueError("goal_list accepts only an optional limit parameter")
+            driver = self._self_drive()
+            if driver is None:
+                result = {
+                    "enabled": False,
+                    "reason": "self-drive is not installed on this resident",
+                }
+            else:
+                result = {
+                    "enabled": True,
+                    "goals": driver.list_goals(limit=int(params.get("limit") or 50)),
+                }
+        elif method == "goal_status":
+            if params:
+                raise ValueError("goal_status accepts no execution parameters")
+            driver = self._self_drive()
+            if driver is None:
+                result = {
+                    "enabled": False,
+                    "reason": "self-drive is not installed on this resident",
+                }
+            else:
+                result = {"enabled": True, **driver.status()}
         elif method == "proactive_contact_check":
             # S1(b): one restrained proactive greeting at most; returns null
             # when the restraint rules say "don't disturb". Read-only besides
