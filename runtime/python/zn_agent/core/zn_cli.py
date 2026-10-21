@@ -1482,6 +1482,258 @@ def _cmd_goal_status(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- T2-6: `zn status` aggregate -----------------------------------------
+# One-screen ZN health: resident liveness, status summary, model channel,
+# connector mounts, pending approvals, autonomy envelope. Read-only: only
+# the existing daemon RPCs (ping / status / connector_status /
+# approval_list / autonomy_list) plus the local model-route probe
+# (model_check.py) are used; no new daemon RPC. When the resident is not
+# running, the daemon rows are marked unreachable while the local rows
+# (model probe, connector config evaluation) still report. Always exit 0:
+# this is a dashboard, not a health gate.
+
+_STATUS_DEFAULT_PROBE_TIMEOUT_SECONDS = 5.0
+
+
+def _cmd_status(args: argparse.Namespace) -> int:
+    """Show the six-row ZN status aggregate (plus ``--json``)."""
+
+    data: dict[str, Any] = {}
+    daemon_error = ""
+
+    def _rpc(method: str, params: dict[str, Any] | None = None) -> Any:
+        nonlocal daemon_error
+        try:
+            return _client(args).call(method, params)
+        except CliError as exc:
+            daemon_error = str(exc)
+            return None
+
+    ping_result = _rpc("ping", {})
+    summary_result = _rpc("status", {})
+    connector_result = _rpc("connector_status", {})
+    approval_result = _rpc("approval_list", {})
+    autonomy_result = _rpc("autonomy_list")
+    daemon_reachable = not daemon_error
+    data["daemon_reachable"] = daemon_reachable
+    if daemon_error:
+        data["daemon_error"] = daemon_error
+
+    # --- resident liveness (ping, daemon.py) -----------------------------
+    if isinstance(ping_result, dict):
+        pulse = ping_result.get("pulse_count")
+        data["resident"] = {
+            "alive": bool(ping_result.get("alive")),
+            "pulse_count": pulse,
+        }
+    else:
+        data["resident"] = None
+
+    # --- status summary (status RPC) --------------------------------------
+    if isinstance(summary_result, dict):
+        identity = summary_result.get("identity") or {}
+        if not isinstance(identity, dict):
+            identity = {}
+        dependency = summary_result.get("model_dependency") or {}
+        if not isinstance(dependency, dict):
+            dependency = {}
+        data["summary"] = {
+            "identity": {
+                "name": identity.get("name"),
+                "version": identity.get("version"),
+            },
+            "model_invocations": dependency.get("model_invocations"),
+        }
+    else:
+        data["summary"] = None
+
+    # --- model channel (local probe, model_check.py) ----------------------
+    report = check_model_routes(probe_timeout_seconds=args.probe_timeout)
+    data["model"] = report.to_dict()
+
+    # --- connectors (daemon report, else local config evaluation) ---------
+    connector_local = False
+    connector_counts: dict[str, Any] = {
+        "mounted": None,
+        "approved": None,
+        "failed": None,
+    }
+    if isinstance(connector_result, dict) and isinstance(
+        connector_result.get("connectors"), list
+    ):
+        connectors = [c for c in connector_result["connectors"] if isinstance(c, dict)]
+        connector_counts["mounted"] = sum(1 for c in connectors if c.get("mounted"))
+        connector_counts["approved"] = sum(1 for c in connectors if c.get("approved"))
+        connector_counts["failed"] = sum(
+            1 for c in connectors if c.get("approved") and not c.get("mounted")
+        )
+        data["connectors"] = {**connector_counts, "local_evaluation": False}
+    else:
+        connector_local = True
+        try:
+            from .connector_autoattach import evaluate_connector_status
+
+            items = evaluate_connector_status()
+        except Exception as exc:
+            connector_counts["config_error"] = _one_line(str(exc), limit=200)
+            items = []
+        approved_items = [i for i in items if isinstance(i, dict) and i.get("approved")]
+        connector_counts["mounted"] = sum(
+            1
+            for i in approved_items
+            if isinstance(i.get("last_mount"), dict)
+            and i["last_mount"].get("mounted") is True
+        )
+        connector_counts["approved"] = len(approved_items)
+        connector_counts["failed"] = sum(
+            1
+            for i in approved_items
+            if isinstance(i.get("last_mount"), dict)
+            and i["last_mount"].get("mounted") is False
+        )
+        data["connectors"] = {**connector_counts, "local_evaluation": True}
+
+    # --- pending approvals (approval_list) --------------------------------
+    if isinstance(approval_result, dict) and isinstance(
+        approval_result.get("pending"), list
+    ):
+        data["approvals"] = {"pending": len(approval_result["pending"])}
+    else:
+        data["approvals"] = {"pending": None}
+
+    # --- non-default autonomy domains (autonomy_list) ----------------------
+    if isinstance(autonomy_result, list):
+        data["autonomy"] = {
+            "explicit_domains": sum(1 for item in autonomy_result if isinstance(item, dict))
+        }
+    else:
+        data["autonomy"] = {"explicit_domains": None}
+
+    if args.json:
+        print(json.dumps(data, ensure_ascii=False, indent=2, default=str))
+        return 0
+
+    print(section("ZN status"))
+
+    def _row(
+        label: str, text: str, *, kind: str | None = None, hint: str | None = None
+    ) -> None:
+        cell = f"{label:<10} {text}"
+        if kind:
+            cell = colorize(cell, kind)
+        if hint:
+            cell += colorize(f"  → {hint}", "dim")
+        print(cell)
+
+    # resident row
+    if data["resident"] is not None:
+        alive = data["resident"]["alive"]
+        pulse = _one_line(data["resident"]["pulse_count"], limit=12)
+        if alive:
+            _row("resident", f"{status_word(True)} (pulse_count={pulse})")
+        else:
+            _row("resident", status_word("unknown"), kind="err", hint="zn-resident")
+    else:
+        _row(
+            "resident",
+            f"{status_word('unreachable')} ({_one_line(daemon_error, limit=90)})",
+            kind="err",
+            hint="check ZN_HOME, or start the resident service (zn-resident)",
+        )
+
+    # summary row
+    if data["summary"] is not None:
+        identity = data["summary"]["identity"]
+        name = _one_line(identity.get("name"), limit=32)
+        version = _one_line(identity.get("version"), limit=16)
+        invocations = _one_line(data["summary"]["model_invocations"], limit=12)
+        _row(
+            "summary",
+            f"{name} v{version} · model_invocations={invocations}",
+        )
+    else:
+        _row("summary", status_word("unreachable"), kind="err")
+
+    # model row (local probe, works without a running resident)
+    if not report.configured:
+        _row("model", "no model routes configured", kind="err", hint="zn model check")
+    else:
+        reached = report.reachable_count
+        total = len(report.results)
+        if reached:
+            _row("model", f"{reached} of {total} route(s) reachable")
+        else:
+            _row(
+                "model",
+                f"{reached} of {total} route(s) reachable",
+                kind="err",
+                hint="zn model check",
+            )
+
+    # connector row
+    counts = data["connectors"]
+    if counts.get("config_error"):
+        _row(
+            "connectors",
+            f"config error: {counts['config_error']}",
+            kind="err",
+            hint="check connectors.yaml",
+        )
+    elif connector_local:
+        approved, failed = counts["approved"], counts["failed"]
+        if failed:
+            _row(
+                "connectors",
+                f"{approved} approved, {failed} failed (local config evaluation)",
+                kind="err",
+                hint="zn connector status",
+            )
+        else:
+            _row(
+                "connectors",
+                f"{approved} approved (local config evaluation)",
+                hint="zn connector status",
+            )
+    else:
+        mounted, approved, failed = (
+            counts["mounted"],
+            counts["approved"],
+            counts["failed"],
+        )
+        if failed:
+            _row(
+                "connectors",
+                f"{mounted} of {approved} mounted, {failed} failed",
+                kind="err",
+                hint="zn connector status",
+            )
+        else:
+            _row("connectors", f"{mounted} of {approved} mounted")
+
+    # approvals row
+    pending = data["approvals"]["pending"]
+    if pending is None:
+        _row("approvals", status_word("unreachable"), kind="err")
+    elif pending:
+        _row(
+            "approvals",
+            f"{pending} pending",
+            kind="warn",
+            hint="zn approval list",
+        )
+    else:
+        _row("approvals", "none pending")
+
+    # autonomy row
+    domains = data["autonomy"]["explicit_domains"]
+    if domains is None:
+        _row("autonomy", status_word("unreachable"), kind="err")
+    else:
+        _row("autonomy", f"{domains} explicit domain(s)", hint="zn autonomy list")
+
+    return 0
+
+
 def _cmd_connector_status_offline(args: argparse.Namespace, error: str) -> int:
     """Local config evaluation when the daemon is unreachable."""
 
@@ -2065,6 +2317,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     goal_status.add_argument("--json", action="store_true", help="print raw JSON")
     goal_status.set_defaults(func=_cmd_goal_status)
+
+    # T2-6: one-screen aggregate; read-only, reuses existing daemon RPCs.
+    status_cmd = sub.add_parser(
+        "status",
+        help="one-screen ZN status: resident, model, connectors, approvals, autonomy",
+    )
+    status_cmd.add_argument(
+        "--probe-timeout",
+        type=lambda v: _require_positive_float(
+            v, name="--probe-timeout", maximum=300.0
+        ),
+        default=_STATUS_DEFAULT_PROBE_TIMEOUT_SECONDS,
+        help="max seconds to wait per model route probe "
+        f"(default {_STATUS_DEFAULT_PROBE_TIMEOUT_SECONDS:g}; the model channel "
+        "is probed locally, so this works without a running resident)",
+    )
+    status_cmd.add_argument("--json", action="store_true", help="print raw JSON")
+    status_cmd.set_defaults(func=_cmd_status)
     return parser
 
 
