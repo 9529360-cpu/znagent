@@ -592,6 +592,213 @@ class ZnCliUnitTests(_CliHarness):
         self.assertIn("secret", str(caught.exception))
 
 
+class ZnCliWorkSubmitProgressTests(_CliHarness):
+    """T2-2: `zn work submit` streams work_progress while the submit RPC runs.
+
+    The blocking work_submit RPC keeps its historic semantics (it stays the
+    source of truth for the final result); the CLI only *observes* via the
+    read-only work_get (active_run discovery) + work_progress RPCs.
+    """
+
+    _FINAL_RESULT = {
+        "thread": {"id": "thread-1", "title": "T"},
+        "run": {
+            "event_id": "ev-1",
+            "success": True,
+            "cancelled": False,
+            "execution_path": "direct",
+            "model_invocations": 2,
+            "response": "finished",
+        },
+        "recovery_required": False,
+    }
+
+    def _progress(self, stage, **overrides):
+        payload = {
+            "event_id": "ev-1",
+            "thread_id": "thread-1",
+            "stage": stage,
+            "status": "active",
+            "terminal": False,
+            "finalized": False,
+            "next_action": "thinking hard",
+            "model_invocations": 1,
+        }
+        payload.update(overrides)
+        return payload
+
+    def _scripted_handler(self, release, progress_scripts, interrupt_on_progress=False):
+        calls_lock = threading.Lock()
+        state = {"progress_calls": 0}
+
+        def handle(method, params):
+            with calls_lock:
+                self.calls.append((method, params))
+            if method == "work_submit":
+                assert release.wait(timeout=15), "work_submit was not released"
+                return dict(self._FINAL_RESULT)
+            if method == "work_get":
+                return {
+                    "id": "thread-1",
+                    "title": "T",
+                    "active_run": {"thread_id": "thread-1", "event_id": "ev-1"},
+                    "messages": [],
+                }
+            if method == "work_progress":
+                if interrupt_on_progress:
+                    raise KeyboardInterrupt("simulated ctrl-c")
+                with calls_lock:
+                    state["progress_calls"] += 1
+                    n = state["progress_calls"]
+                if n < len(progress_scripts):
+                    return {"progress": dict(progress_scripts[n - 1])}
+                release.set()
+                return {"progress": dict(progress_scripts[-1])}
+            raise AssertionError(f"unexpected RPC method {method!r}")
+
+        self.calls = []
+        return handle
+
+    def _patch_timings(self):
+        for name, value in (
+            ("_WORK_SUBMIT_GRACE_SECONDS", 0.02),
+            ("_WORK_POLL_INTERVAL_SECONDS", 0.02),
+            ("_WORK_NONTTY_HEARTBEAT_SECONDS", 0.02),
+        ):
+            patcher = mock.patch(f"zn_agent.core.zn_cli.{name}", value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _run_submit(self, handler):
+        self._patch_connect(handler)
+        self._patch_timings()
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = run(
+                [
+                    "--endpoint", str(self.endpoint_path),
+                    "work", "submit",
+                    "--thread-id", "thread-1",
+                    "--task", "do the thing",
+                ]
+            )
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def test_slow_submit_streams_progress_then_final(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        scripts = [
+            self._progress("planning"),
+            self._progress("executing"),
+            self._progress(
+                "complete",
+                status="completed",
+                terminal=True,
+                finalized=True,
+                execution_path="direct",
+                model_invocations=2,
+                next_action="",
+            ),
+        ]
+        code, out, err = self._run_submit(self._scripted_handler(release, scripts))
+        self.assertEqual(code, 0, err)
+        self.assertIn("submitted to thread thread-1  (T)", out)
+        # non-TTY: plain interval status lines, no spinner escape codes
+        self.assertNotIn("\x1b[", out)
+        self.assertIn("progress thread=thread-1 event=ev-1", out)
+        self.assertIn("stage=planning", out)
+        self.assertIn("stage=executing", out)
+        # final summary keeps the pre-T2-2 format
+        self.assertIn(
+            "run event=ev-1  success=True  cancelled=False  path=direct  "
+            "model_invocations=2",
+            out,
+        )
+        self.assertIn("finished", out)
+        methods = [method for method, _ in self.calls]
+        self.assertIn("work_submit", methods)
+        self.assertIn("work_get", methods)
+        self.assertIn("work_progress", methods)
+        self.assertLess(methods.index("work_get"), methods.index("work_progress"))
+        for method, params in self.calls:
+            if method == "work_progress":
+                self.assertEqual(params["thread_id"], "thread-1")
+                self.assertEqual(params["event_id"], "ev-1")
+
+    def test_tty_shows_stage_transitions_and_spinner(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        scripts = [
+            self._progress("planning"),
+            self._progress("executing"),
+            self._progress(
+                "complete",
+                status="completed",
+                terminal=True,
+                finalized=True,
+                execution_path="direct",
+                model_invocations=2,
+                next_action="",
+            ),
+        ]
+        self._patch_connect(self._scripted_handler(release, scripts))
+        self._patch_timings()
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(
+                    [
+                        "--endpoint", str(self.endpoint_path),
+                        "work", "submit",
+                        "--thread-id", "thread-1",
+                        "--task", "do the thing",
+                    ]
+                )
+        out = tty.getvalue()
+        self.assertEqual(code, 0, stderr.getvalue())
+        self.assertIn("\x1b[", out)  # colors on in TTY mode
+        self.assertIn("\u2026", out)  # pending spinner symbol
+        self.assertIn("stage:", out)  # stage transition line
+        self.assertIn("submitted to thread thread-1  (T)", out)
+        self.assertIn("run event=ev-1  success=True", out)
+
+    def test_interrupt_stops_watching_without_cancelling(self):
+        release = threading.Event()
+        self.addCleanup(release.set)
+        handler = self._scripted_handler(
+            release, [self._progress("planning")], interrupt_on_progress=True
+        )
+        code, out, err = self._run_submit(handler)
+        self.assertEqual(code, 1)
+        self.assertIn("zn: error: interrupted:", err)
+        self.assertIn("keeps running", err)
+        self.assertIn("zn work cancel --thread-id thread-1 --event-id ev-1", err)
+        # the CLI never cancels on Ctrl-C: no work_cancel call went out
+        self.assertNotIn("work_cancel", [method for method, _ in self.calls])
+
+    def test_submit_rpc_error_surfaces_unchanged(self):
+        def handle(method, params):
+            self.calls.append((method, params))
+            if method == "work_submit":
+                return (False, None, "kaput")
+            raise AssertionError(f"unexpected RPC method {method!r}")
+
+        self.calls = []
+        code, out, err = self._run_submit(handle)
+        self.assertEqual(code, 1)
+        self.assertIn("zn: error:", err)
+        self.assertIn("kaput", err)
+        # the RPC failed before any polling could start
+        self.assertNotIn("work_progress", [method for method, _ in self.calls])
+
+
 class ZnCliT7BatchTests(_CliHarness):
     """T7: memory remember/forget, team timeline, work cancel CLI commands."""
 
