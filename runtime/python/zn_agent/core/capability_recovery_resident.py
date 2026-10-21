@@ -95,10 +95,17 @@ class CapabilityRecoveryResidentRuntime(FocusedModernTextResidentRuntime):
         required = self._required_capabilities(event)
         memory_checked = bool(event.payload.get("allow_memory", True))
         state.data["memory_checked"] = memory_checked
-        memory_match = self.memory.recall(event.task) if memory_checked else None
+        # PERF-2: same hybrid fallback as the base orient step (shared
+        # helper on ZNResidentRuntime); exact recall semantics unchanged.
+        memory_match, hybrid_score = (
+            self._orient_memory_lookup(event.task) if memory_checked else (None, None)
+        )
         if memory_match is not None:
             response = self._render_memory_value(memory_match.value)
             reason = f"recalled structured fact '{memory_match.key}'"
+            if hybrid_score is not None:
+                reason += f" via hybrid recall (score {hybrid_score:.2f})"
+                state.data["memory_hybrid_score"] = hybrid_score
             domains = self.kernel.self_model.infer_domains(event.task, required)
             completion = {
                 "execution_path": ExecutionPath.MEMORY.value,
