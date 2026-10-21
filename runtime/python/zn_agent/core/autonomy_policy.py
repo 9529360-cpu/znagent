@@ -108,6 +108,11 @@ def validate_domain(domain: Any) -> str:
     text = str(domain or "").strip().lower()
     if not text:
         raise ValueError("autonomy domain must not be empty")
+    if "*" in text:
+        raise ValueError(
+            "autonomy domain must not contain wildcards; "
+            "set one explicit domain at a time"
+        )
     if not _DOMAIN_RE.match(text):
         raise ValueError(
             "autonomy domain must match [a-z0-9][a-z0-9_.:-]{0,127}"
@@ -173,7 +178,15 @@ class AutonomyPolicyStore:
         return normalize_level(row["level"])
 
     def set_level(self, domain: Any, level: Any) -> dict[str, str]:
-        """Set the autonomy level for a domain (user-owned write)."""
+        """Set the autonomy level for a domain (user-owned write).
+
+        The write is explicit and per-domain: wildcards are rejected and
+        the level must be one of the five known levels. The previous
+        level is captured first and both the change and an audit row are
+        committed atomically, so every change stays traceable
+        (who/what/when/old/new) without a separate approval card: the
+        user typing the command on their own terminal is the approval.
+        """
         name = validate_domain(domain)
         normalized = str(level or "").strip().lower()
         if normalized not in AUTONOMY_LEVELS:
@@ -183,6 +196,15 @@ class AutonomyPolicyStore:
             )
         updated = utc_now()
         with self._lock, closing(self._connect()) as conn:
+            row = conn.execute(
+                "SELECT level FROM resident_autonomy_policy WHERE domain=?",
+                (name,),
+            ).fetchone()
+            old_level = (
+                normalize_level(row["level"])
+                if row is not None
+                else REQUIRE_APPROVAL
+            )
             conn.execute(
                 """
                 INSERT INTO resident_autonomy_policy(domain,level,updated_at)
@@ -193,8 +215,21 @@ class AutonomyPolicyStore:
                 """,
                 (name, normalized, updated),
             )
+            conn.execute(
+                """
+                INSERT INTO resident_autonomy_policy_audit(
+                    domain,old_level,new_level,changed_at
+                ) VALUES(?,?,?,?)
+                """,
+                (name, old_level, normalized, updated),
+            )
             conn.commit()
-        return {"domain": name, "level": normalized, "updated_at": updated}
+        return {
+            "domain": name,
+            "level": normalized,
+            "old_level": old_level,
+            "updated_at": updated,
+        }
 
     def list_levels(self) -> list[dict[str, str]]:
         """Read-only query: every explicitly stored domain level."""
@@ -208,6 +243,33 @@ class AutonomyPolicyStore:
                 "domain": str(row["domain"]),
                 "level": normalize_level(row["level"]),
                 "updated_at": str(row["updated_at"] or ""),
+            }
+            for row in rows
+        ]
+
+    def list_policy_audit(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """Read-only query: autonomy level changes, newest first.
+
+        The audit trail for the autonomy envelope: every ``set_level``
+        call lands here atomically with its write, so a change is
+        always traceable after the fact.
+        """
+        with closing(self._connect()) as conn:
+            rows = conn.execute(
+                """
+                SELECT domain,old_level,new_level,changed_at
+                FROM resident_autonomy_policy_audit
+                ORDER BY id DESC
+                LIMIT ?
+                """,
+                (max(1, min(500, int(limit))),),
+            ).fetchall()
+        return [
+            {
+                "domain": str(row["domain"]),
+                "old_level": normalize_level(row["old_level"]),
+                "new_level": normalize_level(row["new_level"]),
+                "changed_at": str(row["changed_at"] or ""),
             }
             for row in rows
         ]
@@ -321,6 +383,15 @@ class AutonomyPolicyStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_autonomy_gated_scheduled
                     ON resident_autonomy_gated_occurrences(scheduled_at);
+                CREATE TABLE IF NOT EXISTS resident_autonomy_policy_audit(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    domain TEXT NOT NULL,
+                    old_level TEXT NOT NULL,
+                    new_level TEXT NOT NULL,
+                    changed_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_autonomy_policy_audit_domain
+                    ON resident_autonomy_policy_audit(domain, id);
                 """
             )
             conn.commit()

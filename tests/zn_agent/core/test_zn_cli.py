@@ -1116,3 +1116,161 @@ class ZnCliSkillUsageTests(unittest.TestCase):
                 code = run(["skill", "usage"])
         self.assertEqual(code, 0, stderr.getvalue())
         self.assertIn("no skills discovered", stdout.getvalue())
+
+
+class ZnCliAutonomySuggestionsTests(_CliHarness):
+    def test_autonomy_list_prints_levels(self):
+        levels = [
+            {
+                "domain": "connector.weather",
+                "level": "suggest",
+                "updated_at": "2026-10-21T10:00:00Z",
+            },
+            {
+                "domain": "recurring.interval",
+                "level": "observe_only",
+                "updated_at": "2026-10-21T09:00:00Z",
+            },
+        ]
+        code, out, err = self._run(
+            ["autonomy", "list"], self._handler({"autonomy_list": levels})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("connector.weather", out)
+        self.assertIn("suggest", out)
+        self.assertIn("observe_only", out)
+        self.assertEqual(self.calls, [("autonomy_list", {})])
+
+    def test_autonomy_list_empty_and_json(self):
+        code, out, err = self._run(
+            ["autonomy", "list"], self._handler({"autonomy_list": []})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("require_approval", out)
+
+        code, out, err = self._run(
+            ["autonomy", "list", "--json"], self._handler({"autonomy_list": []})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), [])
+
+    def test_autonomy_get_prints_level(self):
+        code, out, err = self._run(
+            ["autonomy", "get", "connector.weather"],
+            self._handler(
+                {
+                    "autonomy_get": {
+                        "domain": "connector.weather",
+                        "level": "observe_only",
+                    }
+                }
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("connector.weather", out)
+        self.assertIn("observe_only", out)
+        self.assertEqual(
+            self.calls, [("autonomy_get", {"domain": "connector.weather"})]
+        )
+
+    def test_autonomy_get_requires_domain_without_rpc(self):
+        with self.assertRaises(SystemExit) as caught:
+            run(["--endpoint", str(self.endpoint_path), "autonomy", "get"])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.connect_calls, [])
+
+    def test_autonomy_set_sends_domain_and_level(self):
+        result = {
+            "domain": "connector.weather",
+            "level": "suggest",
+            "old_level": "require_approval",
+            "updated_at": "2026-10-21T10:00:00Z",
+        }
+        code, out, err = self._run(
+            ["autonomy", "set", "connector.weather", "suggest"],
+            self._handler({"autonomy_set": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("connector.weather", out)
+        self.assertIn("suggest", out)
+        self.assertIn("require_approval", out)
+        self.assertEqual(
+            self.calls,
+            [("autonomy_set", {"domain": "connector.weather", "level": "suggest"})],
+        )
+
+    def test_autonomy_set_json(self):
+        result = {
+            "domain": "connector.weather",
+            "level": "suggest",
+            "old_level": "require_approval",
+            "updated_at": "2026-10-21T10:00:00Z",
+        }
+        code, out, err = self._run(
+            ["autonomy", "set", "connector.weather", "suggest", "--json"],
+            self._handler({"autonomy_set": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), result)
+
+    def test_autonomy_set_illegal_level_surfaces_resident_rejection(self):
+        code, _, err = self._run(
+            ["autonomy", "set", "connector.weather", "yolo"],
+            self._handler(
+                {"autonomy_set": (False, None, "unknown autonomy level: 'yolo'")}
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("unknown autonomy level", err)
+
+    def test_suggestions_list_prints_suggestions(self):
+        items = [
+            {"key": "sug-1", "kind": "work", "title": "Finish the report"},
+            {"key": "sug-2", "kind": "recurring", "title": "Check the garden"},
+        ]
+        code, out, err = self._run(
+            ["suggestions", "list"], self._handler({"suggestions_list": items})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("sug-1", out)
+        self.assertIn("Finish the report", out)
+        self.assertIn("sug-2", out)
+        self.assertEqual(self.calls, [("suggestions_list", {"limit": 8})])
+
+    def test_suggestions_list_limit_flag_and_json(self):
+        items = [{"key": "sug-1", "kind": "work", "title": "Finish the report"}]
+        code, out, err = self._run(
+            ["suggestions", "list", "--limit", "3", "--json"],
+            self._handler({"suggestions_list": items}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.calls, [("suggestions_list", {"limit": 3})])
+        self.assertEqual(json.loads(out), items)
+
+    def test_suggestions_list_empty(self):
+        code, out, err = self._run(
+            ["suggestions", "list"], self._handler({"suggestions_list": []})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("no suggestions", out)
+
+    def test_suggestions_dismiss_calls_rpc(self):
+        result = {
+            "dismissed": True,
+            "key": "sug-1",
+            "dismissed_at": "2026-10-21T10:00:00Z",
+            "expires_at": "2026-10-28T10:00:00Z",
+        }
+        code, out, err = self._run(
+            ["suggestions", "dismiss", "--key", "sug-1"],
+            self._handler({"suggestions_dismiss": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("sug-1", out)
+        self.assertEqual(self.calls, [("suggestions_dismiss", {"key": "sug-1"})])
+
+    def test_suggestions_dismiss_requires_key_without_rpc(self):
+        with self.assertRaises(SystemExit) as caught:
+            run(["--endpoint", str(self.endpoint_path), "suggestions", "dismiss"])
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.connect_calls, [])

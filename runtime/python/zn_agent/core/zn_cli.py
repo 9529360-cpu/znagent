@@ -785,6 +785,107 @@ def _cmd_connector_reload(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _cmd_autonomy_list(args: argparse.Namespace) -> int:
+    result = _client(args).call("autonomy_list")
+    if not isinstance(result, list):
+        raise CliError(
+            f"resident returned an unexpected autonomy_list result: {result!r}"
+        )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if not result:
+        print(
+            "no explicit autonomy policy entries "
+            "(every domain defaults to require_approval)"
+        )
+        return 0
+    for item in result:
+        if not isinstance(item, dict):
+            continue
+        print(
+            f"{_one_line(item.get('domain'), limit=48):48} "
+            f"{_one_line(item.get('level'), limit=20):20} "
+            f"updated={_one_line(item.get('updated_at'), limit=40)}"
+        )
+    return 0
+
+
+def _cmd_autonomy_get(args: argparse.Namespace) -> int:
+    result = _client(args).call("autonomy_get", {"domain": args.domain})
+    if not isinstance(result, dict) or "level" not in result:
+        raise CliError(
+            f"resident returned an unexpected autonomy_get result: {result!r}"
+        )
+    _emit(
+        args,
+        result,
+        human=f"{_one_line(result.get('domain'), limit=48)}: "
+        f"{_one_line(result.get('level'), limit=20)}",
+    )
+    return 0
+
+
+def _cmd_autonomy_set(args: argparse.Namespace) -> int:
+    result = _client(args).call(
+        "autonomy_set", {"domain": args.domain, "level": args.level}
+    )
+    if not isinstance(result, dict) or "level" not in result:
+        raise CliError(
+            f"resident returned an unexpected autonomy_set result: {result!r}"
+        )
+    _emit(
+        args,
+        result,
+        human=(
+            f"autonomy set: {_one_line(result.get('domain'), limit=48)} = "
+            f"{_one_line(result.get('level'), limit=20)} "
+            f"(was {_one_line(result.get('old_level'), limit=20)})"
+        ),
+    )
+    return 0
+
+
+def _cmd_suggestions_list(args: argparse.Namespace) -> int:
+    result = _client(args).call("suggestions_list", {"limit": args.limit})
+    if not isinstance(result, list):
+        raise CliError(
+            f"resident returned an unexpected suggestions_list result: {result!r}"
+        )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if not result:
+        print("no suggestions")
+        return 0
+    for item in result:
+        if not isinstance(item, dict):
+            continue
+        print(
+            f"{_one_line(item.get('key'), limit=64):64} "
+            f"[{_one_line(item.get('kind'), limit=20)}] "
+            f"{_one_line(item.get('title'), limit=80)}"
+        )
+    return 0
+
+
+def _cmd_suggestions_dismiss(args: argparse.Namespace) -> int:
+    result = _client(args).call("suggestions_dismiss", {"key": args.key})
+    if not isinstance(result, dict) or not result.get("dismissed"):
+        raise CliError(
+            f"resident returned an unexpected suggestions_dismiss result: {result!r}"
+        )
+    _emit(
+        args,
+        result,
+        human=(
+            f"dismissed suggestion {_one_line(result.get('key'), limit=64)} "
+            f"(hidden until {_one_line(result.get('expires_at'), limit=40)})"
+        ),
+    )
+    return 0
+
+
 def _cmd_connector_status_offline(args: argparse.Namespace, error: str) -> int:
     """Local config evaluation when the daemon is unreachable."""
 
@@ -1237,6 +1338,81 @@ def build_parser() -> argparse.ArgumentParser:
     )
     connector_reload.add_argument("--json", action="store_true", help="print raw JSON")
     connector_reload.set_defaults(func=_cmd_connector_reload)
+
+    autonomy = sub.add_parser(
+        "autonomy", help="inspect or change the autonomy envelope"
+    )
+    autonomy_sub = autonomy.add_subparsers(
+        dest="autonomy_command", metavar="subcommand", required=True
+    )
+
+    autonomy_list = autonomy_sub.add_parser(
+        "list", help="list explicit per-domain autonomy levels"
+    )
+    autonomy_list.add_argument("--json", action="store_true", help="print raw JSON")
+    autonomy_list.set_defaults(func=_cmd_autonomy_list)
+
+    autonomy_get = autonomy_sub.add_parser(
+        "get", help="show the autonomy level of one domain"
+    )
+    autonomy_get.add_argument(
+        "domain",
+        type=lambda v: _require_non_empty(v, name="domain"),
+        help="policy domain, e.g. recurring.interval or connector.weather",
+    )
+    autonomy_get.add_argument("--json", action="store_true", help="print raw JSON")
+    autonomy_get.set_defaults(func=_cmd_autonomy_get)
+
+    autonomy_set = autonomy_sub.add_parser(
+        "set", help="set the autonomy level of one domain (audited)"
+    )
+    autonomy_set.add_argument(
+        "domain",
+        type=lambda v: _require_non_empty(v, name="domain"),
+        help="policy domain, e.g. recurring.interval or connector.weather "
+        "(no wildcards)",
+    )
+    autonomy_set.add_argument(
+        "level",
+        type=lambda v: _require_non_empty(v, name="level"),
+        help="one of: observe_only, suggest, prepare, execute_reversible, "
+        "require_approval",
+    )
+    autonomy_set.add_argument("--json", action="store_true", help="print raw JSON")
+    autonomy_set.set_defaults(func=_cmd_autonomy_set)
+
+    suggestions = sub.add_parser(
+        "suggestions", help="inspect or dismiss resident suggestions"
+    )
+    suggestions_sub = suggestions.add_subparsers(
+        dest="suggestions_command", metavar="subcommand", required=True
+    )
+
+    suggestions_list = suggestions_sub.add_parser(
+        "list", help="list active suggestions"
+    )
+    suggestions_list.add_argument(
+        "--limit",
+        type=lambda v: _require_positive_int(v, name="--limit", maximum=50),
+        default=8,
+        help="max suggestions to show (default 8)",
+    )
+    suggestions_list.add_argument("--json", action="store_true", help="print raw JSON")
+    suggestions_list.set_defaults(func=_cmd_suggestions_list)
+
+    suggestions_dismiss = suggestions_sub.add_parser(
+        "dismiss", help="dismiss one suggestion by key"
+    )
+    suggestions_dismiss.add_argument(
+        "--key",
+        required=True,
+        type=lambda v: _require_non_empty(v, name="--key"),
+        help="suggestion key to dismiss",
+    )
+    suggestions_dismiss.add_argument(
+        "--json", action="store_true", help="print raw JSON"
+    )
+    suggestions_dismiss.set_defaults(func=_cmd_suggestions_dismiss)
     return parser
 
 
