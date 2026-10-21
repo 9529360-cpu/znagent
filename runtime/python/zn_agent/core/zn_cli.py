@@ -892,6 +892,73 @@ def _cmd_suggestions_dismiss(args: argparse.Namespace) -> int:
     return 0
 
 
+def _goal_result_or_not_installed(
+    args: argparse.Namespace, result: Any, method: str
+) -> dict[str, Any]:
+    """Unwrap a goal_* RPC result; print an honest message when disabled.
+
+    Returns the enabled dict, or raises CliError (printed to stderr, exit 1)
+    when self-drive is not installed. In --json mode the raw payload is
+    printed before the error so machines still get parseable JSON.
+    """
+    if not isinstance(result, dict) or "enabled" not in result:
+        raise CliError(f"resident returned an unexpected {method} result: {result!r}")
+    if not result.get("enabled"):
+        if args.json:
+            print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        raise CliError(_one_line(result.get("reason") or "self-drive is not installed"))
+    return result
+
+
+def _cmd_goal_list(args: argparse.Namespace) -> int:
+    result = _client(args).call("goal_list", {"limit": args.limit})
+    result = _goal_result_or_not_installed(args, result, "goal_list")
+    goals = result.get("goals")
+    if not isinstance(goals, list):
+        raise CliError(f"resident returned an unexpected goal_list result: {result!r}")
+    if args.json:
+        print(json.dumps(goals, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if not goals:
+        print("no self-drive goals")
+        return 0
+    for item in goals:
+        if not isinstance(item, dict):
+            continue
+        blocked = _one_line(item.get("blocked_reason"), limit=64)
+        blocked_suffix = f" [blocked: {blocked}]" if blocked else ""
+        print(
+            f"{_one_line(item.get('intention_id'), limit=24):24} "
+            f"{_one_line(item.get('status'), limit=12):12} "
+            f"{_one_line(item.get('origin'), limit=16):16} "
+            f"{_one_line(item.get('objective'), limit=72)}{blocked_suffix}"
+        )
+    return 0
+
+
+def _cmd_goal_status(args: argparse.Namespace) -> int:
+    result = _client(args).call("goal_status", {})
+    result = _goal_result_or_not_installed(args, result, "goal_status")
+    goals = result.get("goals") if isinstance(result.get("goals"), list) else []
+    errors = result.get("recent_errors") if isinstance(result.get("recent_errors"), list) else []
+    notes = result.get("recent_notes") if isinstance(result.get("recent_notes"), list) else []
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    active = [g for g in goals if isinstance(g, dict) and g.get("status") == "active"]
+    print(f"self-drive: {len(goals)} goal(s), {len(active)} active")
+    for goal in active:
+        print(
+            f"  active: {_one_line(goal.get('intention_id'), limit=24)} — "
+            f"{_one_line(goal.get('objective'), limit=80)}"
+        )
+    print(f"recent errors: {len(errors)}")
+    for error in errors[:3]:
+        print(f"  - {_one_line(error, limit=100)}")
+    print(f"recent notes: {len(notes)}")
+    return 0
+
+
 def _cmd_connector_status_offline(args: argparse.Namespace, error: str) -> int:
     """Local config evaluation when the daemon is unreachable."""
 
@@ -1434,6 +1501,31 @@ def build_parser() -> argparse.ArgumentParser:
         "--json", action="store_true", help="print raw JSON"
     )
     suggestions_dismiss.set_defaults(func=_cmd_suggestions_dismiss)
+
+    goal = sub.add_parser(
+        "goal", help="inspect the resident's self-drive (M-14) goals"
+    )
+    goal_sub = goal.add_subparsers(
+        dest="goal_command", metavar="subcommand", required=True
+    )
+
+    goal_list = goal_sub.add_parser(
+        "list", help="list self-drive goals (read-only)"
+    )
+    goal_list.add_argument(
+        "--limit",
+        type=lambda v: _require_positive_int(v, name="--limit", maximum=200),
+        default=50,
+        help="max goals to show (default 50)",
+    )
+    goal_list.add_argument("--json", action="store_true", help="print raw JSON")
+    goal_list.set_defaults(func=_cmd_goal_list)
+
+    goal_status = goal_sub.add_parser(
+        "status", help="show self-drive status (read-only)"
+    )
+    goal_status.add_argument("--json", action="store_true", help="print raw JSON")
+    goal_status.set_defaults(func=_cmd_goal_status)
     return parser
 
 
