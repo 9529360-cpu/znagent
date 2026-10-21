@@ -91,6 +91,10 @@ class ProductSuccessEvidenceWiringTests(unittest.TestCase):
             resident = _make_resident(tmp)
             self.assertIsNotNone(resident.action_fabric._success_evidence)
             self.assertIsNotNone(resident.action_executor._success_observer)
+            # Release the store's sqlite handle before the temp dir is
+            # cleaned up: on Windows an open kernel.db handle makes
+            # TemporaryDirectory cleanup fail with WinError 32.
+            resident.store.close()
 
     def test_verified_verdict_increments_product_store_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -109,6 +113,9 @@ class ProductSuccessEvidenceWiringTests(unittest.TestCase):
             second = executor.execute(ActionRequest("test.q13.beta"))
             self.assertEqual(second.verification.status, "verified")
             self.assertEqual(store.get_action_verdict_counts("test.q13.beta"), (2, 0))
+            # Release the store's sqlite handle before the temp dir is
+            # cleaned up (Windows: open kernel.db handle -> WinError 32).
+            resident.store.close()
 
     def test_tie_break_ranking_reads_product_store_evidence(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -149,6 +156,9 @@ class ProductSuccessEvidenceWiringTests(unittest.TestCase):
             self.assertEqual(
                 ranked["test.q13.alpha"].score, ranked["test.q13.beta"].score
             )
+            # Release the store's sqlite handle before the temp dir is
+            # cleaned up (Windows: open kernel.db handle -> WinError 32).
+            resident.store.close()
 
     def test_counts_survive_store_reopen(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -194,6 +204,9 @@ class ProductSuccessEvidenceWiringTests(unittest.TestCase):
             self.assertEqual(
                 resident.store.get_action_verdict_counts("test.q13.beta"), (0, 0)
             )
+            # Release the store's sqlite handle before the temp dir is
+            # cleaned up (Windows: open kernel.db handle -> WinError 32).
+            resident.store.close()
 
 
 if __name__ == "__main__":
