@@ -43,7 +43,7 @@ import logging
 import os
 import sqlite3
 import threading
-from contextlib import closing
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -237,7 +237,7 @@ class ProactiveContactEngine:
         if current.tzinfo is None:
             current = current.replace(tzinfo=timezone.utc)
         self._ensure_schema()
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock, self._connect() as conn:
             if kind == "accepted":
                 conn.execute(
                     "DELETE FROM resident_proactive_contact_suppressions "
@@ -307,7 +307,7 @@ class ProactiveContactEngine:
             prompt_context=render_persona(persona),
             sent_at=current.isoformat(),
         )
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock, self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO resident_proactive_contact_log(
@@ -339,7 +339,7 @@ class ProactiveContactEngine:
         return hour >= start or hour < end
 
     def _sent_today(self, local: datetime) -> int:
-        with closing(self._connect()) as conn:
+        with self._connect() as conn:
             row = conn.execute(
                 "SELECT COUNT(*) AS n FROM resident_proactive_contact_log WHERE day=?",
                 (local.date().isoformat(),),
@@ -347,7 +347,7 @@ class ProactiveContactEngine:
         return int(row["n"]) if row else 0
 
     def _suppressed_keys(self, current: datetime) -> set[str]:
-        with closing(self._connect()) as conn:
+        with self._connect() as conn:
             rows = conn.execute(
                 "SELECT suggestion_key FROM resident_proactive_contact_suppressions "
                 "WHERE expires_at > ?",
@@ -356,7 +356,7 @@ class ProactiveContactEngine:
         return {str(row["suggestion_key"]) for row in rows}
 
     def _prune_expired(self, current: datetime) -> None:
-        with self._lock, closing(self._connect()) as conn:
+        with self._lock, self._connect() as conn:
             conn.execute(
                 "DELETE FROM resident_proactive_contact_suppressions "
                 "WHERE expires_at <= ?",
@@ -374,7 +374,7 @@ class ProactiveContactEngine:
             self._schema_ready = True
 
     def _init_schema(self) -> None:
-        with closing(self._connect()) as conn:
+        with self._connect() as conn:
             conn.executescript(
                 """
                 CREATE TABLE IF NOT EXISTS resident_proactive_contact_suppressions(
@@ -397,8 +397,21 @@ class ProactiveContactEngine:
             )
             conn.commit()
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
+        """打开 kernel.db 的短连接：退出 ``with`` 块时必定关闭。
+
+        注意：``sqlite3.Connection`` 自身作上下文管理器时 ``__exit__``
+        只提交 / 回滚事务、**不关闭连接**。直接 ``with conn:`` 会在
+        Windows 上泄漏 kernel.db 的文件句柄，导致
+        ``tempfile.TemporaryDirectory`` 清理时报 WinError 32
+        （#616 Windows shard 真实失败的根因）。本方法统一保证关闭，
+        调用方直接 ``with self._connect() as conn:`` 即可。
+        """
         conn = sqlite3.connect(self.store.path, timeout=5.0)
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA busy_timeout=5000")
-        return conn
+        try:
+            yield conn
+        finally:
+            conn.close()
