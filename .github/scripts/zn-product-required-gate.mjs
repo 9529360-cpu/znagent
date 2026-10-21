@@ -7,7 +7,6 @@ export const PRODUCT_CONTRACT_WORKFLOWS = [
   '.github/workflows/zn-managed-browser-contract.yml',
   '.github/workflows/zn-windows-interactive-contract.yml',
   '.github/workflows/zn-work-recovery-contract.yml',
-  '.github/workflows/zn-windows-clean-install.yml'
 ]
 
 function stripYamlScalar(value) {

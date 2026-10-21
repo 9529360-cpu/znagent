@@ -12,7 +12,6 @@ on:
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/privacy-background.js
       - apps/desktop/browser-extension/manifest.json
-      - apps/desktop/electron/zn-browser-sensitive-field-overlay.test.ts
       - tests/zn_agent/integration/test_windows_interactive_user_browser_recovery_code.py
       - tests/zn_agent/integration/_run_owned_unittest_module.py
       - tests/zn_agent/integration/test_windows_interactive_pointer_uia.py
@@ -75,7 +74,6 @@ on:
       - apps/desktop/browser-extension/background.js
       - apps/desktop/browser-extension/privacy-background.js
       - apps/desktop/browser-extension/manifest.json
-      - apps/desktop/electron/zn-browser-sensitive-field-overlay.test.ts
       - tests/zn_agent/integration/test_windows_interactive_user_browser_recovery_code.py
       - tests/zn_agent/integration/_run_owned_unittest_module.py
       - tests/zn_agent/integration/test_windows_interactive_pointer_uia.py

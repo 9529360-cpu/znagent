@@ -8,9 +8,6 @@ __pycache__/
 .venv/
 .dev/
 node_modules/
-apps/desktop/dist/
-apps/desktop/build/
-apps/desktop/release/
 .ci/
 coverage/
 
