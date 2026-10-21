@@ -10,7 +10,11 @@ and no model calls:
 * an enabled recurring Will trigger whose next due time is overdue or within
   the next 24 hours and which Will has not already picked up;
 * a memory fact the user explicitly declared as a routine (key starts with
-  ``routine:`` / ``例行:`` / ``例行任务:``).
+  ``routine:`` / ``例行:`` / ``例行任务:``);
+* a due recurring occurrence held back by the user autonomy envelope
+  (Q12): written durably by the autonomy policy store when a trigger
+  fires in a domain below the suggest level, surfaced here with the
+  same dedup/dismissal semantics.
 
 Every suggestion carries its source (which Work thread, which schedule, which
 memory fact) and a stable key derived from kind + target + task, so a
@@ -23,6 +27,7 @@ workCreate path. No orphan task is ever created.
 """
 
 import hashlib
+import logging
 import sqlite3
 import threading
 from contextlib import closing
@@ -30,6 +35,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from .models import utc_now
+
+_LOG = logging.getLogger(__name__)
 
 _DISMISSAL_TTL = timedelta(days=7)
 _MAX_SUGGESTIONS = 8
@@ -41,6 +48,7 @@ _KIND_RANK = {
     "failed_work": 0,
     "recurring_due": 1,
     "recurring_upcoming": 1,
+    "autonomy_gated": 1,
     "interrupted_work": 2,
     "routine": 3,
 }
@@ -87,10 +95,12 @@ class SuggestionEngine:
         if current.tzinfo is None:
             current = current.replace(tzinfo=timezone.utc)
         self._prune_expired(current)
+        self._prune_gated_occurrences(current)
         dismissed = self._dismissed_keys(current)
         candidates: list[dict[str, Any]] = []
         candidates.extend(self._work_suggestions())
         candidates.extend(self._recurring_suggestions(current))
+        candidates.extend(self._autonomy_suggestions(current))
         candidates.extend(self._routine_suggestions())
         seen: set[str] = set()
         ranked: list[tuple[int, str, dict[str, Any]]] = []
@@ -290,6 +300,61 @@ class SuggestionEngine:
             )
         return suggestions
 
+    def _autonomy_suggestions(self, current: datetime) -> list[dict[str, Any]]:
+        """Q12: due occurrences held back by the user autonomy envelope.
+
+        Rows are written durably by the autonomy policy store when a
+        recurring trigger fires in a domain below the suggest level.
+        They reuse the same stable-key dedup and 7-day dismissal
+        suppression as every other suggestion: dismissing the key
+        suppresses exactly this occurrence, and a retry never pushes a
+        duplicate (the outbox key is the primary key).
+        """
+        try:
+            rows = self._gated_occurrence_rows()
+        except Exception:
+            _LOG.debug(
+                "autonomy gated occurrences unreadable; skipping source",
+                exc_info=True,
+            )
+            return []
+        suggestions: list[dict[str, Any]] = []
+        for row in rows:
+            task = str(row["task"] or "").strip()
+            if not task:
+                continue
+            scheduled_at = str(row["scheduled_at"] or "")
+            suggestions.append(
+                {
+                    "key": str(row["suggestion_key"]),
+                    "kind": "autonomy_gated",
+                    "title": task,
+                    "task": task,
+                    "thread_id": None,
+                    "source": {
+                        "type": "autonomy_gate",
+                        "label": task,
+                        "intention_id": str(row["intention_id"] or ""),
+                        "domain": str(row["domain"] or ""),
+                        "level": str(row["level"] or ""),
+                        "scheduled_at": scheduled_at,
+                    },
+                    "_sort": scheduled_at,
+                }
+            )
+        return suggestions
+
+    def _gated_occurrence_rows(self) -> list[sqlite3.Row]:
+        with closing(self._connect()) as conn:
+            return conn.execute(
+                """
+                SELECT suggestion_key,task,intention_id,domain,level,scheduled_at
+                FROM resident_autonomy_gated_occurrences
+                ORDER BY scheduled_at ASC,intention_id ASC
+                LIMIT 100
+                """
+            ).fetchall()
+
     def _routine_suggestions(self) -> list[dict[str, Any]]:
         try:
             facts = self.resident.store.list_facts()
@@ -356,6 +421,31 @@ class SuggestionEngine:
                 (current.isoformat(),),
             )
             conn.commit()
+
+    def _prune_gated_occurrences(self, current: datetime) -> None:
+        """Drop stale gated occurrences alongside expired dismissals.
+
+        A gated occurrence is a point-in-time event, not an ongoing
+        schedule: after the dismissal TTL it is too stale to push, and a
+        dismissed one never needs to reappear (the dismissal already
+        suppressed it for exactly this window).
+        """
+        cutoff = (current - _DISMISSAL_TTL).isoformat()
+        try:
+            with self._lock, closing(self._connect()) as conn:
+                conn.execute(
+                    "DELETE FROM resident_autonomy_gated_occurrences "
+                    "WHERE created_at <= ?",
+                    (cutoff,),
+                )
+                conn.commit()
+        except Exception:
+            # Best effort: the table only exists once the autonomy
+            # policy store has run; nothing to prune before that.
+            _LOG.debug(
+                "could not prune autonomy gated occurrences",
+                exc_info=True,
+            )
 
     def _ensure_schema(self) -> None:
         with self._lock:
