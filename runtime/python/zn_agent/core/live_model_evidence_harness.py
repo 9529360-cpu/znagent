@@ -15,8 +15,10 @@
   跳过的任务明确记录跳过原因，而不是假跑。
 - 凭证只走环境变量/现有安全存储引用，永不写入代码、日志与报告。
 
-任务集：声明式 JSON（``evidence/live_model_taskset.json``），覆盖研究 /
-浏览器 / 文件 / 编码 / 跨面 五个域。每个任务自带 expected_output
+任务集：声明式 JSON（``evidence/live_model_taskset.json``，schema
+``zn-live-model-taskset/v1`` → T6 起 ``v2``，harness 对两版都读），覆盖研究 /
+浏览器 / 文件 / 编码 / 跨面 五个域；v2 起新增 calendar-01（R5 ICS 日历）、
+fx-01（R7 汇率）、rss-01（R3 RSS）三个 R 系列能力任务。每个任务自带 expected_output
 （CP-3 终报逐项举证的验收口径）与一组确定性检查：
 - ``fact_markers``: 模型输出原文必须命中的事实标记（研究类）。全命中时
   登记一条 objective 为「事实标记核查」的证据条目，供终报引用；缺标记
@@ -28,6 +30,11 @@
   里执行模型产物（隔离 scratch，超时熔断），记录真实运行证据。
 - ``http_observation``: 浏览器类任务，harness 自己独立抓取同一 URL
   （仅 live 模式），把独立观测与模型报告做交叉比对。
+- ``ics_parse``: R5 日历类任务（T6 起），harness 用仓库自身的
+  ``calendar_connector.parse_ics``（日历连接器真实解析路径）对模型
+  产出的 ICS 做语义解析，事件字段全命中时登记一条 objective 为
+  「ICS 解析核查」的证据条目，供终报引用（与 fact_markers 登记条目
+  同机制）。
 
 CP-3 复用：终报形状与 ``adjudicate_completion`` 完全一致；harness
 记录的 evidence 条目（``relative_path`` / ``objective`` / ``result``）
@@ -60,7 +67,12 @@ from .completion_verdict import adjudicate_completion
 
 HARNESS_VERSION = "0.1.0"
 REPORT_SCHEMA = "zn-live-model-evidence/v1"
-TASKSET_SCHEMA = "zn-live-model-taskset/v1"
+# T6: 任务集 schema 有序升级 v1 -> v2（新增 calendar-01 / fx-01 / rss-01
+# 三个 R 系列能力任务 + ics_parse 检查）。harness 对两个版本都读，
+# 报告 schema 不变（仍是 zn-live-model-evidence/v1），跨次可对比。
+TASKSET_SCHEMA = "zn-live-model-taskset/v2"
+TASKSET_SCHEMA_V1 = "zn-live-model-taskset/v1"
+SUPPORTED_TASKSET_SCHEMAS = (TASKSET_SCHEMA_V1, TASKSET_SCHEMA)
 
 LIVE_ENV = "ZN_E2E_LIVE"
 MODEL_ENV = "ZN_E2E_MODEL"
@@ -75,7 +87,7 @@ FAILURE_TOOL_ENVIRONMENT = "tool_environment"
 FAILURE_VERIFICATION_GAP = "verification_gap"
 FAILURE_OTHER = "other"
 
-CHECK_KINDS = ("fact_markers", "file_content", "python_run", "http_observation")
+CHECK_KINDS = ("fact_markers", "file_content", "python_run", "http_observation", "ics_parse")
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +129,11 @@ def _check_spec(check: Mapping[str, Any], *, task_id: str, index: int) -> dict[s
     elif kind == "http_observation":
         if not str(check.get("url") or "").strip():
             raise ValueError(f"任务 {task_id} 的 http_observation 检查需要 url")
+    elif kind == "ics_parse":
+        # T6：R5 ICS 日历能力。用仓库自身的 calendar_connector.parse_ics
+        # 解析模型产物（日历连接器真实的解析路径），语义级验证事件字段。
+        if not str(check.get("ref") or "").strip():
+            raise ValueError(f"任务 {task_id} 的 ics_parse 检查需要 ref（证据引用路径）")
     return normalized
 
 
@@ -175,9 +192,9 @@ def load_task_set(path: str | Path) -> list[TaskSpec]:
         raise ValueError(f"任务集文件解析失败：{path}：{exc}")
     if not isinstance(raw, Mapping):
         raise ValueError(f"任务集顶层必须是对象：{path}")
-    if str(raw.get("schema") or "").strip() != TASKSET_SCHEMA:
+    if str(raw.get("schema") or "").strip() not in SUPPORTED_TASKSET_SCHEMAS:
         raise ValueError(
-            f"任务集 schema 必须是 {TASKSET_SCHEMA!r}：{path}"
+            f"任务集 schema 必须是 {SUPPORTED_TASKSET_SCHEMAS!r} 之一：{path}"
         )
     tasks_raw = raw.get("tasks")
     if not isinstance(tasks_raw, list) or not tasks_raw:
@@ -532,6 +549,76 @@ def _run_http_observation(
     )
 
 
+def _run_ics_parse(
+    check: Mapping[str, Any],
+    artifacts: dict[str, str],
+    scratch: Path,
+    evidence: list[dict[str, Any]],
+) -> CheckOutcome:
+    """T6：用仓库自身的 ICS 解析器（R5 日历连接器真实解析路径）验证产物。
+
+    模型写的 ICS 文本由 ``calendar_connector.parse_ics`` 做语义解析；
+    解析成功且事件字段命中期望时登记一条 objective 为「ICS 解析核查」
+    的证据条目，供终报引用（与 Q6 fact_markers 登记条目同机制）。
+    产物不是合法 ICS / 事件缺失 / 字段不符 → failed（模型能力）；
+    harness 自身 import 失败等 → 抛异常走 tool_environment。
+    """
+    ref = str(check.get("ref") or "").strip()
+    content = artifacts.get(ref)
+    if content is None:
+        return CheckOutcome(
+            name="ics_parse", passed=False, detail=f"终报未给出证据 {ref!r} 的产物"
+        )
+    try:
+        from .calendar_connector import CalendarError, parse_ics
+    except ImportError as exc:
+        raise RuntimeError(f"ics_parse 检查缺少日历解析器：{exc}") from exc
+    target = scratch / ref
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(content, encoding="utf-8")
+    try:
+        events = parse_ics(content)
+    except CalendarError as exc:
+        return CheckOutcome(
+            name="ics_parse", passed=False, detail=f"{ref} 不是合法 ICS：{exc}"
+        )
+    if not events:
+        return CheckOutcome(
+            name="ics_parse", passed=False, detail=f"{ref} 未解析出任何事件"
+        )
+    event = events[0]
+    expect_summary = str(check.get("expect_summary_contains") or "").strip()
+    expect_start = str(check.get("expect_start_iso") or "").strip()
+    problems: list[str] = []
+    if expect_summary and expect_summary not in (event.summary or ""):
+        problems.append(f"标题未命中 {expect_summary!r}")
+    if expect_start and (event.start is None or event.start.isoformat() != expect_start):
+        got = event.start.isoformat() if event.start is not None else "无"
+        problems.append(f"开始时间不符：期望 {expect_start}，实际 {got}")
+    if problems:
+        return CheckOutcome(
+            name="ics_parse", passed=False, detail=f"{ref} 事件字段不符：{'；'.join(problems)}"
+        )
+    # 全命中才登记核查条目（与 fact_markers 同机制）：字段不符时不登记，
+    # 终报对「ICS 解析核查」的引用落空，判定保持 partial。
+    evidence.append(
+        {
+            "relative_path": str(target.relative_to(scratch)),
+            "objective": "ICS 解析核查",
+            "result": (
+                f"用 calendar_connector.parse_ics 解析 {ref}："
+                f"{len(events)} 个事件；首事件标题「{event.summary}」、"
+                f"开始 {event.start.isoformat() if event.start else '无'}"
+            ),
+        }
+    )
+    return CheckOutcome(
+        name="ics_parse",
+        passed=True,
+        detail=f"{ref} 解析出 {len(events)} 个事件，字段命中",
+    )
+
+
 def run_task(
     task: TaskSpec,
     *,
@@ -614,6 +701,10 @@ def run_task(
                     _run_http_observation(
                         check, model_text, evidence, timeout_s=task.timeout_s
                     )
+                )
+            elif kind == "ics_parse":
+                check_outcomes.append(
+                    _run_ics_parse(check, artifacts, scratch, evidence)
                 )
         except Exception as exc:
             check_error = f"{kind} 检查执行失败：{type(exc).__name__}：{str(exc)[:200]}"

@@ -25,9 +25,10 @@ PYTHONPATH=runtime/python python -m zn_agent.core.live_model_evidence_harness \
 
 ## 任务集
 
-`evidence/live_model_taskset.json`（schema `zn-live-model-taskset/v1`）：6 个任务，
-覆盖研究 / 浏览器 / 文件 / 编码 / 跨面五个域。每个任务自带
-`expected_output`（CP-3 终报逐项举证的验收口径）与确定性检查：
+`evidence/live_model_taskset.json`（schema `zn-live-model-taskset/v2`，T6 起；
+harness 对 v1 / v2 都读，见下）。9 个任务，覆盖研究 / 浏览器 / 文件 /
+编码 / 跨面五个域。每个任务自带 `expected_output`（CP-3 终报逐项举证的
+验收口径）与确定性检查：
 
 - `fact_markers`：模型输出原文必须命中的事实标记；
 - `file_content`：模型产物（终报 evidence 条目可选带 `artifact` 字段）
@@ -35,7 +36,12 @@ PYTHONPATH=runtime/python python -m zn_agent.core.live_model_evidence_harness \
 - `python_run`：编码类任务，harness 用**仓库自带**的测试片段在子进程
   （`python -I`，超时熔断）里执行模型产物，记录真实运行证据；
 - `http_observation`：浏览器类任务仅 live 模式，harness 自己独立抓取同一
-  URL，把独立观测与模型报告交叉比对。
+  URL，把独立观测与模型报告交叉比对；
+- `ics_parse`（T6 起）：R5 日历任务，harness 用仓库自身的
+  `calendar_connector.parse_ics`（日历连接器真实解析路径）对模型产出的
+  ICS 做语义解析，事件字段全命中时登记一条 objective 为「ICS 解析核查」
+  的证据条目供终报引用（与 `fact_markers` 的「事实标记核查」登记同机制：
+  未全命中不登记，引用落空、判定保持 partial）。
 
 ## 判定与失败分类
 
@@ -96,6 +102,31 @@ harness 记录的 evidence 条目（`relative_path` / `objective` / `result`）
 
 修复后的正式基线在合入后于干净 main 上重跑（opt-in live），逐项 verdict
 见对应 PR 正文与运行报告（schema 不变，跨次可比）。
+
+## 任务集扩展：覆盖 R5–R12 新能力（T6，2026-10-21）
+
+原 6 任务（M-11/Q6）量不出 R 系列落地的 8 个新能力面，回归守护有盲区。
+T6 新增 3 个任务，**只选免密钥 / 本地可验的**：
+
+| 任务 | 能力面 | 证据条目来源 |
+|---|---|---|
+| `calendar-01` | R5 ICS 日历 | `file_content` 登记「文件产物写出：event.ics」；`ics_parse` 用仓库自身 `calendar_connector.parse_ics` 做语义解析，全命中时登记「ICS 解析核查」 |
+| `fx-01` | R7 汇率换算 | `file_content` 登记「文件产物写出：conversion.json」（JSON 解析 + 三次换算数值命中） |
+| `rss-01` | R3 RSS 提取 | `file_content` 登记「文件产物写出：headlines.txt」（三条标题 + 三条链接命中） |
+
+选型说明：
+
+- R2（web search）未纳入——裸模型无法调用工具，基线只能量"工具形状输出"
+  而非工具调用本身；且唯一可用的公共 SearXNG 实例有网络漂移风险，不适合
+  当回归基线（`http_observation` 对"页面本身变化属环境漂移"的教训已写在
+  harness 里）。R6/R9/R10（邮件/多媒体/消息）需用户凭证，不进基线。
+- 三个新任务沿用 Q6 公平性写法：`system_guidance` 内嵌 REPORT_SHAPE_HINT
+  原文、user_prompt 末尾附验收项原文清单、逐字引用契约与验证分工说明；
+  不改判定器、不改 CP-3 语义。
+- schema 有序升级 `zn-live-model-taskset/v1` → `v2`：harness
+  `SUPPORTED_TASKSET_SCHEMAS` 对两版都读；v1 的旧 6 任务文件可直接被新
+  harness 加载、跑、对比（报告 schema 仍是 `zn-live-model-evidence/v1`，
+  跨次可比，T5 对比工具照常读取）。
 
 ## 报告
 

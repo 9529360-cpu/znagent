@@ -608,5 +608,203 @@ class TestReport(unittest.TestCase):
         self.assertEqual(browser.verdict, "skipped")
 
 
+class TestTaskSetV2IcsParse(unittest.TestCase):
+    """T6：任务集 v2（calendar-01 / fx-01 / rss-01）与 ics_parse 检查。"""
+
+    def setUp(self):
+        self.tasks = {task.task_id: task for task in load_task_set(TASKSET)}
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.scratch = Path(self.tmp.name) / "scratch"
+
+    def _run(self, task_id, invoke):
+        return run_task(
+            self.tasks[task_id],
+            model_invoke=invoke,
+            scratch_root=self.scratch,
+            live=False,
+        )
+
+    def _report_text(self, task, entries):
+        # entries: [(criterion, evidence_ref, artifact_or_None), ...]
+        evidence = []
+        files = []
+        for criterion, ref, artifact in entries:
+            entry = {"criterion": criterion, "evidence_ref": ref}
+            if artifact is not None:
+                entry["artifact"] = artifact
+                if ref not in files:
+                    files.append(ref)
+            evidence.append(entry)
+        return json.dumps(
+            {
+                "completion_report": {
+                    "conclusion": "任务完成，证据齐备。",
+                    "evidence": evidence,
+                    "files": files,
+                    "unfinished": [],
+                }
+            },
+            ensure_ascii=False,
+        )
+
+    def test_repo_taskset_is_v2_and_keeps_old_tasks(self):
+        tasks = load_task_set(TASKSET)
+        self.assertEqual(
+            [t.task_id for t in tasks[:6]],
+            ["research-01", "browser-01", "file-01", "file-02",
+             "coding-01", "cross-01"],
+        )
+        self.assertEqual(
+            [t.task_id for t in tasks[6:]], ["calendar-01", "fx-01", "rss-01"]
+        )
+        # 旧任务在 v2 里字段未动（schema 升级只追加任务）。
+        for task in tasks[:6]:
+            self.assertIn("<exact acceptance criterion>", task.system_guidance)
+
+    def test_v1_taskset_still_loads(self):
+        # v1 仍可读：旧 6 任务照常可跑、可被对比工具对齐读取。
+        raw = json.loads(TASKSET.read_text(encoding="utf-8"))
+        raw["schema"] = "zn-live-model-taskset/v1"
+        raw["tasks"] = raw["tasks"][:6]
+        tmp = tempfile.NamedTemporaryFile(
+            "w", suffix=".json", delete=False, encoding="utf-8"
+        )
+        json.dump(raw, tmp, ensure_ascii=False)
+        tmp.close()
+        self.addCleanup(os.unlink, tmp.name)
+        tasks = load_task_set(tmp.name)
+        self.assertEqual(len(tasks), 6)
+        self.assertEqual(tasks[0].task_id, "research-01")
+
+    def test_ics_parse_verified_path(self):
+        task = self.tasks["calendar-01"]
+        ics = (
+            "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//ZN//t6//CN\n"
+            "BEGIN:VEVENT\nUID:zn-t6-test-1@example\n"
+            "DTSTAMP:20261021T000000Z\n"
+            "DTSTART:20261023T080000Z\nDTEND:20261023T083000Z\n"
+            "SUMMARY:团队站会\nLOCATION:线上会议\n"
+            "END:VEVENT\nEND:VCALENDAR\n"
+        )
+
+        def fake(question, context):
+            return self._report_text(
+                task,
+                [
+                    (task.expected_output[0], "event.ics", ics),
+                    (task.expected_output[1], "ICS 解析核查", None),
+                ],
+            )
+
+        outcome = self._run("calendar-01", fake)
+        self.assertEqual(outcome.verdict, "verified", outcome.notes)
+        self.assertEqual(outcome.failure_class, FAILURE_NONE)
+        self.assertTrue(
+            any("ICS 解析核查" in e for e in outcome.evidence_excerpts),
+            outcome.evidence_excerpts,
+        )
+
+    def test_ics_parse_wrong_start_is_model_capability(self):
+        task = self.tasks["calendar-01"]
+        ics = (
+            "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//ZN//t6//CN\n"
+            "BEGIN:VEVENT\nUID:zn-t6-test-2@example\n"
+            "DTSTAMP:20261021T000000Z\n"
+            "DTSTART:20261023T090000Z\nDTEND:20261023T093000Z\n"
+            "SUMMARY:团队站会\nLOCATION:线上会议\n"
+            "END:VEVENT\nEND:VCALENDAR\n"
+        )
+
+        def fake(question, context):
+            return self._report_text(
+                task,
+                [
+                    (task.expected_output[0], "event.ics", ics),
+                    (task.expected_output[1], "ICS 解析核查", None),
+                ],
+            )
+
+        outcome = self._run("calendar-01", fake)
+        self.assertEqual(outcome.failure_class, FAILURE_MODEL_CAPABILITY)
+        self.assertNotEqual(outcome.verdict, "verified")
+
+    def test_ics_parse_malformed_ics_is_model_capability(self):
+        task = self.tasks["calendar-01"]
+        bad = "这不是 ICS，就是一段普通文字。\n"
+
+        def fake(question, context):
+            return self._report_text(
+                task,
+                [
+                    (task.expected_output[0], "event.ics", bad),
+                    (task.expected_output[1], "ICS 解析核查", None),
+                ],
+            )
+
+        outcome = self._run("calendar-01", fake)
+        self.assertEqual(outcome.failure_class, FAILURE_MODEL_CAPABILITY)
+        self.assertNotEqual(outcome.verdict, "verified")
+
+    def test_ics_parse_rejects_missing_ref(self):
+        from zn_agent.core.live_model_evidence_harness import _check_spec
+
+        with self.assertRaisesRegex(ValueError, "ref"):
+            _check_spec({"kind": "ics_parse"}, task_id="calendar-01", index=0)
+
+    def test_fx_verified_path(self):
+        task = self.tasks["fx-01"]
+        payload = json.dumps(
+            {
+                "conversions": [
+                    {"from": "EUR", "to": "USD", "amount": 100,
+                     "rate": 1.1642, "result": 116.42},
+                    {"from": "USD", "to": "EUR", "amount": 50,
+                     "rate": 1.1642, "result": 42.95},
+                    {"from": "CNY", "to": "EUR", "amount": 1000,
+                     "rate": 8.2871, "result": 120.67},
+                ]
+            },
+            ensure_ascii=False,
+        )
+
+        def fake(question, context):
+            return self._report_text(
+                task,
+                [
+                    (task.expected_output[0], "conversion.json", payload),
+                    (task.expected_output[1], "conversion.json", payload),
+                ],
+            )
+
+        outcome = self._run("fx-01", fake)
+        self.assertEqual(outcome.verdict, "verified", outcome.notes)
+        self.assertEqual(outcome.failure_class, FAILURE_NONE)
+
+    def test_rss_verified_path(self):
+        task = self.tasks["rss-01"]
+        headlines = (
+            "开源模型推理成本再降三成\n"
+            "https://example.com/news/cost-down\n\n"
+            "新一代端侧芯片发布\n"
+            "https://example.com/news/edge-chip\n\n"
+            "个人助理进入常驻运行时代\n"
+            "https://example.com/news/resident-agent\n"
+        )
+
+        def fake(question, context):
+            return self._report_text(
+                task,
+                [
+                    (task.expected_output[0], "headlines.txt", headlines),
+                    (task.expected_output[1], "headlines.txt", headlines),
+                ],
+            )
+
+        outcome = self._run("rss-01", fake)
+        self.assertEqual(outcome.verdict, "verified", outcome.notes)
+        self.assertEqual(outcome.failure_class, FAILURE_NONE)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1,5 +1,5 @@
 {
- "schema": "zn-live-model-taskset/v1",
+ "schema": "zn-live-model-taskset/v2",
  "tasks": [
   {
    "checks": [
@@ -137,6 +137,86 @@
    "timeout_s": 120,
    "title": "研究 + 文件：读资料写摘要文件",
    "user_prompt": "先阅读资料，再写文件（跨研究与文件两面）。\n\nCP-3 判定有三种 verdict：verified 表示全部验收项都有真实证据；partial 表示部分验收项缺证据并附缺失清单；rejected 表示终报结构坏、引用越界或自相矛盾。\n\n写出文件 summary.md，内容为上述三种 verdict 各一句话说明。\n\n把文件全文放在终报 evidence 条目里：criterion 写验收项原文逐字，evidence_ref 写 \"summary.md\"，artifact 写全文。\n\n本任务的验收项原文（终报 criterion 与 unfinished 只能逐字引用以下条目）：\n- 产物 summary.md 提到了 verified 的含义\n- 产物 summary.md 提到了 partial 的含义\n- 产物 summary.md 提到了 rejected 的含义"
+  },
+  {
+   "checks": [
+    {
+     "kind": "file_content",
+     "must_contain": [
+      "BEGIN:VCALENDAR",
+      "BEGIN:VEVENT",
+      "团队站会",
+      "20261023T080000Z"
+     ],
+     "ref": "event.ics"
+    },
+    {
+     "expect_start_iso": "2026-10-23T08:00:00+00:00",
+     "expect_summary_contains": "团队站会",
+     "kind": "ics_parse",
+     "ref": "event.ics"
+    }
+   ],
+   "domain": "file",
+   "expected_output": [
+    "产物 event.ics 是合法 ICS（可被 ZN 日历连接器解析）",
+    "event.ics 包含事件：2026-10-23 10:00（柏林时间）开始、时长 30 分钟、标题团队站会"
+   ],
+   "id": "calendar-01",
+   "system_guidance": "你必须只输出一个 JSON 对象，不要输出任何其他文字、解释或代码块标记。终报结构如下（原文，逐字按此形状）：\n{\"completion_report\": {\"conclusion\": \"...\", \"evidence\": [{\"criterion\": \"<exact acceptance criterion>\", \"evidence_ref\": \"<relative_path or objective of one verified evidence entry>\"}], \"files\": [\"<workspace-relative path>\"], \"unfinished\": [], \"standing_dod\": {\"<no_regression|runtime_verified|docs|rollback|approval>\": {\"status\": \"satisfied|not_applicable\", \"detail\": \"...\", \"evidence_ref\": \"<optional, must match real evidence>\"}}}}\n规则：\n1. evidence 里每条 criterion、unfinished 里每条，只能逐字引用本任务的验收项原文（见 user_prompt 末尾清单），一字不差；不得改写、不得新增清单外的条目、不得在 unfinished 里写说明性文字。没有未完成项时 unfinished 写空数组 []。\n2. standing_dod 本次省略不写。\n3. 验证分工：你提交终报后，harness 会执行确定性核查（事实标记 / 文件内容 / 代码实际运行 / 页面独立抓取），并把核查结果登记为可引用证据。你不需要、也不要把“待核查 / 待运行 / 未能实时访问”这类事项写进 unfinished；unfinished 只写你确实没做完的验收项原文。\n4. evidence_ref 必须指向真实证据：任务要求产出文件时，把文件全文放进对应 evidence 条目的 artifact 字段、evidence_ref 写文件名、files 写产出文件名列表；无文件产物时 files 写 []。其余情况按 user_prompt 中给出的引用指引填写。",
+   "timeout_s": 120,
+   "title": "写出一个合法的 ICS 日历事件（R5）",
+   "user_prompt": "你要为 ZN 的日历连接器（R5，读本地 ICS 文件）准备一个日历事件。\n\n事件信息：\n- 标题：团队站会\n- 开始：2026-10-23 10:00（欧洲/柏林时区）\n- 结束：2026-10-23 10:30（欧洲/柏林时区，时长 30 分钟）\n- 地点：线上会议\n\n要求：\n1. 写出完整合法的 ICS 文本（VCALENDAR 包裹一个 VEVENT，含 UID、DTSTAMP、DTSTART、DTEND、SUMMARY、LOCATION）。\n2. DTSTART/DTEND 请用 UTC 时间表示：柏林时间比 UTC 快 2 小时，因此开始时间应写作 20261023T080000Z，结束时间写作 20261023T083000Z。\n3. 把 ICS 全文放在终报 evidence 条目里：criterion 写验收项原文逐字，evidence_ref 写 \"event.ics\"，artifact 写 ICS 全文，files 写 [\"event.ics\"]。\n4. harness 会用 ZN 日历连接器自身的解析器（calendar_connector.parse_ics）对你的产物做语义解析：标题必须包含“团队站会”，开始时间必须等于 2026-10-23T08:00:00+00:00；解析成功后该核查记录登记为可引用证据“ICS 解析核查”，第二个验收项请引用它（evidence_ref 写“ICS 解析核查”）。\n\n本任务的验收项原文（终报 criterion 与 unfinished 只能逐字引用以下条目）：\n- 产物 event.ics 是合法 ICS（可被 ZN 日历连接器解析）\n- event.ics 包含事件：2026-10-23 10:00（柏林时间）开始、时长 30 分钟、标题团队站会"
+  },
+  {
+   "checks": [
+    {
+     "kind": "file_content",
+     "must_contain": [
+      "116.42",
+      "42.95",
+      "120.67"
+     ],
+     "must_parse": "json",
+     "ref": "conversion.json"
+    }
+   ],
+   "domain": "coding",
+   "expected_output": [
+    "产物 conversion.json 是合法 JSON",
+    "conversion.json 包含三次换算结果（100 EUR→USD、50 USD→EUR、1000 CNY→EUR），结果保留两位小数"
+   ],
+   "id": "fx-01",
+   "system_guidance": "你必须只输出一个 JSON 对象，不要输出任何其他文字、解释或代码块标记。终报结构如下（原文，逐字按此形状）：\n{\"completion_report\": {\"conclusion\": \"...\", \"evidence\": [{\"criterion\": \"<exact acceptance criterion>\", \"evidence_ref\": \"<relative_path or objective of one verified evidence entry>\"}], \"files\": [\"<workspace-relative path>\"], \"unfinished\": [], \"standing_dod\": {\"<no_regression|runtime_verified|docs|rollback|approval>\": {\"status\": \"satisfied|not_applicable\", \"detail\": \"...\", \"evidence_ref\": \"<optional, must match real evidence>\"}}}}\n规则：\n1. evidence 里每条 criterion、unfinished 里每条，只能逐字引用本任务的验收项原文（见 user_prompt 末尾清单），一字不差；不得改写、不得新增清单外的条目、不得在 unfinished 里写说明性文字。没有未完成项时 unfinished 写空数组 []。\n2. standing_dod 本次省略不写。\n3. 验证分工：你提交终报后，harness 会执行确定性核查（事实标记 / 文件内容 / 代码实际运行 / 页面独立抓取），并把核查结果登记为可引用证据。你不需要、也不要把“待核查 / 待运行 / 未能实时访问”这类事项写进 unfinished；unfinished 只写你确实没做完的验收项原文。\n4. evidence_ref 必须指向真实证据：任务要求产出文件时，把文件全文放进对应 evidence 条目的 artifact 字段、evidence_ref 写文件名、files 写产出文件名列表；无文件产物时 files 写 []。其余情况按 user_prompt 中给出的引用指引填写。",
+   "timeout_s": 120,
+   "title": "按给定汇率表做货币换算（R7）",
+   "user_prompt": "ZN 的汇率连接器（R7，Frankfurter，ECB 参考汇率，免密钥）返回了以下汇率快照（base=EUR）：\n\n{\n  \"amount\": 1.0,\n  \"base\": \"EUR\",\n  \"date\": \"2026-10-16\",\n  \"rates\": {\"USD\": 1.1642, \"CNY\": 8.2871, \"JPY\": 178.53}\n}\n\n请完成三次换算，结果保留两位小数（四舍五入）：\n1. 100 EUR → USD（乘以 USD 汇率）\n2. 50 USD → EUR（除以 USD 汇率）\n3. 1000 CNY → EUR（除以 CNY 汇率）\n\n把结果写成合法 JSON 文件 conversion.json，形状如下：\n{\"conversions\": [{\"from\": \"EUR\", \"to\": \"USD\", \"amount\": 100, \"rate\": 1.1642, \"result\": 116.42}, ...]}\n\n把 conversion.json 全文放在终报 evidence 条目里：criterion 写验收项原文逐字，evidence_ref 写 \"conversion.json\"，artifact 写文件全文，files 写 [\"conversion.json\"]。harness 会对产物做 JSON 解析与数值命中检查。\n\n本任务的验收项原文（终报 criterion 与 unfinished 只能逐字引用以下条目）：\n- 产物 conversion.json 是合法 JSON\n- conversion.json 包含三次换算结果（100 EUR→USD、50 USD→EUR、1000 CNY→EUR），结果保留两位小数"
+  },
+  {
+   "checks": [
+    {
+     "kind": "file_content",
+     "must_contain": [
+      "开源模型推理成本再降三成",
+      "https://example.com/news/cost-down",
+      "新一代端侧芯片发布",
+      "https://example.com/news/edge-chip",
+      "个人助理进入常驻运行时代",
+      "https://example.com/news/resident-agent"
+     ],
+     "ref": "headlines.txt"
+    }
+   ],
+   "domain": "research",
+   "expected_output": [
+    "产物 headlines.txt 包含三条新闻标题",
+    "产物 headlines.txt 包含三条新闻对应的链接"
+   ],
+   "id": "rss-01",
+   "system_guidance": "你必须只输出一个 JSON 对象，不要输出任何其他文字、解释或代码块标记。终报结构如下（原文，逐字按此形状）：\n{\"completion_report\": {\"conclusion\": \"...\", \"evidence\": [{\"criterion\": \"<exact acceptance criterion>\", \"evidence_ref\": \"<relative_path or objective of one verified evidence entry>\"}], \"files\": [\"<workspace-relative path>\"], \"unfinished\": [], \"standing_dod\": {\"<no_regression|runtime_verified|docs|rollback|approval>\": {\"status\": \"satisfied|not_applicable\", \"detail\": \"...\", \"evidence_ref\": \"<optional, must match real evidence>\"}}}}\n规则：\n1. evidence 里每条 criterion、unfinished 里每条，只能逐字引用本任务的验收项原文（见 user_prompt 末尾清单），一字不差；不得改写、不得新增清单外的条目、不得在 unfinished 里写说明性文字。没有未完成项时 unfinished 写空数组 []。\n2. standing_dod 本次省略不写。\n3. 验证分工：你提交终报后，harness 会执行确定性核查（事实标记 / 文件内容 / 代码实际运行 / 页面独立抓取），并把核查结果登记为可引用证据。你不需要、也不要把“待核查 / 待运行 / 未能实时访问”这类事项写进 unfinished；unfinished 只写你确实没做完的验收项原文。\n4. evidence_ref 必须指向真实证据：任务要求产出文件时，把文件全文放进对应 evidence 条目的 artifact 字段、evidence_ref 写文件名、files 写产出文件名列表；无文件产物时 files 写 []。其余情况按 user_prompt 中给出的引用指引填写。",
+   "timeout_s": 120,
+   "title": "从 RSS 片段提取新闻条目（R3）",
+   "user_prompt": "ZN 的 RSS 连接器（R3，免密钥）抓到了下面这段 RSS 片段：\n\n<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<rss version=\"2.0\"><channel><title>科技速报</title>\n<item><title>开源模型推理成本再降三成</title><link>https://example.com/news/cost-down</link></item>\n<item><title>新一代端侧芯片发布</title><link>https://example.com/news/edge-chip</link></item>\n<item><title>个人助理进入常驻运行时代</title><link>https://example.com/news/resident-agent</link></item>\n</channel></rss>\n\n请从中提取三条新闻的标题与链接，写成 headlines.txt，每条两行（第一行标题、第二行链接），条目之间空一行。\n\n把 headlines.txt 全文放在终报 evidence 条目里：criterion 写验收项原文逐字，evidence_ref 写 \"headlines.txt\"，artifact 写文件全文，files 写 [\"headlines.txt\"]。\n\n本任务的验收项原文（终报 criterion 与 unfinished 只能逐字引用以下条目）：\n- 产物 headlines.txt 包含三条新闻标题\n- 产物 headlines.txt 包含三条新闻对应的链接"
   }
  ]
 }
