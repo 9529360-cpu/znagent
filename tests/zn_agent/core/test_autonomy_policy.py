@@ -318,5 +318,96 @@ class AutonomyPolicyTests(unittest.TestCase):
                 resident.store.close()
 
 
+class AutonomyPolicyAuditTests(unittest.TestCase):
+    """T8: every autonomy level change is written to an audit trail."""
+
+    @staticmethod
+    def _resident(db: Path):
+        return build_resident_runtime_from_existing_stack(
+            config={"model": {}}, store_path=db
+        )
+
+    def test_set_level_returns_old_level_and_writes_audit_row(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._resident(Path(tmp) / "kernel.db")
+            try:
+                policy = AutonomyPolicyStore(resident)
+                first = policy.set_level("connector.weather", SUGGEST)
+                # An unset domain defaults fail closed to require_approval.
+                self.assertEqual(first["old_level"], REQUIRE_APPROVAL)
+                self.assertEqual(first["level"], SUGGEST)
+                second = policy.set_level("connector.weather", OBSERVE_ONLY)
+                self.assertEqual(second["old_level"], SUGGEST)
+                self.assertEqual(second["level"], OBSERVE_ONLY)
+
+                audit = policy.list_policy_audit()
+                self.assertEqual(len(audit), 2)
+                # Newest first.
+                self.assertEqual(audit[0]["domain"], "connector.weather")
+                self.assertEqual(audit[0]["old_level"], SUGGEST)
+                self.assertEqual(audit[0]["new_level"], OBSERVE_ONLY)
+                self.assertTrue(audit[0]["changed_at"])
+                self.assertEqual(audit[1]["old_level"], REQUIRE_APPROVAL)
+                self.assertEqual(audit[1]["new_level"], SUGGEST)
+            finally:
+                resident.store.close()
+
+    def test_audit_survives_restart_and_respects_limit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            resident = self._resident(db)
+            try:
+                policy = AutonomyPolicyStore(resident)
+                policy.set_level("connector.weather", SUGGEST)
+                policy.set_level("connector.weather", OBSERVE_ONLY)
+                policy.set_level("recurring.interval", SUGGEST)
+            finally:
+                resident.store.close()
+
+            resident = self._resident(db)
+            try:
+                audit = AutonomyPolicyStore(resident).list_policy_audit(limit=2)
+                self.assertEqual(len(audit), 2)
+                self.assertEqual(audit[0]["domain"], "recurring.interval")
+                self.assertEqual(audit[1]["domain"], "connector.weather")
+                self.assertEqual(audit[1]["new_level"], OBSERVE_ONLY)
+            finally:
+                resident.store.close()
+
+    def test_set_level_rejects_wildcards_explicitly(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._resident(Path(tmp) / "kernel.db")
+            try:
+                policy = AutonomyPolicyStore(resident)
+                for bad in ("*", "connector.*", "*.interval"):
+                    with self.subTest(domain=bad):
+                        with self.assertRaises(ValueError) as caught:
+                            policy.set_level(bad, SUGGEST)
+                        self.assertIn("wildcard", str(caught.exception))
+                # Failed writes leave no audit rows behind.
+                self.assertEqual(policy.list_policy_audit(), [])
+            finally:
+                resident.store.close()
+
+    def test_failed_set_level_writes_no_audit(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            resident = self._resident(Path(tmp) / "kernel.db")
+            try:
+                policy = AutonomyPolicyStore(resident)
+                with self.assertRaises(ValueError):
+                    policy.set_level("connector.weather", "nonsense")
+                self.assertEqual(policy.list_policy_audit(), [])
+                self.assertEqual(
+                    policy.get_level("connector.weather"), REQUIRE_APPROVAL
+                )
+            finally:
+                resident.store.close()
+
+    def test_validate_domain_rejects_wildcard(self):
+        with self.assertRaises(ValueError) as caught:
+            validate_domain("connector.*")
+        self.assertIn("wildcard", str(caught.exception))
+
+
 if __name__ == "__main__":
     unittest.main()

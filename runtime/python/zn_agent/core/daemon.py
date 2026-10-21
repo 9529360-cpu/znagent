@@ -156,6 +156,19 @@ class ResidentRpcServer:
         self._world_thread: threading.Thread | None = None
         self._fatal_life_error_handler: Callable[[BaseException], None] | None = None
         self._approval_store: ApprovalCardStore | None = None
+        self._autonomy_policy_store = None
+
+    def _autonomy_store(self):
+        """Lazily construct the autonomy policy store (Q12 wiring).
+
+        Local import keeps the autonomy wiring in its own merge hunk
+        (P1-3 precedent) instead of the shared top-level import block.
+        """
+        if self._autonomy_policy_store is None:
+            from .autonomy_policy import AutonomyPolicyStore
+
+            self._autonomy_policy_store = AutonomyPolicyStore(self.resident)
+        return self._autonomy_policy_store
 
     def _checkpoint_store(
         self, params: dict[str, Any], *, allowed: set[str]
@@ -316,6 +329,33 @@ class ResidentRpcServer:
             if not key:
                 raise ValueError("suggestions_dismiss requires key")
             result = self.suggestions.dismiss(key)
+        elif method == "autonomy_list":
+            if params:
+                raise ValueError("autonomy_list accepts no execution parameters")
+            result = self._autonomy_store().list_levels()
+        elif method == "autonomy_get":
+            if set(params) != {"domain"}:
+                raise ValueError("autonomy_get requires a domain parameter")
+            # Local import: domain validation lives with the policy store.
+            # An invalid domain is rejected explicitly here instead of
+            # failing closed silently, so the CLI reports the bad input.
+            from .autonomy_policy import validate_domain
+
+            domain = validate_domain(params.get("domain"))
+            result = {
+                "domain": domain,
+                "level": self._autonomy_store().get_level(domain),
+            }
+        elif method == "autonomy_set":
+            if set(params) != {"domain", "level"}:
+                raise ValueError("autonomy_set requires domain and level parameters")
+            # The user typing this command on their own terminal IS the
+            # approval: no approval card is opened. set_level validates
+            # the domain (wildcards rejected) and whitelists the level,
+            # and writes the change plus an audit row atomically.
+            result = self._autonomy_store().set_level(
+                params.get("domain"), params.get("level")
+            )
         elif method == "proactive_contact_check":
             # S1(b): one restrained proactive greeting at most; returns null
             # when the restraint rules say "don't disturb". Read-only besides
