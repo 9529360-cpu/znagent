@@ -11,7 +11,7 @@ from .completion_observation import CompletionObservationJournal
 from .completion_summary import PITFALL_KEY_PREFIX, SUMMARY_KEY_PREFIX
 from .conversation_driver import ConversationDriver
 from .investigation import InvestigationResult, NativeInvestigator
-from .memory import FactMatch, StructuredMemory, _hybrid_tokens
+from .memory import FactMatch, StructuredMemory, _hybrid_entity_score, _hybrid_tokens
 from .models import (
     AgentEvent,
     CapabilityResult,
@@ -47,7 +47,12 @@ _ORIENT_HYBRID_MIN_SCORE = 0.55
 # and skips run-log hits before picking the direct-answer candidate.
 # The prefixes are imported from completion_summary (single source of
 # truth); the window size is a locked constant the tests assert on.
-_ORIENT_HYBRID_CANDIDATES = 5
+# 10 is recall_hybrid's hard max_facts cap. Widening only delays the
+# live failure mode (every failed question writes another run-log
+# fact, so the true fact keeps sinking) -- the structural fix is the
+# second, name-driven channel in _orient_memory_lookup, which does not
+# depend on BM25 ranking at all.
+_ORIENT_HYBRID_CANDIDATES = 10
 _ORIENT_RUN_LOG_PREFIXES = (SUMMARY_KEY_PREFIX, PITFALL_KEY_PREFIX)
 
 # PERF-2 entity tier: a hybrid hit that carries *strong entity evidence* --
@@ -126,6 +131,20 @@ def _is_memory_question(task: str) -> bool:
     return bool(tokens & _EN_QUESTION_TOKENS)
 
 
+def _orient_name_coverage(name: str, task: str) -> float:
+    """Share of the matched name's ``_hybrid_tokens`` present in the task.
+
+    Factored out of ``_orient_entity_evidence`` so the second orient
+    channel (``_orient_name_scan``) reuses the identical coverage
+    arithmetic instead of reimplementing it.
+    """
+    name_tokens = set(_hybrid_tokens(name))
+    if not name_tokens:
+        return 0.0
+    query_tokens = set(_hybrid_tokens(task))
+    return len(name_tokens & query_tokens) / len(name_tokens)
+
+
 def _orient_entity_evidence(hit: dict, task: str) -> bool:
     """True when a hybrid ``hit`` names the fact it matched (PERF-2 tier).
 
@@ -149,11 +168,7 @@ def _orient_entity_evidence(hit: dict, task: str) -> bool:
     ):
         return True
     name = str(hit.get("key") or "") if matched_by == "key" else matched_by
-    name_tokens = set(_hybrid_tokens(name))
-    if not name_tokens:
-        return False
-    query_tokens = set(_hybrid_tokens(task))
-    coverage = len(name_tokens & query_tokens) / len(name_tokens)
+    coverage = _orient_name_coverage(name, task)
     return coverage >= _ORIENT_ENTITY_NAME_COVERAGE_MIN - _ORIENT_SCORE_EPS
 
 
@@ -1182,14 +1197,86 @@ class ZNResidentRuntime:
         self.store.save_working_state(state)
         return None
 
-    def _orient_memory_lookup(
+    def _orient_name_scan(self, task: str) -> FactMatch | None:
+        """Second orient channel: direct name lookup (PERF-2 structural fix).
+
+        The first channel (BM25 hybrid window) ranks by corpus-relative
+        keyword scores, so ZN's own run-log facts -- every failed
+        question writes another ``work_summary:`` row -- keep crowding
+        the true fact out of any finite window: a treadmill widening
+        cannot fix. This channel does not rank by BM25 at all. It walks
+        the same candidate set hybrid walks (``_hybrid_candidates``:
+        current, unexpired, retainable facts -- expired and
+        ``non_retainable`` facts never enter, ``work_summary:`` /
+        ``work_pitfall:`` run-log keys are skipped with the same prefix
+        rule as the first channel) and, for each remaining fact,
+        computes the entity signal directly with
+        ``_hybrid_entity_score``. A fact qualifies only with *strong
+        entity evidence* (``_orient_entity_evidence`` reused verbatim:
+        entity >= 1.0, or >= half of the matched name's tokens covered
+        by the question). Among qualifying facts, exactly one must be
+        strictly strongest (ranked by entity, then name coverage);
+        a tie on both means ambiguity -- return ``None`` and let the
+        caller fall back to the model path (never guess).
+
+        Deterministic and zero-token, but O(facts): it only runs after
+        exact recall missed, the hybrid window produced no direct
+        answer, and the task is phrased as a question.
+        """
+        query_norm = self.memory._normalize(task)
+        query_tokens = _hybrid_tokens(task)
+        # (entity, coverage, candidate, matched_by), strongest first.
+        ranked: list[tuple[float, float, dict, str]] = []
+        for cand in self.memory._hybrid_candidates(None):
+            key = str(cand.get("key") or "")
+            if key.startswith(_ORIENT_RUN_LOG_PREFIXES):
+                continue
+            aliases = tuple(cand.get("aliases") or ())
+            entity, matched_alias = _hybrid_entity_score(
+                query_norm, query_tokens, key, aliases
+            )
+            matched_by = matched_alias if matched_alias is not None else "key"
+            # Shape the candidate like a hybrid hit so the strong-entity
+            # discriminator is reused verbatim (keyword/semantic-only
+            # names never qualify -- this channel cannot invent one).
+            hit_like = {
+                "key": key,
+                "matched_by": matched_by,
+                "signals": {"entity": entity, "exact": 0.0},
+            }
+            if not _orient_entity_evidence(hit_like, task):
+                continue
+            name = key if matched_alias is None else matched_alias
+            coverage = _orient_name_coverage(name, task)
+            ranked.append((entity, coverage, cand, matched_by))
+        if not ranked:
+            return None
+        ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        if len(ranked) > 1 and (ranked[0][0], ranked[0][1]) == (
+            ranked[1][0],
+            ranked[1][1],
+        ):
+            return None
+        _entity, _coverage, cand, matched_by = ranked[0]
+        return FactMatch(
+            key=str(cand["key"]),
+            value=cand["value"],
+            matched_by=matched_by,
+            valid_at=cand.get("valid_at"),
+            invalid_at=cand.get("invalid_at"),
+            id=cand.get("id"),
+            linked_memory_ids=tuple(cand.get("linked_memory_ids") or ()),
+        )
+
+    def _orient_hybrid_channel(
         self, task: str
     ) -> tuple[FactMatch | None, float | None]:
-        """Orient pre-check memory lookup (PERF-2): exact, then hybrid.
+        """First orient channel (PERF-2): hybrid window + run-log filter.
 
-        Exact ``recall()`` runs first and its semantics are unchanged.
-        Only when it returns ``None`` does ``recall_hybrid()`` get a
-        look over ``_ORIENT_HYBRID_CANDIDATES`` hits: run-log hits
+        Exact ``recall()`` runs first (in ``_orient_memory_lookup``) and
+        its semantics are unchanged. Only when it returns ``None`` does
+        ``recall_hybrid()`` get a look over
+        ``_ORIENT_HYBRID_CANDIDATES`` hits: run-log hits
         (keys starting with the ``work_summary:`` / ``work_pitfall:``
         prefixes owned by completion_summary.py) are skipped -- they
         are system run-logs, never user knowledge, and direct-answering
@@ -1212,9 +1299,6 @@ class ZNResidentRuntime:
         Sensitivity/expiry filtering is inherited from the recall paths
         themselves (non-retainable and expired facts surface in neither).
         """
-        match = self.memory.recall(task)
-        if match is not None:
-            return match, None
         hits = self.memory.recall_hybrid(
             task, max_facts=_ORIENT_HYBRID_CANDIDATES
         )
@@ -1247,6 +1331,30 @@ class ZNResidentRuntime:
             id=top.get("id"),
             linked_memory_ids=tuple(top.get("linked_memory_ids") or ()),
         ), score
+
+    def _orient_memory_lookup(
+        self, task: str
+    ) -> tuple[FactMatch | None, float | None]:
+        """Orient pre-check memory lookup (PERF-2): exact, hybrid, name scan.
+
+        Three channels, each strictly narrower than the last:
+        exact ``recall()`` first (unchanged semantics), then the hybrid
+        window (``_orient_hybrid_channel``), and only when both produce
+        no direct answer *and* the task is phrased as a question
+        (``_is_memory_question``) does the name-driven second channel
+        (``_orient_name_scan``) get a look. A name-scan hit returns
+        ``(match, None)``: like an exact hit it is a name lookup, not a
+        ranked hybrid hit, so no fused score is reported.
+        """
+        match = self.memory.recall(task)
+        if match is not None:
+            return match, None
+        match, score = self._orient_hybrid_channel(task)
+        if match is None and _is_memory_question(task):
+            scanned = self._orient_name_scan(task)
+            if scanned is not None:
+                return scanned, None
+        return match, score
 
     def _orient_step(
         self,
