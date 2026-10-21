@@ -130,6 +130,14 @@ class ResidentRpcServer:
             self.resident, self.suggestions
         )
         self.work_control = OutcomeAwareRestoreWorkControl(self.work)
+        # Local import: keeps the diary wiring in its own merge hunk
+        # (S1(b) precedent) instead of the shared top-level import block.
+        # The diary trigger is the `diary_write` RPC below, called by the
+        # existing routine / self-driven loop; the engine itself starts no
+        # threads. Day material comes from the work ledger (read-only).
+        from .diary import DiaryEngine
+
+        self.diary = DiaryEngine(self.resident, day_items=self._diary_day_items)
         self.resident.cognitive_delta_handler = self.work.publish_response_delta
         self.resident.cognitive_response_reset_handler = self.work.reset_response_stream
         self.provider_settings = provider_settings or ProviderSettingsService(self.resident)
@@ -319,6 +327,33 @@ class ResidentRpcServer:
                 raise ValueError("proactive_contact_feedback requires key")
             feedback = str(params.get("feedback") or "").strip()
             result = self.proactive_contact.note_feedback(key, feedback)
+        elif method == "diary_write":
+            # S1(c): write today's diary entry (at most once per local day;
+            # stable-key dedup). This RPC is the diary's trigger point for
+            # the existing routine / self-driven loop; the engine itself
+            # starts no threads and adds no unapproved autonomous write
+            # path -- the write goes through the existing memory remember
+            # path. Returns null when the restraint rules say "don't write"
+            # (switch off / autonomy envelope observe_only / already
+            # written today). Optional `items` lets the caller pass the
+            # day's material explicitly; otherwise the work ledger is read.
+            entry = self.diary.maybe_write(items=self._diary_items_param(params))
+            result = entry.to_dict() if entry is not None else None
+        elif method == "diary_get":
+            # S1(c): read one diary entry back (explicit review).
+            date = str(params.get("date") or "").strip()
+            if not date:
+                raise ValueError("diary_get requires date (YYYY-MM-DD)")
+            entry = self.diary.get_entry(date)
+            result = entry.to_dict() if entry is not None else None
+        elif method == "diary_list":
+            # S1(c): read-only diary inventory, newest first.
+            result = [
+                entry.to_dict()
+                for entry in self.diary.list_entries(
+                    limit=max(1, min(100, int(params.get("limit") or 30)))
+                )
+            ]
         elif method == "work_list":
             result = [
                 self._work_snapshot(snapshot, artifact_limit=1)
@@ -1198,6 +1233,59 @@ class ResidentRpcServer:
         if resolved is None:
             raise ValueError("该团队当前没有待主人完成的敏感步骤")
         return resolved
+
+    # -- S1(c) diary helpers -------------------------------------------------
+
+    def _diary_day_items(self, date_str: str) -> list[dict[str, Any]]:
+        """Default diary material collector: today's work threads.
+
+        Read-only: work ledger snapshots filtered by local date. Threads
+        with an active run read as ``work_active``, the rest as
+        ``work_done``. Never raises: the diary still gets written (possibly
+        empty) when the ledger is unreadable.
+        """
+        items: list[dict[str, Any]] = []
+        try:
+            snapshots = self.work_control.list_snapshots(thread_limit=24)
+        except Exception:
+            return items
+        for thread, _messages in snapshots:
+            if str(getattr(thread, "updated_at", "") or "")[:10] != date_str:
+                continue
+            title = str(getattr(thread, "title", "") or "").strip()
+            if not title:
+                title = str(getattr(thread, "thread_id", "") or "").strip()
+            try:
+                active = (
+                    self.work._active_run_for_thread(thread.thread_id) is not None
+                )
+            except Exception:
+                active = False
+            items.append(
+                {"kind": "work_active" if active else "work_done", "text": title}
+            )
+            if len(items) >= 10:
+                break
+        return items
+
+    @staticmethod
+    def _diary_items_param(params: dict[str, Any]) -> list[dict[str, Any]] | None:
+        """Validate the optional explicit `items` param of `diary_write`."""
+        raw = params.get("items")
+        if raw is None:
+            return None
+        if not isinstance(raw, list):
+            raise ValueError("diary_write items must be a list")
+        items: list[dict[str, Any]] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                raise ValueError("diary_write items must be objects")
+            text = str(entry.get("text") or "").strip()
+            if not text:
+                raise ValueError("diary_write item text must not be empty")
+            kind = str(entry.get("kind") or "").strip().lower() or "note"
+            items.append({"kind": kind, "text": text})
+        return items
 
     def _work_snapshot(
         self,
