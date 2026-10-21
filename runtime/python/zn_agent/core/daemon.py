@@ -26,6 +26,7 @@ from .sensitive_handover import parse_handover_done, resolve_handover
 from .team_disband import find_team_id_in_messages, parse_disband_request
 from .team_memory import team_shared_memory
 from .team_request import parse_team_request
+from .memory_export import export_facts_to_file, import_facts_from_file
 from .two_level_memory import TIER_DEEP, TIER_HOT, TwoLevelMemory
 from .team_timeline import (
     build_team_timeline,
@@ -1004,6 +1005,24 @@ class ResidentRpcServer:
                 }
                 for fact in facts[: self._limit(params)]
             ]
+        elif method == "memory_export":
+            # Q15: versioned takeout of the facts table. The file lands on
+            # the resident machine; the returned "file" names where.
+            path = str(params.get("path") or "").strip()
+            if not path:
+                raise ValueError("memory_export requires path")
+            result = export_facts_to_file(self.resident.memory.store, path)
+        elif method == "memory_import":
+            # Q15: restore facts from an export file. Conflicts are skipped
+            # unless overwrite=true is explicitly passed.
+            path = str(params.get("path") or "").strip()
+            if not path:
+                raise ValueError("memory_import requires path")
+            result = import_facts_from_file(
+                self.resident.memory.store,
+                path,
+                overwrite=bool(params.get("overwrite")),
+            )
         elif method == "shutdown":
             self._shutdown = True
             self._life_stop.set()
