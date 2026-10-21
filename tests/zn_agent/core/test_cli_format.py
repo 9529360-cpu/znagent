@@ -212,6 +212,8 @@ class ZnCliWiringTests(unittest.TestCase):
     """The two representative rewired commands: byte-stable in non-TTY."""
 
     def test_approval_card_byte_identical_non_tty(self):
+        # T2-3 moved the card to two lines; this still pins the non-TTY
+        # output byte-for-byte so scripts keep parsing it.
         item = {
             "request_id": "req-pending",
             "status": "pending",
@@ -227,8 +229,8 @@ class ZnCliWiringTests(unittest.TestCase):
             card = _format_approval_card(item)
         self.assertEqual(
             card,
-            "req-pending  [pending]  send  target=someone  "
-            "scope=chat  expires=2026-10-19T07:00:00Z",
+            "req-pending  [pending]  send\n"
+            "  target=someone  scope=chat  expires=2026-10-19T07:00:00Z",
         )
 
     def test_approval_card_colors_status_in_color_mode(self):
@@ -249,6 +251,7 @@ class ZnCliWiringTests(unittest.TestCase):
         ):
             card = _format_approval_card(item)
         self.assertIn("\x1b[31mdenied\x1b[0m", card)
+        self.assertIn("\n  target=x  scope=chat  expires=-", card)
 
 
 if __name__ == "__main__":

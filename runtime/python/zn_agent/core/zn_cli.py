@@ -49,6 +49,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -640,13 +641,172 @@ def _cmd_work_submit(args: argparse.Namespace) -> int:
     return 0
 
 
-def _format_approval_card(item: dict[str, Any]) -> str:
-    return (
-        f"{item.get('request_id') or '?'}  [{status_word(item.get('status') or '?')}]  "
-        f"{item.get('action_kind') or '?'}  target={_one_line(item.get('target'), limit=60)}  "
-        f"scope={_one_line(item.get('scope'), limit=40)}  "
-        f"expires={item.get('expires_at') or '-'}"
+def _parse_approval_time(value: Any) -> datetime | None:
+    """Parse an approval ``created_at``/``expires_at`` timestamp, or None."""
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed
+
+
+def _approval_waited_duration(item: dict[str, Any], now: datetime | None = None) -> str:
+    """How long a pending approval card has been waiting (``""`` when unknown).
+
+    ``now`` is injectable for tests; otherwise wall-clock UTC is used.
+    """
+    if str(item.get("status") or "") != "pending":
+        return ""
+    created = _parse_approval_time(item.get("created_at"))
+    if created is None:
+        return ""
+    moment = now or datetime.now(timezone.utc)
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    seconds = int((moment - created).total_seconds())
+    if seconds < 0:
+        seconds = 0
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, _ = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 48:
+        return f"{hours}h {minutes}m"
+    days, hours = divmod(hours, 24)
+    return f"{days}d {hours}h"
+
+
+def _format_approval_card(
+    item: dict[str, Any], now: datetime | None = None
+) -> str:
+    """Two-line approval card (T2-3): headline + indented detail line.
+
+    Headline: ``<request_id> [<status>] <action_kind>`` (status colored via
+    the cli_format contract on TTY). Detail line: ``target= scope=
+    expires=`` plus ``waited=`` for pending cards with a known
+    ``created_at``. Non-TTY/NO_COLOR output is plain text.
+    """
+    head = (
+        f"{item.get('request_id') or '?'}  "
+        f"[{status_word(item.get('status') or '?')}]  "
+        f"{item.get('action_kind') or '?'}"
     )
+    detail = [
+        kv("target", _one_line(item.get("target"), limit=60)),
+        kv("scope", _one_line(item.get("scope"), limit=40)),
+        kv("expires", item.get("expires_at") or "-"),
+    ]
+    duration = _approval_waited_duration(item, now=now)
+    if duration:
+        detail.append(kv("waited", duration))
+    return head + "\n" + "  " + "  ".join(detail)
+
+
+def _format_approval_detail(item: dict[str, Any], now: datetime | None = None) -> str:
+    """Full detail view of one approval card (``zn approval show``).
+
+    Renders every field the ``approval_list`` RPC already returns, skipping
+    empty ones; labels are plain Chinese text, the status word follows the
+    cli_format contract (colored only on TTY).
+    """
+    request_id = str(item.get("request_id") or "?")
+    status = status_word(item.get("status") or "?")
+    kind = _one_line(item.get("action_kind"), limit=40) or "?"
+    lines = [f"审批卡 {request_id}  [{status}]  {kind}"]
+    rows: list[tuple[str, str]] = []
+    for label, key in (
+        ("目标", "target"),
+        ("范围", "scope"),
+        ("来源", "source"),
+        ("关联事件", "event_id"),
+    ):
+        value = _one_line(item.get(key), limit=120)
+        if value:
+            rows.append((label, value))
+    created = _parse_approval_time(item.get("created_at"))
+    if created is not None:
+        stamp = _one_line(item.get("created_at"), limit=40)
+        duration = _approval_waited_duration(item, now=now)
+        if duration:
+            stamp = f"{stamp}（已等待 {duration}）"
+        rows.append(("创建时间", stamp))
+    expires = _one_line(item.get("expires_at"), limit=40)
+    if expires:
+        rows.append(("失效时间", expires))
+    decision = _one_line(item.get("decision"), limit=40)
+    if decision:
+        rows.append(("决定", decision))
+    decided_at = _one_line(item.get("decided_at"), limit=40)
+    if decided_at:
+        rows.append(("决定时间", decided_at))
+    value_text = _one_line(item.get("value_text"), limit=200)
+    if value_text:
+        rows.append(("内容摘要", value_text))
+    approved_command = _one_line(item.get("approved_command"), limit=200)
+    if approved_command:
+        rows.append(("用户编辑过的命令", approved_command))
+    diff_text = str(item.get("diff_text") or "")
+    if diff_text:
+        diff_lines = diff_text.splitlines()
+        preview = "\n".join(f"    {line}" for line in diff_lines[:15])
+        if len(diff_lines) > 15:
+            preview += f"\n    （已截断，共 {len(diff_lines)} 行）"
+        rows.append(("diff 预览", "\n" + preview))
+    review_note = _one_line(item.get("review_note"), limit=200)
+    if review_note:
+        rows.append(("备注", review_note))
+    if item.get("previous_captured"):
+        rows.append(("撤销快照", "有（可撤销）"))
+    if item.get("undone"):
+        rows.append(("已撤销", "是"))
+    for label, value in rows:
+        lines.append(f"  {label}：{value}")
+    lines.append(
+        f"  下一步：用 'zn approval decide --request-id {request_id} --allow' 批准，"
+        "或 '--deny' 拒绝"
+    )
+    return "\n".join(lines)
+
+
+def _find_approval_card(result: dict[str, Any], request_id: str) -> dict[str, Any] | None:
+    """Locate one card by ``request_id`` in an ``approval_list`` result."""
+    for key in ("pending", "denied", "expired", "applied"):
+        items = result.get(key)
+        if not isinstance(items, list):
+            continue
+        for item in items:
+            if isinstance(item, dict) and str(item.get("request_id") or "") == request_id:
+                return item
+    return None
+
+
+def _cmd_approval_show(args: argparse.Namespace) -> int:
+    wanted = str(args.request_id)
+    result = _client(args).call("approval_list", {})
+    if not isinstance(result, dict):
+        raise CliError(
+            f"resident returned an unexpected approval_list result: {result!r}"
+        )
+    item = _find_approval_card(result, wanted)
+    if item is None:
+        raise CliError(
+            f"找不到审批卡 '{wanted}'。"
+            "用 'zn approval list --status all' 看看现有的卡片。"
+        )
+    if args.json:
+        print(json.dumps(item, ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(_format_approval_detail(item))
+    return 0
 
 
 def _cmd_approval_list(args: argparse.Namespace) -> int:
@@ -1458,7 +1618,7 @@ def build_parser() -> argparse.ArgumentParser:
     work_cancel.add_argument("--json", action="store_true", help="print raw JSON")
     work_cancel.set_defaults(func=_cmd_work_cancel)
 
-    approval = sub.add_parser("approval", help="list or decide approval cards")
+    approval = sub.add_parser("approval", help="list, show or decide approval cards")
     approval_sub = approval.add_subparsers(
         dest="approval_command", metavar="subcommand", required=True
     )
@@ -1491,6 +1651,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     approval_decide.add_argument("--json", action="store_true", help="print raw JSON")
     approval_decide.set_defaults(func=_cmd_approval_decide)
+
+    approval_show = approval_sub.add_parser(
+        "show", help="show one approval card with full detail"
+    )
+    approval_show.add_argument(
+        "request_id",
+        type=lambda v: _require_non_empty(v, name="request_id"),
+        help="the approval card id, as printed by 'zn approval list'",
+    )
+    approval_show.add_argument("--json", action="store_true", help="print raw JSON")
+    approval_show.set_defaults(func=_cmd_approval_show)
 
     memory = sub.add_parser("memory", help="inspect durable memory")
     memory_sub = memory.add_subparsers(

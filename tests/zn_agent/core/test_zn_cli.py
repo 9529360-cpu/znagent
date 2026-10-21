@@ -21,7 +21,13 @@ from zn_agent.core.provider_bridge import (
     build_resident_runtime_from_existing_stack,
 )
 from zn_agent.core.resident_server import ResidentSocketService
-from zn_agent.core.zn_cli import ResidentClient, _pid_is_dead, load_endpoint, run
+from zn_agent.core.zn_cli import (
+    ResidentClient,
+    _format_approval_card,
+    _pid_is_dead,
+    load_endpoint,
+    run,
+)
 
 _SECRET = "s" * 64
 
@@ -590,6 +596,236 @@ class ZnCliUnitTests(_CliHarness):
         with self.assertRaises(Exception) as caught:
             load_endpoint(str(self.endpoint_path))
         self.assertIn("secret", str(caught.exception))
+
+
+class ZnCliApprovalUxT23Tests(_CliHarness):
+    """T2-3: two-line approval cards, ``approval show``, human errors."""
+
+    def _approval_result(self):
+        return {
+            "pending": [
+                {
+                    "request_id": "req-pending",
+                    "status": "pending",
+                    "action_kind": "send",
+                    "target": "someone",
+                    "scope": "chat",
+                    "source": "resident",
+                    "value_text": "Send the weekly report to the team channel.",
+                    "created_at": "2026-10-21T19:00:00Z",
+                    "expires_at": "2026-10-21T20:00:00Z",
+                }
+            ],
+            "denied": [
+                {
+                    "request_id": "req-denied",
+                    "status": "denied",
+                    "action_kind": "purchase",
+                    "target": "example store",
+                    "scope": "shopping",
+                    "decision": "deny",
+                    "decided_at": "2026-10-21T18:30:00Z",
+                    "created_at": "2026-10-21T18:00:00Z",
+                    "expires_at": "",
+                }
+            ],
+            "expired": [],
+            "applied": [
+                {
+                    "request_id": "req-applied",
+                    "status": "applied",
+                    "action_kind": "send",
+                    "target": "someone",
+                    "scope": "chat",
+                    "decision": "allow_once",
+                    "decided_at": "2026-10-21T17:00:00Z",
+                    "created_at": "2026-10-21T16:00:00Z",
+                    "expires_at": "",
+                }
+            ],
+        }
+
+    def test_list_two_line_cards_three_states(self):
+        code, out, err = self._run(
+            ["approval", "list", "--status", "all"],
+            self._handler({"approval_list": self._approval_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        lines = out.splitlines()
+        heads = {
+            "req-pending": "send",
+            "req-denied": "purchase",
+            "req-applied": "send",
+        }
+        for request_id, kind in heads.items():
+            head = next(
+                i
+                for i, line in enumerate(lines)
+                if line.startswith(f"{request_id}  [")
+            )
+            self.assertIn(kind, lines[head])
+            detail = lines[head + 1]
+            self.assertTrue(detail.startswith("  "), detail)
+            self.assertIn("target=", detail)
+            self.assertIn("scope=", detail)
+            self.assertIn("expires=", detail)
+        # only the pending card carries the waited= duration
+        pending_head = next(
+            i for i, line in enumerate(lines) if line.startswith("req-pending  [")
+        )
+        self.assertIn("waited=", lines[pending_head + 1])
+        for request_id in ("req-denied", "req-applied"):
+            head = next(
+                i for i, line in enumerate(lines) if line.startswith(f"{request_id}  [")
+            )
+            self.assertNotIn("waited=", lines[head + 1])
+        # piped (non-TTY) output carries no escape codes
+        self.assertNotIn("\x1b[", out)
+
+    def test_list_waited_exact_duration(self):
+        now = datetime(2026, 10, 21, 21, 15, 0, tzinfo=timezone.utc)
+        card = _format_approval_card(
+            {
+                "request_id": "req-1",
+                "status": "pending",
+                "action_kind": "send",
+                "target": "t",
+                "scope": "s",
+                "created_at": "2026-10-21T19:00:00Z",
+                "expires_at": "",
+            },
+            now=now,
+        )
+        self.assertIn("waited=2h 15m", card)
+
+    def test_list_waited_absent_without_created_at(self):
+        card = _format_approval_card(
+            {
+                "request_id": "req-1",
+                "status": "pending",
+                "action_kind": "send",
+                "target": "t",
+                "scope": "s",
+                "expires_at": "",
+            }
+        )
+        self.assertNotIn("waited=", card)
+
+    def test_list_waited_absent_for_garbled_created_at(self):
+        card = _format_approval_card(
+            {
+                "request_id": "req-1",
+                "status": "pending",
+                "action_kind": "send",
+                "target": "t",
+                "scope": "s",
+                "created_at": "not-a-time",
+                "expires_at": "",
+            }
+        )
+        self.assertNotIn("waited=", card)
+
+    def test_list_card_color_modes(self):
+        from zn_agent.core import cli_format
+
+        item = {
+            "request_id": "req-1",
+            "status": "pending",
+            "action_kind": "send",
+            "target": "t",
+            "scope": "s",
+            "created_at": "2026-10-21T19:00:00Z",
+            "expires_at": "",
+        }
+        now = datetime(2026, 10, 21, 19, 30, 0, tzinfo=timezone.utc)
+        env = dict(os.environ)
+        env.pop("NO_COLOR", None)
+        env["TERM"] = "xterm-256color"
+        with mock.patch.object(cli_format, "is_tty", return_value=True), mock.patch.dict(
+            "os.environ", env, clear=True
+        ):
+            colored = _format_approval_card(item, now=now)
+        self.assertIn("\x1b[33mpending\x1b[0m", colored)
+        self.assertIn("waited=30m", colored)
+        env["NO_COLOR"] = "1"
+        with mock.patch.object(cli_format, "is_tty", return_value=True), mock.patch.dict(
+            "os.environ", env, clear=True
+        ):
+            plain = _format_approval_card(item, now=now)
+        self.assertNotIn("\x1b[", plain)
+        self.assertIn("pending", plain)
+        self.assertIn("waited=30m", plain)
+
+    def test_show_full_detail(self):
+        code, out, err = self._run(
+            ["approval", "show", "req-pending"],
+            self._handler({"approval_list": self._approval_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("审批卡 req-pending", out)
+        self.assertIn("send", out)
+        self.assertIn("someone", out)
+        self.assertIn("内容摘要", out)
+        self.assertIn("weekly report", out)
+        self.assertIn("已等待", out)
+        self.assertIn("zn approval decide --request-id req-pending", out)
+        self.assertEqual(self.calls, [("approval_list", {})])
+
+    def test_show_denied_card_shows_decision(self):
+        code, out, err = self._run(
+            ["approval", "show", "req-denied"],
+            self._handler({"approval_list": self._approval_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("决定", out)
+        self.assertIn("deny", out)
+        self.assertIn("决定时间", out)
+
+    def test_show_missing_id_human_error(self):
+        code, out, err = self._run(
+            ["approval", "show", "req-nope"],
+            self._handler({"approval_list": self._approval_result()}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("zn: error:", err)
+        self.assertIn("找不到审批卡", err)
+        self.assertIn("req-nope", err)
+        self.assertIn("zn approval list --status all", err)
+
+    def test_show_empty_request_id_rejected(self):
+        with self.assertRaises(SystemExit) as caught:
+            run(
+                [
+                    "--endpoint",
+                    str(self.endpoint_path),
+                    "approval",
+                    "show",
+                    "",
+                ]
+            )
+        self.assertEqual(caught.exception.code, 2)
+        self.assertFalse(hasattr(self, "calls"))  # argparse rejected before any RPC
+
+    def test_show_json_byte_exact(self):
+        result = self._approval_result()
+        card = result["pending"][0]
+        code, out, _ = self._run(
+            ["approval", "show", "req-pending", "--json"],
+            self._handler({"approval_list": result}),
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            out, json.dumps(card, ensure_ascii=False, indent=2, default=str) + "\n"
+        )
+
+    def test_list_json_unchanged(self):
+        result = self._approval_result()
+        code, out, _ = self._run(
+            ["approval", "list", "--json"],
+            self._handler({"approval_list": result}),
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(json.loads(out), result)
 
 
 class ZnCliWorkSubmitProgressTests(_CliHarness):
