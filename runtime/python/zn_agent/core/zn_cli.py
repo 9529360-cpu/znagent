@@ -573,6 +573,39 @@ def _cmd_memory_forget(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_memory_export(args: argparse.Namespace) -> int:
+    # The export file lands on the resident machine (path is resolved
+    # server-side); the result tells the user where it went.
+    result = _client(args).call("memory_export", {"path": args.out})
+    if not isinstance(result, dict) or not isinstance(result.get("exported"), int):
+        raise CliError(
+            f"resident returned an unexpected memory_export result: {result!r}"
+        )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(f"exported {result['exported']} facts → {result.get('file')}")
+    return 0
+
+
+def _cmd_memory_import(args: argparse.Namespace) -> int:
+    result = _client(args).call(
+        "memory_import", {"path": args.in_file, "overwrite": args.overwrite}
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("imported"), int):
+        raise CliError(
+            f"resident returned an unexpected memory_import result: {result!r}"
+        )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(
+        f"imported={result['imported']}  skipped={result['skipped']}  "
+        f"overwritten={result['overwritten']}"
+    )
+    return 0
+
+
 def _format_timeline_entry(entry: dict[str, Any]) -> str:
     at = _one_line(entry.get("at") or "-", limit=19)
     kind = _one_line(entry.get("kind") or "message", limit=16)
@@ -1067,6 +1100,36 @@ def build_parser() -> argparse.ArgumentParser:
     )
     memory_forget.add_argument("--json", action="store_true", help="print raw JSON")
     memory_forget.set_defaults(func=_cmd_memory_forget)
+
+    memory_export = memory_sub.add_parser(
+        "export", help="export all remembered facts to a versioned JSON file"
+    )
+    memory_export.add_argument(
+        "--out",
+        type=lambda v: _require_non_empty(v, name="--out"),
+        required=True,
+        help="destination file path (resolved on the resident machine)",
+    )
+    memory_export.add_argument("--json", action="store_true", help="print raw JSON")
+    memory_export.set_defaults(func=_cmd_memory_export)
+
+    memory_import = memory_sub.add_parser(
+        "import", help="restore facts from a memory export file"
+    )
+    memory_import.add_argument(
+        "--in",
+        dest="in_file",
+        type=lambda v: _require_non_empty(v, name="--in"),
+        required=True,
+        help="export file path (resolved on the resident machine)",
+    )
+    memory_import.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="replace facts whose keys already exist (default: skip conflicts)",
+    )
+    memory_import.add_argument("--json", action="store_true", help="print raw JSON")
+    memory_import.set_defaults(func=_cmd_memory_import)
 
     team = sub.add_parser("team", help="inspect project teams")
     team_sub = team.add_subparsers(
