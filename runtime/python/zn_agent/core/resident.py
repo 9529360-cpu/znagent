@@ -10,7 +10,7 @@ from .capabilities import CapabilityRegistry
 from .completion_observation import CompletionObservationJournal
 from .conversation_driver import ConversationDriver
 from .investigation import InvestigationResult, NativeInvestigator
-from .memory import StructuredMemory
+from .memory import FactMatch, StructuredMemory
 from .models import (
     AgentEvent,
     CapabilityResult,
@@ -23,6 +23,51 @@ from .models import (
 )
 from .runtime import ZNKernelRuntime
 from .self_model import TaskReadiness
+
+# PERF-2: minimum fused ``recall_hybrid`` score for the orient pre-check to
+# answer a task directly from memory when exact ``recall()`` missed. The
+# hybrid weights (memory.py) cap a keyword-only hit at 0.50 (0.45 keyword
+# + at most 0.05 recency) and a Q8 semantic-rescued hit at ~0.15, so 0.55
+# sits strictly above both ceilings: a direct answer requires keyword
+# evidence corroborated by an entity/exact signal, never value-text word
+# overlap alone. Measured natural-question hits for a seeded fact score
+# 0.57-0.85 (zn-live evidence hit: 0.74). Below the threshold the task
+# falls through to the normal capability/model path -- the weak hit is
+# not injected and never rendered as the answer.
+_ORIENT_HYBRID_MIN_SCORE = 0.55
+
+# PERF-2: a hybrid hit may only short-circuit orient when the task is
+# phrased as a question (or an explicit tell-me lookup). A task that
+# merely *mentions* a fact -- "Explain the active project approach" --
+# is an instruction: it belongs on the cognition path, where the fact
+# reaches the model as bound resident-memory context instead of being
+# parroted back as the whole answer. Exact recall() needs no such gate:
+# there the task *is* the fact's key/alias, word for word.
+_CJK_QUESTION_MARKERS = (
+    "什么", "哪", "谁", "何时", "何地", "如何", "怎么", "为何",
+    "为什么", "是否", "吗", "几", "多少", "多久", "告诉我",
+)
+_EN_QUESTION_TOKENS = frozenset({
+    "what", "when", "where", "who", "whom", "whose", "which", "why",
+    "how", "is", "are", "was", "were", "do", "does", "did", "can",
+    "could", "should", "would",
+})
+
+
+def _is_memory_question(task: str) -> bool:
+    """True when ``task`` is phrased as asking, not instructing."""
+    text = str(task or "").strip()
+    if not text:
+        return False
+    if "?" in text or "？" in text:
+        return True
+    if any(marker in text for marker in _CJK_QUESTION_MARKERS):
+        return True
+    lowered = text.casefold()
+    if "tell me" in lowered:
+        return True
+    tokens = set(re.findall(r"[a-z]+", lowered))
+    return bool(tokens & _EN_QUESTION_TOKENS)
 
 
 class ZNResidentRuntime:
@@ -1050,6 +1095,48 @@ class ZNResidentRuntime:
         self.store.save_working_state(state)
         return None
 
+    def _orient_memory_lookup(
+        self, task: str
+    ) -> tuple[FactMatch | None, float | None]:
+        """Orient pre-check memory lookup (PERF-2): exact, then hybrid.
+
+        Exact ``recall()`` runs first and its semantics are unchanged.
+        Only when it returns ``None`` does ``recall_hybrid()`` get one
+        look: its top hit is promoted to a :class:`FactMatch` only when
+        its fused score reaches ``_ORIENT_HYBRID_MIN_SCORE`` *and* the
+        task is phrased as a question (see ``_is_memory_question`` -- an
+        instruction that mentions a fact is never short-circuited). A
+        hit that fails either gate returns ``(None, score)`` so the
+        caller falls through to the normal capability/model path
+        instead of answering from a weak or misused match. Returns
+        ``(match, hybrid_score)`` -- ``hybrid_score`` is ``None`` for an
+        exact hit or when hybrid found nothing at all.
+        Sensitivity/expiry filtering is inherited from the recall paths
+        themselves (non-retainable and expired facts surface in neither).
+        """
+        match = self.memory.recall(task)
+        if match is not None:
+            return match, None
+        hits = self.memory.recall_hybrid(task, max_facts=1)
+        if not hits:
+            return None, None
+        top = hits[0]
+        try:
+            score = float(top.get("score") or 0.0)
+        except (TypeError, ValueError):
+            return None, None
+        if score < _ORIENT_HYBRID_MIN_SCORE or not _is_memory_question(task):
+            return None, score
+        return FactMatch(
+            key=str(top["key"]),
+            value=top["value"],
+            matched_by=str(top.get("matched_by") or "keyword"),
+            valid_at=top.get("valid_at"),
+            invalid_at=top.get("invalid_at"),
+            id=top.get("id"),
+            linked_memory_ids=tuple(top.get("linked_memory_ids") or ()),
+        ), score
+
     def _orient_step(
         self,
         event: AgentEvent,
@@ -1061,10 +1148,15 @@ class ZNResidentRuntime:
         required = self._required_capabilities(event)
         memory_checked = bool(event.payload.get("allow_memory", True))
         state.data["memory_checked"] = memory_checked
-        memory_match = self.memory.recall(event.task) if memory_checked else None
+        memory_match, hybrid_score = (
+            self._orient_memory_lookup(event.task) if memory_checked else (None, None)
+        )
         if memory_match is not None:
             response = self._render_memory_value(memory_match.value)
             reason = f"recalled structured fact '{memory_match.key}'"
+            if hybrid_score is not None:
+                reason += f" via hybrid recall (score {hybrid_score:.2f})"
+                state.data["memory_hybrid_score"] = hybrid_score
             self.kernel.self_model.observe_knowledge_use(
                 event.task,
                 required,
