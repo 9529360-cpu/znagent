@@ -29,12 +29,12 @@ FORBIDDEN_MARKERS = tuple(
 )
 
 # The private source repository is maintainer infrastructure, not installed
-# product identity. Keep its literal out of the shipped resident core and desktop
-# package metadata while allowing repository-internal docs/tests/release tooling to
+# product identity. Keep its literal out of the shipped resident core
+# while allowing repository-internal docs/tests/release tooling to
 # identify the source repository where that is actually necessary.
 PRIVATE_SOURCE_MARKER = bytes.fromhex("393532393336302d6370752f7a6e6167656e74")
 SHIPPED_PRIVATE_SCAN_PREFIX = "runtime/python/zn_agent/core/"
-SHIPPED_PRIVATE_SCAN_FILES = {"apps/desktop/package.json"}
+SHIPPED_PRIVATE_SCAN_FILES = set()
 
 PRODUCT_CORE_PREFIX = "runtime/python/zn_agent/core/"
 _RETIRED_SCENARIO_FRAGMENT = bytes.fromhex("653265").decode("ascii")

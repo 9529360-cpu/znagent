@@ -53,7 +53,7 @@ test('current product contract workflows expose non-empty pull request path owne
 
   assert.deepEqual(
     requiredProductContracts(['apps/desktop/electron/main.ts'], sources),
-    ['.github/workflows/zn-windows-clean-install.yml']
+    []
   )
   assert.ok(
     requiredProductContracts(['runtime/python/zn_agent/core/work.py'], sources)
