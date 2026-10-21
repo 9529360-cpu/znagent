@@ -88,6 +88,7 @@ class KernelStore:
             CREATE TABLE IF NOT EXISTS session_events(seq INTEGER PRIMARY KEY AUTOINCREMENT, request_id TEXT NOT NULL, session_id TEXT NOT NULL DEFAULT '', kind TEXT NOT NULL, data TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_session_events_request ON session_events(request_id, seq);
             CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id, seq);
+            CREATE TABLE IF NOT EXISTS session_log_prunes(prune_id TEXT PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, dry_run INTEGER NOT NULL DEFAULT 0, policy TEXT NOT NULL DEFAULT '{}', candidate_sessions INTEGER NOT NULL DEFAULT 0, deleted_sessions INTEGER NOT NULL DEFAULT 0, deleted_events INTEGER NOT NULL DEFAULT 0, skipped_sessions INTEGER NOT NULL DEFAULT 0, retained_boundary TEXT NOT NULL DEFAULT '{}');
             CREATE TABLE IF NOT EXISTS working_state(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS facts(fact_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, aliases_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT);
             CREATE TABLE IF NOT EXISTS skills(skill_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
@@ -160,7 +161,11 @@ class KernelStore:
         """Append one session-log event. Inserts only: the log is append-only.
 
         DSH-1: the session event log is the source of truth for what the
-        model saw. There is deliberately no update/delete path.
+        model saw. There is deliberately no update path. The single
+        sanctioned delete path is the retention policy
+        (:meth:`delete_session_events`, used only by ``SessionLog.prune_sessions``),
+        which removes whole closed sessions per policy and records every
+        run in ``session_log_prunes`` so the deletion stays auditable.
         """
         data = {
             "seq": int(event.get("seq") or 0),
@@ -214,6 +219,137 @@ class KernelStore:
             event["seq"] = int(row["seq"])
             events.append(event)
         return events
+
+    def session_prune_stats(self) -> list[dict[str, Any]]:
+        """Per-session aggregates for the retention prune, one row per session.
+
+        Each row is ``{"session_id", "event_count", "oldest_created_at",
+        "newest_created_at", "timestamps_complete"}``. ``timestamps_complete``
+        is False when any event of the session lacks a parseable ``created_at``
+        -- the prune must treat such sessions as unknown and keep them
+        (fail closed). Sessions are identified by their stored ``session_id``.
+        """
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT session_id, data FROM session_events"
+            ).fetchall()
+        stats: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            session_id = str(row["session_id"] or "")
+            try:
+                data = json.loads(row["data"])
+            except (TypeError, ValueError):
+                data = {}
+            created_raw = data.get("created_at") if isinstance(data, dict) else None
+            created = self._parse_prune_timestamp(created_raw)
+            entry = stats.setdefault(
+                session_id,
+                {
+                    "session_id": session_id,
+                    "event_count": 0,
+                    "oldest_created_at": None,
+                    "newest_created_at": None,
+                    "timestamps_complete": True,
+                },
+            )
+            entry["event_count"] += 1
+            if created is None:
+                entry["timestamps_complete"] = False
+                continue
+            iso = created.isoformat()
+            if entry["oldest_created_at"] is None or iso < entry["oldest_created_at"]:
+                entry["oldest_created_at"] = iso
+            if entry["newest_created_at"] is None or iso > entry["newest_created_at"]:
+                entry["newest_created_at"] = iso
+        return list(stats.values())
+
+    @staticmethod
+    def _parse_prune_timestamp(raw: Any) -> datetime | None:
+        """Parse a stored ``created_at`` for prune comparisons, or None."""
+        if not isinstance(raw, str) or not raw.strip():
+            return None
+        try:
+            parsed = datetime.fromisoformat(raw.strip())
+        except ValueError:
+            return None
+        if parsed.tzinfo is None:
+            # Stored timestamps are UTC ISO-8601; treat a naive one as UTC
+            # rather than refusing to compare (comparison still needs tz).
+            from datetime import timezone
+
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed
+
+    def delete_session_events(self, session_id: str) -> int:
+        """Delete every event of one session. The sanctioned delete path.
+
+        Only ``SessionLog.prune_sessions`` may call this: it deletes whole
+        closed sessions selected by the retention policy, never partial
+        sessions, and records the run in ``session_log_prunes``. Returns the
+        number of events deleted.
+        """
+        target = str(session_id or "")
+        if not target:
+            return 0
+        with self._lock, self._conn:
+            cursor = self._conn.execute(
+                "DELETE FROM session_events WHERE session_id=?", (target,)
+            )
+            return int(cursor.rowcount or 0)
+
+    def record_session_prune(self, record: dict[str, Any]) -> None:
+        """Append one retention-prune journal entry (auditable, never edited)."""
+        prune_id = str(record.get("prune_id") or "")
+        if not prune_id:
+            raise ValueError("session prune journal record needs a prune_id")
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO session_log_prunes"
+                "(prune_id, started_at, finished_at, dry_run, policy,"
+                " candidate_sessions, deleted_sessions, deleted_events,"
+                " skipped_sessions, retained_boundary)"
+                " VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (
+                    prune_id,
+                    str(record.get("started_at") or ""),
+                    str(record.get("finished_at") or ""),
+                    1 if record.get("dry_run") else 0,
+                    json.dumps(record.get("policy") or {}, ensure_ascii=False),
+                    int(record.get("candidate_sessions") or 0),
+                    int(record.get("deleted_sessions") or 0),
+                    int(record.get("deleted_events") or 0),
+                    int(record.get("skipped_sessions") or 0),
+                    json.dumps(record.get("retained_boundary") or {}, ensure_ascii=False),
+                ),
+            )
+
+    def session_log_prunes(self, *, limit: int = 20) -> list[dict[str, Any]]:
+        """Prune journal, newest first: what was deleted, when, and the policy."""
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT prune_id, started_at, finished_at, dry_run, policy,"
+                " candidate_sessions, deleted_sessions, deleted_events,"
+                " skipped_sessions, retained_boundary"
+                " FROM session_log_prunes ORDER BY finished_at DESC LIMIT ?",
+                (max(1, int(limit)),),
+            ).fetchall()
+        entries = []
+        for row in rows:
+            entries.append(
+                {
+                    "prune_id": str(row["prune_id"]),
+                    "started_at": str(row["started_at"]),
+                    "finished_at": str(row["finished_at"]),
+                    "dry_run": bool(row["dry_run"]),
+                    "policy": json.loads(row["policy"] or "{}"),
+                    "candidate_sessions": int(row["candidate_sessions"]),
+                    "deleted_sessions": int(row["deleted_sessions"]),
+                    "deleted_events": int(row["deleted_events"]),
+                    "skipped_sessions": int(row["skipped_sessions"]),
+                    "retained_boundary": json.loads(row["retained_boundary"] or "{}"),
+                }
+            )
+        return entries
 
     def add_experience(self, exp: Experience) -> None:
         data = {
