@@ -202,9 +202,29 @@ class RelevantAction:
 class ActionFabricRegistry:
     """Deterministic registry of semantic actions and availability probes."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        success_evidence: Callable[[str], int] | None = None,
+    ) -> None:
         self._descriptors: dict[str, ActionDescriptor] = {}
         self._probes: dict[str, AvailabilityProbe] = {}
+        self._success_evidence = success_evidence
+
+    def set_success_evidence_provider(
+        self, provider: Callable[[str], int] | None
+    ) -> None:
+        """Attach prior-verified counts for retrieval ranking (Q13).
+
+        The provider maps an action_id to its durable verified-execution
+        count. Retrieval queries it once per candidate per
+        ``relevant_actions`` call; a failing provider or a negative value
+        is treated as "no evidence". The provider is advisory ranking
+        input only: it can never admit or exclude an action, and it can
+        never reorder across availability states or relevance scores --
+        it only breaks ties inside one (availability, score) segment.
+        """
+        self._success_evidence = provider
 
     def register(
         self,
@@ -309,7 +329,12 @@ class ActionFabricRegistry:
         the score (held authority > partial > none held; authority-free
         actions get a small bonus) and never admits or excludes an action.
         Availability orders the result: available first, then restricted,
-        unavailable, and unknown last. ``max_chars`` budgets
+        unavailable, and unknown last. Within one availability state and one
+        relevance score, prior success evidence (Blueprint §7.5, Q13) orders
+        the tied segment: actions with more verified executions rank first.
+        Actions with no history are never penalized and never hidden -- they
+        sort exactly like any other action with a zero verified count.
+        ``max_chars`` budgets
         ``len(action_id) + 1 + len(description)`` per action; the first
         relevant action is always kept even if it alone exceeds the budget.
         Registration and execution paths are untouched.
@@ -384,10 +409,25 @@ class ActionFabricRegistry:
                     matched_tags=matched_tags,
                 )
             )
+        # Q13 (Blueprint §7.5): prior success evidence only breaks ties inside
+        # one (availability, relevance score) segment. Token relevance stays
+        # the primary order and availability priority is untouched; a missing
+        # provider or failing lookup means "no evidence", never a penalty.
+        provider = self._success_evidence
+        _verified_counts: dict[str, int] = {}
+        if provider is not None:
+            for item in scored:
+                try:
+                    _verified_counts[item.action_id] = max(
+                        0, int(provider(item.action_id) or 0)
+                    )
+                except Exception:
+                    _verified_counts[item.action_id] = 0
         scored.sort(
             key=lambda item: (
                 _availability_rank(item.availability.state),
                 -item.score,
+                -_verified_counts.get(item.action_id, 0),
                 item.action_id,
             )
         )

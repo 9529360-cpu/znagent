@@ -136,6 +136,7 @@ class KernelStore:
             CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
             CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status);
             CREATE TABLE IF NOT EXISTS skill_proposal_counts(fingerprint TEXT PRIMARY KEY, verified_count INTEGER NOT NULL DEFAULT 0, first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL, proposal_state TEXT NOT NULL DEFAULT 'none', proposal_skill_id TEXT NOT NULL DEFAULT '');
+            CREATE TABLE IF NOT EXISTS action_success_counts(action_id TEXT PRIMARY KEY, verified_count INTEGER NOT NULL DEFAULT 0, failed_count INTEGER NOT NULL DEFAULT 0, first_seen_at TEXT NOT NULL, last_seen_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS runtime_metrics(id INTEGER PRIMARY KEY CHECK(id=1), tasks_total INTEGER NOT NULL DEFAULT 0, tasks_model INTEGER NOT NULL DEFAULT 0, model_invocations INTEGER NOT NULL DEFAULT 0, prompt_tokens INTEGER NOT NULL DEFAULT 0, completion_tokens INTEGER NOT NULL DEFAULT 0, updated_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS resident_lease(id INTEGER PRIMARY KEY CHECK(id=1), instance_id TEXT NOT NULL, pid INTEGER NOT NULL, hostname TEXT NOT NULL, started_at TEXT NOT NULL, heartbeat_at TEXT NOT NULL);
             """)
@@ -1390,6 +1391,71 @@ class KernelStore:
             "proposal_state": row["proposal_state"],
             "proposal_skill_id": row["proposal_skill_id"],
         }
+
+    # -- Q13: per-action prior success evidence (Blueprint §7.5) -----------
+
+    def record_action_verdict(
+        self, action_id: str, *, verified: bool
+    ) -> tuple[int, int]:
+        """Bump the verified/failed counter for one registry action.
+
+        Only counts are kept (no per-run detail), matching this store's
+        compact-durable style. Returns (verified_count, failed_count).
+        A blank action_id raises (fail-closed: the caller must name a real
+        action). Fresh databases get the table from _init_schema; old
+        databases pick it up via CREATE TABLE IF NOT EXISTS on open, so no
+        ALTER migration is needed.
+        """
+        normalized = str(action_id or "").strip()
+        if not normalized:
+            raise ValueError("record_action_verdict requires an action_id")
+        now = utc_now()
+        verified_delta = 1 if verified else 0
+        failed_delta = 0 if verified else 1
+        with self._lock, self._conn:
+            row = self._conn.execute(
+                "SELECT verified_count, failed_count FROM action_success_counts "
+                "WHERE action_id=?",
+                (normalized,),
+            ).fetchone()
+            if row is None:
+                self._conn.execute(
+                    "INSERT INTO action_success_counts("
+                    "action_id, verified_count, failed_count, first_seen_at, "
+                    "last_seen_at) VALUES(?,?,?,?,?)",
+                    (normalized, verified_delta, failed_delta, now, now),
+                )
+                return verified_delta, failed_delta
+            counts = (
+                int(row["verified_count"]) + verified_delta,
+                int(row["failed_count"]) + failed_delta,
+            )
+            self._conn.execute(
+                "UPDATE action_success_counts "
+                "SET verified_count=?, failed_count=?, last_seen_at=? "
+                "WHERE action_id=?",
+                (*counts, now, normalized),
+            )
+            return counts
+
+    def get_action_verdict_counts(self, action_id: str) -> tuple[int, int]:
+        """Return (verified_count, failed_count) for one registry action.
+
+        (0, 0) when the action was never recorded -- the caller treats it
+        as "no prior evidence", never as a penalty and never hidden.
+        """
+        normalized = str(action_id or "").strip()
+        if not normalized:
+            return 0, 0
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT verified_count, failed_count FROM action_success_counts "
+                "WHERE action_id=?",
+                (normalized,),
+            ).fetchone()
+        if row is None:
+            return 0, 0
+        return int(row["verified_count"]), int(row["failed_count"])
 
     def set_skill_proposal_state(
         self, fingerprint: str, *, state: str, skill_id: str = ""
