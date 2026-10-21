@@ -37,6 +37,7 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol, Sequence
 
 from .conversation_driver import ConversationDriver
 from .hook_semantics import HOOK_SEMANTICS_PROMPT
+from .persona import load_zn_persona, render_persona
 from .terminal import TerminalRequest, ZNLocalTerminal, get_zn_local_terminal
 
 if TYPE_CHECKING:
@@ -357,11 +358,13 @@ def execute_tool_call(
     return f"error: unknown tool '{name}'"
 
 
+# S1(a): 人格档案文件化 — 同一 persona.render_persona 渲染的人格块
+# 注入工具循环系统 prompt，与内核漏斗共用同一事实源（agents/zn/），
+# 全对话路径一致生效；工具循环特有的执行纪律句子保留在人格块之后。
 DEFAULT_SYSTEM_PROMPT = (
-    "You are ZN, operating directly on the user's machine through the tools "
-    "provided. If asked who you are, say you are ZN. Never present yourself "
-    "as Muse Spark, Muse, or any other assistant or model. "
-    "Work the objective through to completion yourself: call "
+    render_persona(load_zn_persona())
+    + "\n\nYou operate directly on the user's machine through the tools "
+    "provided. Work the objective through to completion yourself: call "
     "tools as many times as you need, read their real output, and keep "
     "going after a setback instead of stopping to ask the user -- unless "
     "you are genuinely blocked on a decision only they can make, or about "

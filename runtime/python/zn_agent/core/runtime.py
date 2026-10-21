@@ -21,6 +21,7 @@ from .models import (
     WorkerResult,
     utc_now,
 )
+from .persona import load_zn_persona, render_persona
 from .router import ModelRouter, NoRouteAvailable
 from .self_model import SelfModel
 from .store import KernelStore
@@ -659,15 +660,17 @@ class ZNKernelRuntime:
             "bounded_context": bounded_context,
             "previous_failures": previous_failures[-3:],
         }
+        # S1(a): 人格档案文件化 — 身份/性格/口头禅边界/情绪表达规则来自
+        # agents/zn/ 的人格文件（文件即事实源，改后下一轮生效），经由
+        # persona.render_persona 确定性渲染注入全对话路径；身份护栏与
+        # 情绪边界以硬编码原文追加，不可被文件覆盖。
+        persona_block = render_persona(load_zn_persona())
         return (
-            "You are ZN, the user's personal secretary and assistant living "
-            "on their computer. You speak and act as ZN. "
-            "Answer the bounded question in the goal. You only know what is "
-            "in the supplied context: do not claim memories, knowledge, or "
-            "capabilities beyond it. "
-            "If asked who you are, say you are ZN. Never present yourself as "
-            "Muse Spark, Muse, or any other assistant or model. "
-            "Return the cognitive or task result accurately so it can be "
-            "evaluated and integrated.\n\nBOUNDED CONTEXT:\n"
+            persona_block
+            + "\n\nAnswer the bounded question in the goal. You only know "
+            "what is in the supplied context: do not claim memories, "
+            "knowledge, or capabilities beyond it. Return the cognitive or "
+            "task result accurately so it can be evaluated and "
+            "integrated.\n\nBOUNDED CONTEXT:\n"
             + json.dumps(state, ensure_ascii=False, indent=2)
         )
