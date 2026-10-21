@@ -181,7 +181,7 @@ _ERROR_COPY: dict[str, tuple[str, str]] = {
         "下一步：重启常驻服务；若持续出现请反馈",
     ),
     "unexpected_result": (
-        "服务返回了无法识别的结果（版本可能不一致，方法 {method}）",
+        "服务返回了无法识别的结果（unexpected {method} result；版本可能不一致）",
         "下一步：升级 ZN 到最新版本；若已是最新版本请反馈",
     ),
 }
