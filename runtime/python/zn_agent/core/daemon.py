@@ -57,6 +57,46 @@ class ResidentRpcServer:
         mcp_client_factory: Callable[..., Any] = StdioMcpClient,
     ):
         self.resident = resident or build_resident_runtime_from_existing_stack()
+        # R13: mount host-approved R-series connectors onto this resident's
+        # Fabric/Body at daemon start. The whitelist (connectors.yaml next
+        # to the daemon config) is default-off, so constructing the server
+        # without one changes nothing.
+        # Local import: keeps the connector wiring in its own merge hunk
+        # (P1-3 precedent) instead of the shared top-level import block.
+        from .connector_autoattach import (
+            ConnectorMountReport,
+            attach_approved_connectors,
+            write_mount_report,
+        )
+
+        _fabric = getattr(self.resident, "action_fabric", None)
+        _body = getattr(self.resident, "body", None)
+        if _fabric is not None and _body is not None:
+            try:
+                self.connector_report = attach_approved_connectors(
+                    _fabric,
+                    _body,
+                    executor=getattr(self.resident, "action_executor", None),
+                )
+            except Exception as exc:
+                # A corrupt whitelist must not take the daemon down: mount
+                # nothing (fail closed) and record the error explicitly in
+                # the report served over the connector_status RPC.
+                self.connector_report = ConnectorMountReport.empty(
+                    "connector whitelist failed to load: "
+                    f"{type(exc).__name__}: {exc}"
+                )
+            try:
+                write_mount_report(self.connector_report)
+            except OSError:
+                # The in-memory report stays authoritative and is served
+                # over the connector_status RPC; the status file is only a
+                # convenience cache for the daemon-down case.
+                pass
+        else:
+            self.connector_report = ConnectorMountReport.empty(
+                "resident exposes no action_fabric/body; connectors not mounted"
+            )
         self.service = ResidentService(self.resident)
         self.work = RecoveryBoundedWorkLedger(self.resident)
         # Local import: keeps the suggestions wiring in its own merge hunk
@@ -184,6 +224,10 @@ class ResidentRpcServer:
             if not provider_id:
                 raise ValueError("mcp_disconnect requires provider_id")
             result = self.mcp_capabilities.disconnect(provider_id)
+        elif method == "connector_status":
+            if params:
+                raise ValueError("connector_status accepts no execution parameters")
+            result = self.connector_report.to_dict()
         elif method == "suggestions_list":
             result = self.suggestions.list_suggestions(
                 limit=max(1, min(50, int(params.get("limit") or 8))),
