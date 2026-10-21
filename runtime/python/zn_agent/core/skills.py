@@ -51,6 +51,7 @@ the event carries an attached workspace with a ``skills`` directory
 
 import fnmatch
 import re
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from typing import Any
@@ -61,6 +62,7 @@ from .home import get_zn_home
 from .models import AgentEvent, CognitionRequest
 from .skill_lock import SkillLock, content_sha256
 from .skill_routing import SkillHeader, SkillRouter, match_skill_headers
+from .skill_usage import SkillUsage, SkillUsageStore
 
 MAX_SKILL_CONTEXT_BYTES = 8192
 MAX_SKILL_BODY_CHARS = 20000
@@ -278,9 +280,15 @@ class SkillStore:
     #: attaches a bounded ``resident_skill_gap`` note. None keeps the exact
     #: previous behavior (gap silently swallowed).
     gap_driver: Any = field(default=None, repr=False, compare=False)
+    #: T2: per-skill body-load accounting (usage_count + last_used), persisted
+    #: as a JSON sidecar in the skills root. Observability only -- recording
+    #: never raises into the caller (see ``_record_skill_uses``).
+    usage_store: Any = field(default=None, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         self.root = Path(self.root)
+        if self.usage_store is None:
+            self.usage_store = SkillUsageStore(self.root)
 
     def discover(self) -> list[Skill]:
         """Read and validate every skill bundle under the skills root."""
@@ -528,6 +536,10 @@ class SkillStore:
         layered registry (host + project, nearest wins), so a
         project-layer skill matched by layered binding can be loaded.
         Without it, activation is host-layer only, as before.
+
+        T2: a successful activation records one body load in the usage
+        store (``usage_count`` + 1, ``last_used`` stamped). A miss
+        (None) records nothing -- nothing was loaded.
         """
         if project_root is not None:
             root = Path(project_root)
@@ -538,12 +550,15 @@ class SkillStore:
                         SkillLayer.single("project", root),
                     )
                 )
-                return registry.get(_clean(name))
+                skill = registry.get(_clean(name))
+                if skill is not None:
+                    self._record_skill_uses((skill.name,))
+                return skill
         router = SkillRouter(self.root)
         activated = router.activate(name)
         if activated is None:
             return None
-        return Skill(
+        skill = Skill(
             name=activated.header.name,
             description=activated.header.description,
             version=activated.header.version,
@@ -551,6 +566,8 @@ class SkillStore:
             body=activated.body,
             globs=_read_frontmatter_globs(activated.header.path),
         )
+        self._record_skill_uses((skill.name,))
+        return skill
 
     # NOTE: SkillStore.discover() below still reads full bodies for
     # backwards compatibility. New callers should use
@@ -642,6 +659,9 @@ class SkillStore:
                 f"{str(project_root)!r}) to load one matched skill's full "
                 "body on demand; unmatched skills' bodies are never read."
             )
+        # T2: names whose bodies actually entered the bound context, for
+        # usage accounting (legacy full-body injection only).
+        body_bound: list[str] = []
         for skill in skills:
             if include_bodies:
                 item: dict[str, Any] = {
@@ -662,9 +682,72 @@ class SkillStore:
                 bundle["skills"].pop()
                 bundle["truncated"] = True
                 break
+            if include_bodies:
+                # T2: the body actually entered the bound context -- record
+                # the load. A body popped by the size cap above is NOT
+                # recorded; it never reached cognition.
+                body_bound.append(skill.name)
+        if body_bound:
+            self._record_skill_uses(body_bound)
         if bundle["skills"]:
             context["resident_skills"] = bundle
         return request
+
+    # -- T2: usage accounting (read-mostly; recording never raises) --------
+
+    def _record_skill_uses(self, names: tuple[str, ...] | list[str]) -> None:
+        """Record body loads. Observability only: failures are swallowed.
+
+        A stats write must never break activation or cognition binding
+        (read-only roots, disk errors, races with another process).
+        """
+        store = self.usage_store
+        if store is None:
+            return
+        with suppress(OSError):
+            store.record_uses(names)
+
+    def skill_usage(self, name: str) -> SkillUsage | None:
+        """Usage stats for one skill name, or None when never recorded."""
+        store = self.usage_store
+        if store is None:
+            return None
+        return store.stats_for(name)
+
+    def list_skill_usage(self) -> list[SkillUsage]:
+        """Per-skill usage stats for every discovered bundle, sorted by name.
+
+        Read-only: discovery reads frontmatter + bodies as usual, but no
+        stats are written and no selection scoring is touched.
+        """
+        store = self.usage_store
+        stats: list[SkillUsage] = []
+        for skill in self.discover():
+            entry = store.stats_for(skill.name) if store is not None else None
+            stats.append(entry if entry is not None else SkillUsage(name=skill.name))
+        stats.sort(key=lambda item: item.name)
+        return stats
+
+    def never_used_skills(self) -> list[SkillUsage]:
+        """Discovered skills whose body was never loaded: the zero-hit list."""
+        return [item for item in self.list_skill_usage() if item.never_used]
+
+    def dormant_skills(self, *, dormant_days: int = 30) -> list[SkillUsage]:
+        """Never loaded, or last body load older than ``dormant_days``.
+
+        Read-only reporting for humans: nothing is deleted, nothing is
+        changed. Pruning a dormant skill still needs human confirmation.
+        """
+        store = self.usage_store
+        result: list[SkillUsage] = []
+        for item in self.list_skill_usage():
+            if store is None:
+                dormant = item.never_used
+            else:
+                dormant = store.dormant_since(item.name, dormant_days=dormant_days)
+            if dormant:
+                result.append(item)
+        return result
 
 
 def _parse_rank(meta: dict[str, Any]) -> int:
