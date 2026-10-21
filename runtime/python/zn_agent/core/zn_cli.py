@@ -52,6 +52,7 @@ from pathlib import Path
 from typing import Any
 
 from .home import get_zn_home
+from .cli_format import kv, section, status_word
 from .model_check import (
     DEFAULT_PROBE_TIMEOUT_SECONDS,
     check_model_routes,
@@ -405,7 +406,7 @@ def _cmd_work_submit(args: argparse.Namespace) -> int:
 
 def _format_approval_card(item: dict[str, Any]) -> str:
     return (
-        f"{item.get('request_id') or '?'}  [{item.get('status') or '?'}]  "
+        f"{item.get('request_id') or '?'}  [{status_word(item.get('status') or '?')}]  "
         f"{item.get('action_kind') or '?'}  target={_one_line(item.get('target'), limit=60)}  "
         f"scope={_one_line(item.get('scope'), limit=40)}  "
         f"expires={item.get('expires_at') or '-'}"
@@ -435,7 +436,7 @@ def _cmd_approval_list(args: argparse.Namespace) -> int:
         items = result.get(key)
         if not isinstance(items, list):
             continue
-        print(f"--- {label} ({len(items)}) ---")
+        print(section(label, len(items)))
         shown = True
         if not items:
             print("(none)")
@@ -501,9 +502,9 @@ def _cmd_memory_list(args: argparse.Namespace) -> int:
             else "-"
         )
         print(
-            f"{_one_line(item.get('key'), limit=60)}  tier={_one_line(item.get('tier'))}  "
-            f"sensitivity={_one_line(item.get('sensitivity') or 'normal')}  "
-            f"aliases={alias_text}  updated={_one_line(item.get('updated_at'))}"
+            f"{_one_line(item.get('key'), limit=60)}  {kv('tier', _one_line(item.get('tier')))}  "
+            f"{kv('sensitivity', _one_line(item.get('sensitivity') or 'normal'))}  "
+            f"aliases={alias_text}  {kv('updated', _one_line(item.get('updated_at')))}"
         )
     return 0
 
