@@ -525,6 +525,103 @@ def _cmd_team_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_connector_list(args: argparse.Namespace) -> int:
+    """List the known R-series connectors. Local only, no resident RPC."""
+
+    from .connector_autoattach import describe_registry
+
+    registry = describe_registry()
+    if args.json:
+        print(json.dumps(registry, ensure_ascii=False, indent=2, default=str))
+        return 0
+    for entry in registry:
+        planes = "+".join(entry["planes"])
+        creds = "credentials" if entry["requires_credentials"] else "keyless"
+        print(
+            f"{entry['r_series']:4} {entry['name']:16} {_one_line(entry['title'], limit=34):36} "
+            f"{planes:10} {creds}"
+        )
+    return 0
+
+
+def _cmd_connector_status(args: argparse.Namespace) -> int:
+    """Show connector mount status: live daemon report, else local evaluation."""
+
+    try:
+        result = _client(args).call("connector_status", {})
+    except CliError as exc:
+        return _cmd_connector_status_offline(args, str(exc))
+    if not isinstance(result, dict) or not isinstance(result.get("connectors"), list):
+        raise CliError(f"resident returned an unexpected connector_status result: {result!r}")
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(f"connector mount report (daemon, {result.get('generated_at') or 'unknown time'})")
+    failed = 0
+    for item in result["connectors"]:
+        if not isinstance(item, dict):
+            continue
+        if item.get("approved") and not item.get("mounted"):
+            state = "FAILED "
+            failed += 1
+        elif item.get("mounted"):
+            state = "mounted"
+        else:
+            state = "off    "
+        print(
+            f"{_one_line(item.get('r_series'), limit=4):4} "
+            f"{_one_line(item.get('name'), limit=16):16} "
+            f"{state}  {_one_line(item.get('reason'), limit=100)}"
+        )
+    print(
+        f"{result.get('mounted', 0)} of {result.get('approved', 0)} approved connector(s) mounted"
+    )
+    return 1 if failed else 0
+
+
+def _cmd_connector_status_offline(args: argparse.Namespace, error: str) -> int:
+    """Local config evaluation when the daemon is unreachable."""
+
+    from .connector_autoattach import evaluate_connector_status
+
+    try:
+        status = evaluate_connector_status()
+    except ValueError as exc:
+        print(f"connector config error: {_one_line(str(exc), limit=200)}")
+        return 3
+    if args.json:
+        print(
+            json.dumps(
+                {"daemon_reachable": False, "daemon_error": error, "connectors": status},
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        )
+        return 0
+    print(f"daemon unreachable ({_one_line(error, limit=90)}); showing local config evaluation")
+    for item in status:
+        mount = item.get("last_mount") or {}
+        if not item.get("approved"):
+            state = "off    "
+            reason = "not approved in connectors.yaml (default off)"
+        elif mount.get("mounted") is True:
+            state = "mounted"
+            reason = str(mount.get("reason") or "")
+        elif mount.get("mounted") is False:
+            state = "FAILED "
+            reason = str(mount.get("reason") or "")
+        else:
+            state = "pending"
+            reason = str(item.get("readiness") or "will mount on next daemon start")
+        print(
+            f"{_one_line(item.get('r_series'), limit=4):4} "
+            f"{_one_line(item.get('name'), limit=16):16} "
+            f"{state}  {_one_line(reason, limit=100)}"
+        )
+    return 0
+
+
 def _cmd_model_check(args: argparse.Namespace) -> int:
     """Probe the locally configured model routes. Local only, no resident RPC."""
 
@@ -685,6 +782,23 @@ def build_parser() -> argparse.ArgumentParser:
     )
     model_check.add_argument("--json", action="store_true", help="print raw JSON")
     model_check.set_defaults(func=_cmd_model_check)
+
+    connector = sub.add_parser("connector", help="inspect connector auto-attachment")
+    connector_sub = connector.add_subparsers(
+        dest="connector_command", metavar="subcommand", required=True
+    )
+
+    connector_list = connector_sub.add_parser(
+        "list", help="list known connectors (local, no resident needed)"
+    )
+    connector_list.add_argument("--json", action="store_true", help="print raw JSON")
+    connector_list.set_defaults(func=_cmd_connector_list)
+
+    connector_status = connector_sub.add_parser(
+        "status", help="show connector mount status"
+    )
+    connector_status.add_argument("--json", action="store_true", help="print raw JSON")
+    connector_status.set_defaults(func=_cmd_connector_status)
     return parser
 
 
