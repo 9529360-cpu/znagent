@@ -531,6 +531,118 @@ def _cmd_team_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_memory_remember(args: argparse.Namespace) -> int:
+    params: dict[str, Any] = {"key": args.key, "value": args.value}
+    if args.sensitivity is not None:
+        # Only sent when the user picked a tier: omitting it lets the
+        # resident keep an existing fact's sensitivity (Q11 semantics).
+        params["sensitivity"] = args.sensitivity
+    result = _client(args).call("remember", params)
+    if not isinstance(result, dict) or not result.get("saved"):
+        raise CliError(
+            f"resident returned an unexpected remember result: {result!r}"
+        )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    sensitivity = args.sensitivity or "unchanged"
+    print(f"saved memory key={result.get('key') or args.key}  sensitivity={sensitivity}")
+    return 0
+
+
+def _cmd_memory_forget(args: argparse.Namespace) -> int:
+    if not args.yes:
+        try:
+            answer = input(
+                f"forget memory key {args.key!r}? this cannot be undone [y/N]: "
+            )
+        except (EOFError, KeyboardInterrupt):
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print(f"aborted: memory key {args.key!r} was NOT forgotten")
+            return 1
+    result = _client(args).call("forget", {"key": args.key})
+    if not isinstance(result, dict) or not result.get("forgotten"):
+        raise CliError(
+            f"resident returned an unexpected forget result: {result!r}"
+        )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(f"forgot memory key={result.get('key') or args.key}")
+    return 0
+
+
+def _format_timeline_entry(entry: dict[str, Any]) -> str:
+    at = _one_line(entry.get("at") or "-", limit=19)
+    kind = _one_line(entry.get("kind") or "message", limit=16)
+    author = _one_line(entry.get("from_author") or entry.get("author") or "?", limit=32)
+    line = f"[{at}] {kind} {author}"
+    to_author = _one_line(entry.get("to_author"), limit=32)
+    if to_author:
+        line += f" -> {to_author}"
+    item_title = _one_line(entry.get("item_title"), limit=60)
+    if item_title:
+        line += f"  {item_title}"
+    text = _one_line(entry.get("text"), limit=200)
+    if text:
+        line += f"\n    {text}"
+    return line
+
+
+def _cmd_team_timeline(args: argparse.Namespace) -> int:
+    result = _client(args).call("team_timeline", {"thread_id": args.thread_id})
+    if not isinstance(result, dict) or not isinstance(result.get("entries"), list):
+        raise CliError(
+            f"resident returned an unexpected team_timeline result: {result!r}"
+        )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    team_id = result.get("team_id") or "-"
+    members = result.get("members")
+    member_text = (
+        ", ".join(_one_line(member, limit=32) for member in members)
+        if isinstance(members, list) and members
+        else "-"
+    )
+    print(f"team timeline  team={team_id}  members={member_text}  thread={args.thread_id}")
+    entries = result["entries"]
+    if not entries:
+        print("(no timeline entries)")
+        return 0
+    for entry in entries:
+        if isinstance(entry, dict):
+            print(_format_timeline_entry(entry))
+    return 0
+
+
+def _cmd_work_cancel(args: argparse.Namespace) -> int:
+    result = _client(args).call(
+        "work_cancel",
+        {"thread_id": args.thread_id, "event_id": args.event_id},
+    )
+    if not isinstance(result, dict) or not isinstance(result.get("progress"), dict):
+        raise CliError(
+            f"resident returned an unexpected work_cancel result: {result!r}"
+        )
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    progress = result["progress"]
+    print(
+        f"cancelled event={args.event_id} on thread={args.thread_id}  "
+        f"state={_one_line(progress.get('state') or progress.get('status') or '?')}"
+    )
+    cancelled = progress.get("cancelled")
+    if cancelled is not None:
+        print(f"  cancelled={cancelled}")
+    reason = _one_line(progress.get("reason"), limit=120)
+    if reason:
+        print(f"  reason: {reason}")
+    return 0
+
+
 def _cmd_connector_list(args: argparse.Namespace) -> int:
     """List the known R-series connectors. Local only, no resident RPC."""
 
@@ -881,6 +993,12 @@ def build_parser() -> argparse.ArgumentParser:
     work_submit.add_argument("--json", action="store_true", help="print raw JSON")
     work_submit.set_defaults(func=_cmd_work_submit)
 
+    work_cancel = work_sub.add_parser("cancel", help="cancel an active work event")
+    work_cancel.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
+    work_cancel.add_argument("--event-id", type=lambda v: _require_non_empty(v, name="--event-id"), required=True)
+    work_cancel.add_argument("--json", action="store_true", help="print raw JSON")
+    work_cancel.set_defaults(func=_cmd_work_cancel)
+
     approval = sub.add_parser("approval", help="list or decide approval cards")
     approval_sub = approval.add_subparsers(
         dest="approval_command", metavar="subcommand", required=True
@@ -928,6 +1046,28 @@ def build_parser() -> argparse.ArgumentParser:
     memory_list.add_argument("--json", action="store_true", help="print raw JSON")
     memory_list.set_defaults(func=_cmd_memory_list)
 
+    memory_remember = memory_sub.add_parser("remember", help="store one durable fact")
+    memory_remember.add_argument("--key", type=lambda v: _require_non_empty(v, name="--key"), required=True)
+    memory_remember.add_argument("--value", type=lambda v: _require_non_empty(v, name="--value"), required=True)
+    memory_remember.add_argument(
+        "--sensitivity",
+        choices=["normal", "sensitive", "non_retainable"],
+        default=None,
+        help="sensitivity tier (default: keep the existing fact's tier)",
+    )
+    memory_remember.add_argument("--json", action="store_true", help="print raw JSON")
+    memory_remember.set_defaults(func=_cmd_memory_remember)
+
+    memory_forget = memory_sub.add_parser("forget", help="forget one durable fact")
+    memory_forget.add_argument("--key", type=lambda v: _require_non_empty(v, name="--key"), required=True)
+    memory_forget.add_argument(
+        "--yes",
+        action="store_true",
+        help="skip the interactive confirmation (without it, forgetting requires a typed yes)",
+    )
+    memory_forget.add_argument("--json", action="store_true", help="print raw JSON")
+    memory_forget.set_defaults(func=_cmd_memory_forget)
+
     team = sub.add_parser("team", help="inspect project teams")
     team_sub = team.add_subparsers(
         dest="team_command", metavar="subcommand", required=True
@@ -940,6 +1080,16 @@ def build_parser() -> argparse.ArgumentParser:
     )
     team_list.add_argument("--json", action="store_true", help="print raw JSON")
     team_list.set_defaults(func=_cmd_team_list)
+
+    team_timeline = team_sub.add_parser("timeline", help="show the team timeline of a work thread")
+    team_timeline.add_argument(
+        "--thread-id",
+        type=lambda v: _require_non_empty(v, name="--thread-id"),
+        required=True,
+        help="work thread the team runs in (the team_timeline RPC is thread-scoped)",
+    )
+    team_timeline.add_argument("--json", action="store_true", help="print raw JSON")
+    team_timeline.set_defaults(func=_cmd_team_timeline)
 
     skill = sub.add_parser("skill", help="inspect skill usage statistics")
     skill_sub = skill.add_subparsers(

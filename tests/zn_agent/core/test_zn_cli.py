@@ -592,6 +592,148 @@ class ZnCliUnitTests(_CliHarness):
         self.assertIn("secret", str(caught.exception))
 
 
+class ZnCliT7BatchTests(_CliHarness):
+    """T7: memory remember/forget, team timeline, work cancel CLI commands."""
+
+    def test_memory_remember_sends_key_and_value(self):
+        handler = self._handler({"remember": {"saved": True, "key": "k1"}})
+        code, out, err = self._run(
+            ["memory", "remember", "--key", "k1", "--value", "v1"], handler
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("k1", out)
+        self.assertEqual(self.calls, [("remember", {"key": "k1", "value": "v1"})])
+
+    def test_memory_remember_forwards_sensitivity_only_when_given(self):
+        handler = self._handler({"remember": {"saved": True, "key": "k1"}})
+        code, out, err = self._run(
+            [
+                "memory", "remember", "--key", "k1", "--value", "v1",
+                "--sensitivity", "sensitive",
+            ],
+            handler,
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            self.calls,
+            [("remember", {"key": "k1", "value": "v1", "sensitivity": "sensitive"})],
+        )
+
+    def test_memory_remember_requires_key_and_value(self):
+        handler = self._handler({})
+        for argv in (
+            ["memory", "remember", "--value", "v1"],
+            ["memory", "remember", "--key", "k1"],
+            ["memory", "remember", "--key", "  ", "--value", "v1"],
+        ):
+            with self.subTest(argv=argv):
+                with self.assertRaises(SystemExit) as caught:
+                    self._run(argv, handler)
+                self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_memory_forget_yes_skips_prompt_and_calls_rpc(self):
+        handler = self._handler({"forget": {"forgotten": True, "key": "k1"}})
+        with mock.patch(
+            "builtins.input",
+            side_effect=AssertionError("prompt must not appear with --yes"),
+        ):
+            code, out, err = self._run(
+                ["memory", "forget", "--key", "k1", "--yes"], handler
+            )
+        self.assertEqual(code, 0, err)
+        self.assertIn("k1", out)
+        self.assertEqual(self.calls, [("forget", {"key": "k1"})])
+
+    def test_memory_forget_confirmed_typing_yes_executes(self):
+        handler = self._handler({"forget": {"forgotten": True, "key": "k1"}})
+        with mock.patch("builtins.input", return_value="y"):
+            code, out, err = self._run(["memory", "forget", "--key", "k1"], handler)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.calls, [("forget", {"key": "k1"})])
+
+    def test_memory_forget_without_confirmation_aborts_without_rpc(self):
+        handler = self._handler({"forget": {"forgotten": True, "key": "k1"}})
+        for answer in ("", "n", "no", "yess"):
+            with self.subTest(answer=answer):
+                self.calls = []
+                with mock.patch("builtins.input", return_value=answer):
+                    code, out, err = self._run(
+                        ["memory", "forget", "--key", "k1"], handler
+                    )
+                self.assertEqual(code, 1, err)
+                self.assertIn("aborted", out)
+                self.assertIn("NOT forgotten", out)
+                self.assertEqual(self.calls, [])
+
+    def test_memory_forget_eof_aborts_without_rpc(self):
+        handler = self._handler({"forget": {"forgotten": True, "key": "k1"}})
+        with mock.patch("builtins.input", side_effect=EOFError):
+            code, out, err = self._run(["memory", "forget", "--key", "k1"], handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(self.calls, [])
+
+    def test_team_timeline_renders_entries(self):
+        payload = {
+            "team_id": "team-abc123",
+            "members": ["researcher"],
+            "entries": [
+                {
+                    "id": "m1",
+                    "kind": "assignment",
+                    "author": "user",
+                    "from_author": "user",
+                    "to_author": "researcher",
+                    "item_title": "调研 X",
+                    "text": "开始调研",
+                    "at": "2026-10-21T10:00:00",
+                    "team_id": "team-abc123",
+                },
+            ],
+        }
+        handler = self._handler({"team_timeline": payload})
+        code, out, err = self._run(
+            ["team", "timeline", "--thread-id", "t1"], handler
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("team-abc123", out)
+        self.assertIn("researcher", out)
+        self.assertIn("调研 X", out)
+        self.assertEqual(self.calls, [("team_timeline", {"thread_id": "t1"})])
+
+    def test_team_timeline_json_passthrough(self):
+        payload = {"team_id": None, "members": [], "entries": []}
+        handler = self._handler({"team_timeline": payload})
+        code, out, err = self._run(
+            ["team", "timeline", "--thread-id", "t1", "--json"], handler
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), payload)
+
+    def test_work_cancel_sends_thread_and_event(self):
+        payload = {
+            "progress": {"state": "cancelled", "cancelled": True},
+            "thread": {"id": "t1"},
+        }
+        handler = self._handler({"work_cancel": payload})
+        code, out, err = self._run(
+            ["work", "cancel", "--thread-id", "t1", "--event-id", "e9"], handler
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("e9", out)
+        self.assertIn("t1", out)
+        self.assertEqual(
+            self.calls, [("work_cancel", {"thread_id": "t1", "event_id": "e9"})]
+        )
+
+    def test_new_commands_surface_rpc_errors_as_exit_1(self):
+        handler = self._handler({"remember": (False, None, "boom")})
+        code, out, err = self._run(
+            ["memory", "remember", "--key", "k1", "--value", "v1"], handler
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("boom", err)
+
 
 def _best_effort_shutdown(endpoint_path) -> bool:
     """Ask a test resident to shut down; False when it is already gone."""
@@ -747,6 +889,74 @@ class ZnCliResidentIntegrationTests(unittest.TestCase):
                 self.assertIn("status=active", stdout.getvalue())
                 self.assertIn("调研-01", stdout.getvalue())
                 self.assertIn("集成测试项目", stdout.getvalue())
+            finally:
+                _best_effort_shutdown(endpoint_path)
+                thread.join(timeout=10.0)
+                resident.store.close()
+
+    def test_cli_t7_batch_against_real_resident(self):
+        """End-to-end: remember/forget/timeline/cancel through a real daemon."""
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            db = root / "kernel.db"
+            endpoint_path = root / "resident-endpoint.json"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            rpc = ResidentRpcServer(resident=resident, life_interval=0.1)
+            service = ResidentSocketService(rpc, endpoint_path=endpoint_path)
+            thread = threading.Thread(
+                target=service.serve_forever, name="test-zn-cli-t7", daemon=True
+            )
+            thread.start()
+            try:
+                deadline = time.monotonic() + 10.0
+                while not endpoint_path.exists() and time.monotonic() < deadline:
+                    time.sleep(0.02)
+                self.assertTrue(endpoint_path.exists(), "resident endpoint not published")
+
+                def cli(*argv):
+                    stdout, stderr = io.StringIO(), io.StringIO()
+                    with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(
+                        stderr
+                    ):
+                        code = run(["--endpoint", str(endpoint_path), *argv])
+                    return code, stdout.getvalue(), stderr.getvalue()
+
+                # remember -> list shows the key (value stays hidden) ->
+                # forget --yes -> key is gone.
+                code, out, err = cli(
+                    "memory", "remember", "--key", "t7-fact", "--value", "t7-value"
+                )
+                self.assertEqual(code, 0, err)
+                self.assertIn("t7-fact", out)
+                code, out, err = cli("memory", "list")
+                self.assertEqual(code, 0, err)
+                self.assertIn("t7-fact", out)
+                self.assertNotIn("t7-value", out)
+                code, out, err = cli("memory", "forget", "--key", "t7-fact", "--yes")
+                self.assertEqual(code, 0, err)
+                self.assertIn("t7-fact", out)
+                code, out, err = cli("memory", "list")
+                self.assertEqual(code, 0, err)
+                self.assertNotIn("t7-fact", out)
+
+                # team timeline on a real thread with no team journal:
+                # empty but still exit 0.
+                client = ResidentClient(load_endpoint(str(endpoint_path)))
+                thread_id = client.call("work_create", {"title": "CLI t7 thread"})["id"]
+                code, out, err = cli("team", "timeline", "--thread-id", thread_id)
+                self.assertEqual(code, 0, err)
+                self.assertIn("no timeline entries", out)
+
+                # work cancel round-trips the real RPC shape: an unknown
+                # event is rejected by the daemon with a readable reason.
+                code, out, err = cli(
+                    "work", "cancel", "--thread-id", thread_id, "--event-id", "nope"
+                )
+                self.assertEqual(code, 1)
+                self.assertIn("unknown work event", err)
             finally:
                 _best_effort_shutdown(endpoint_path)
                 thread.join(timeout=10.0)
