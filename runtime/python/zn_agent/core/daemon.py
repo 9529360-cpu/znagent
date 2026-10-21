@@ -120,6 +120,15 @@ class ResidentRpcServer:
         from .suggestions import SuggestionEngine
 
         self.suggestions = SuggestionEngine(self.resident, self.work)
+        # Local import: keeps the proactive-contact wiring in its own merge
+        # hunk (suggestions precedent) instead of the shared top-level import
+        # block. Reuses the suggestion engine above, including its 7-day
+        # dismissal semantics.
+        from .proactive_contact import ProactiveContactEngine
+
+        self.proactive_contact = ProactiveContactEngine(
+            self.resident, self.suggestions
+        )
         self.work_control = OutcomeAwareRestoreWorkControl(self.work)
         self.resident.cognitive_delta_handler = self.work.publish_response_delta
         self.resident.cognitive_response_reset_handler = self.work.reset_response_stream
@@ -298,6 +307,18 @@ class ResidentRpcServer:
             if not key:
                 raise ValueError("suggestions_dismiss requires key")
             result = self.suggestions.dismiss(key)
+        elif method == "proactive_contact_check":
+            # S1(b): one restrained proactive greeting at most; returns null
+            # when the restraint rules say "don't disturb". Read-only besides
+            # the engine's own bookkeeping tables.
+            contact = self.proactive_contact.maybe_contact()
+            result = contact.to_dict() if contact is not None else None
+        elif method == "proactive_contact_feedback":
+            key = str(params.get("key") or "").strip()
+            if not key:
+                raise ValueError("proactive_contact_feedback requires key")
+            feedback = str(params.get("feedback") or "").strip()
+            result = self.proactive_contact.note_feedback(key, feedback)
         elif method == "work_list":
             result = [
                 self._work_snapshot(snapshot, artifact_limit=1)
