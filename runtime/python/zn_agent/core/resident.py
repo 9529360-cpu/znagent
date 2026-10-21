@@ -74,13 +74,23 @@ _ORIENT_RUN_LOG_PREFIXES = (SUMMARY_KEY_PREFIX, PITFALL_KEY_PREFIX)
 _ORIENT_HYBRID_MIN_SCORE_ENTITY = 0.40
 _ORIENT_ENTITY_NAME_COVERAGE_MIN = 0.50
 
-# Floating-point guard for the tier comparisons: memory.py's hybrid fusion
-# can land just below the tier line (measured 0.39999999992 for a
-# single-char alias mention with entity=1.0 + full recency, strictly
-# below 0.40), so the comparisons below allow this tolerance. It is four
-# orders of magnitude below the real margin to either tier (the keyword
-# ceiling at 0.50 sits 0.10 away).
-_ORIENT_SCORE_EPS = 1e-9
+# Floating-point + wall-clock guard for the tier comparisons:
+# memory.py's hybrid fusion can land just below the tier line (measured
+# 0.39999999994 for a single-char alias mention with entity=1.0 + full
+# recency, strictly below 0.40). Worse, the fused score is recomputed
+# fresh on every recall_hybrid() call and its recency term decays with
+# wall-clock time (~1.9e-8/s at the 30-day scale), so a hit sitting
+# mathematically at the tier line drifts below it within milliseconds of
+# the first measurement -- the tier decision must tolerate realistic
+# decay between the measurement the test saw and the one orient makes
+# internally (enqueue/thought/readiness in between). 1e-4 covers ~80
+# minutes of decay and is still 250-500x below the real margins to
+# either tier (0.025 for a 30-day-stale entity hit at 0.375, 0.05 for
+# the keyword-only ceiling at 0.50); the entity/exact/coverage signal
+# checks are unaffected in practice (exact is 0/1, entity and coverage
+# are small-integer ratios that cannot land within 1e-4 of their lines
+# without thousands of tokens).
+_ORIENT_SCORE_EPS = 1e-4
 
 # PERF-2: a hybrid hit may only short-circuit orient when the task is
 # phrased as a question (or an explicit tell-me lookup). A task that
