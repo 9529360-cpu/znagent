@@ -11,7 +11,7 @@ from .completion_observation import CompletionObservationJournal
 from .completion_summary import PITFALL_KEY_PREFIX, SUMMARY_KEY_PREFIX
 from .conversation_driver import ConversationDriver
 from .investigation import InvestigationResult, NativeInvestigator
-from .memory import FactMatch, StructuredMemory
+from .memory import FactMatch, StructuredMemory, _hybrid_tokens
 from .models import (
     AgentEvent,
     CapabilityResult,
@@ -50,6 +50,48 @@ _ORIENT_HYBRID_MIN_SCORE = 0.55
 _ORIENT_HYBRID_CANDIDATES = 5
 _ORIENT_RUN_LOG_PREFIXES = (SUMMARY_KEY_PREFIX, PITFALL_KEY_PREFIX)
 
+# PERF-2 entity tier: a hybrid hit that carries *strong entity evidence* --
+# the task said the fact's name out loud -- may be direct-answered at a
+# lower fused-score floor than the plain 0.55. Strong entity evidence is
+# ANY of:
+#   1. ``entity`` signal >= 1.0 -- the fact's key/alias was mentioned
+#      verbatim (``_hybrid_entity_score`` returns 1.0 for exact or
+#      substring mentions);
+#   2. ``exact`` signal >= 1.0 -- the task equals the key/alias after
+#      normalisation;
+#   3. name-token coverage >= 0.50 -- at least half of the matched name's
+#      ``_hybrid_tokens`` appear in the task's tokens. A partial mention
+#      such as "秘密项目的代号" against the alias "秘密项目代号" still
+#      names the fact (the user is talking *about* that named fact).
+# A pure value-text keyword hit (``matched_by == "keyword"``) or a Q8
+# semantic rescue (``matched_by == "semantic"``) names no fact and never
+# qualifies -- they stay on the 0.55 tier, where the keyword-only 0.50
+# ceiling blocks them by construction. The literal
+# ``matched_by != "keyword"`` rule was measured to regress the natural
+# chat contract (an instruction mentioning a fact with a trace entity
+# signal would be direct-answered); the coverage gate above is the
+# regression-tested discriminator instead.
+_ORIENT_HYBRID_MIN_SCORE_ENTITY = 0.40
+_ORIENT_ENTITY_NAME_COVERAGE_MIN = 0.50
+
+# Floating-point + wall-clock guard for the tier comparisons:
+# memory.py's hybrid fusion can land just below the tier line (measured
+# 0.39999999994 for a single-char alias mention with entity=1.0 + full
+# recency, strictly below 0.40). Worse, the fused score is recomputed
+# fresh on every recall_hybrid() call and its recency term decays with
+# wall-clock time (~1.9e-8/s at the 30-day scale), so a hit sitting
+# mathematically at the tier line drifts below it within milliseconds of
+# the first measurement -- the tier decision must tolerate realistic
+# decay between the measurement the test saw and the one orient makes
+# internally (enqueue/thought/readiness in between). 1e-4 covers ~80
+# minutes of decay and is still 250-500x below the real margins to
+# either tier (0.025 for a 30-day-stale entity hit at 0.375, 0.05 for
+# the keyword-only ceiling at 0.50); the entity/exact/coverage signal
+# checks are unaffected in practice (exact is 0/1, entity and coverage
+# are small-integer ratios that cannot land within 1e-4 of their lines
+# without thousands of tokens).
+_ORIENT_SCORE_EPS = 1e-4
+
 # PERF-2: a hybrid hit may only short-circuit orient when the task is
 # phrased as a question (or an explicit tell-me lookup). A task that
 # merely *mentions* a fact -- "Explain the active project approach" --
@@ -82,6 +124,37 @@ def _is_memory_question(task: str) -> bool:
         return True
     tokens = set(re.findall(r"[a-z]+", lowered))
     return bool(tokens & _EN_QUESTION_TOKENS)
+
+
+def _orient_entity_evidence(hit: dict, task: str) -> bool:
+    """True when a hybrid ``hit`` names the fact it matched (PERF-2 tier).
+
+    See the ``_ORIENT_HYBRID_MIN_SCORE_ENTITY`` comment block for the
+    definition of strong entity evidence: ``entity``/``exact`` signal at
+    1.0, or at least half of the matched name's tokens covered by the
+    task. ``matched_by`` of ``"keyword"``/``"semantic"`` never qualifies.
+    """
+    matched_by = str(hit.get("matched_by") or "keyword")
+    if matched_by in ("keyword", "semantic"):
+        return False
+    signals = hit.get("signals") or {}
+    try:
+        entity = float(signals.get("entity") or 0.0)
+        exact = float(signals.get("exact") or 0.0)
+    except (TypeError, ValueError):
+        entity, exact = 0.0, 0.0
+    if (
+        entity >= 1.0 - _ORIENT_SCORE_EPS
+        or exact >= 1.0 - _ORIENT_SCORE_EPS
+    ):
+        return True
+    name = str(hit.get("key") or "") if matched_by == "key" else matched_by
+    name_tokens = set(_hybrid_tokens(name))
+    if not name_tokens:
+        return False
+    query_tokens = set(_hybrid_tokens(task))
+    coverage = len(name_tokens & query_tokens) / len(name_tokens)
+    return coverage >= _ORIENT_ENTITY_NAME_COVERAGE_MIN - _ORIENT_SCORE_EPS
 
 
 class ZNResidentRuntime:
@@ -1122,9 +1195,14 @@ class ZNResidentRuntime:
         are system run-logs, never user knowledge, and direct-answering
         one is worthless even when it clears the threshold. The first
         remaining hit is promoted to a :class:`FactMatch` only when
-        its fused score reaches ``_ORIENT_HYBRID_MIN_SCORE`` *and* the
+        its fused score reaches the applicable tier floor *and* the
         task is phrased as a question (see ``_is_memory_question`` -- an
-        instruction that mentions a fact is never short-circuited). A
+        instruction that mentions a fact is never short-circuited).
+        The tier floor is ``_ORIENT_HYBRID_MIN_SCORE_ENTITY`` (0.40) when
+        the hit carries strong entity evidence (see
+        ``_orient_entity_evidence`` -- e.g. the task mentions the fact's
+        key/alias), ``_ORIENT_HYBRID_MIN_SCORE`` (0.55) otherwise, with
+        an ``_ORIENT_SCORE_EPS`` tolerance on both comparisons. A
         hit that fails either gate, or a window containing only run-log
         hits, returns ``(None, score)`` / ``(None, None)`` so the
         caller falls through to the normal capability/model path
@@ -1153,7 +1231,12 @@ class ZNResidentRuntime:
             score = float(top.get("score") or 0.0)
         except (TypeError, ValueError):
             return None, None
-        if score < _ORIENT_HYBRID_MIN_SCORE or not _is_memory_question(task):
+        threshold = (
+            _ORIENT_HYBRID_MIN_SCORE_ENTITY
+            if _orient_entity_evidence(candidate, task)
+            else _ORIENT_HYBRID_MIN_SCORE
+        )
+        if score < threshold - _ORIENT_SCORE_EPS or not _is_memory_question(task):
             return None, score
         return FactMatch(
             key=str(top["key"]),
