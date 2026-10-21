@@ -99,7 +99,7 @@ class NativeBody:
     ) -> None:
         """Bind one approved read-only tool to the existing audited Body path."""
         normalized = str(kind or "").strip().lower()
-        if not re.fullmatch(r"zn_(mcp|rest|cli|rss|mail)_read_[a-f0-9]{24}", normalized):
+        if not re.fullmatch(r"zn_(mcp|rest|cli|rss|mail|messaging)_read_[a-f0-9]{24}", normalized):
             raise ValueError(
                 "external Body kind must be a stable namespaced read kind"
             )
@@ -127,7 +127,7 @@ class NativeBody:
         have a per-tool verifier wired before the action can verify.
         """
         normalized = str(kind or "").strip().lower()
-        if not re.fullmatch(r"zn_(mcp|rest|cli|rss|mail)_write_[a-f0-9]{24}", normalized):
+        if not re.fullmatch(r"zn_(mcp|rest|cli|rss|mail|messaging)_write_[a-f0-9]{24}", normalized):
             raise ValueError(
                 "external Body kind must be a stable namespaced write kind"
             )
