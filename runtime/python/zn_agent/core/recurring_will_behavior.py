@@ -38,6 +38,12 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 
 from .models import utc_now
+from .autonomy_policy import (
+    REQUIRE_APPROVAL,
+    AutonomyPolicyStore,
+    autonomy_domain_for_trigger_kind,
+    may_materialize_next_task,
+)
 from .routine_schedule import (
     RoutineSchedule,
     count_cron_occurrences,
@@ -122,6 +128,10 @@ class RecurringWillTriggers:
         # retries); "void" drops it (pending stamp cleared, no handoff).
         self._on_handoff = None
         self._init_schema()
+        # Q12 user autonomy envelope: lazily constructed on the first
+        # materialize decision so a policy-store failure can never break
+        # trigger bookkeeping.
+        self._autonomy_policy: AutonomyPolicyStore | None = None
 
     def register(
         self,
@@ -610,6 +620,67 @@ class RecurringWillTriggers:
         self._handoff_pending(stamped)
         return self.get(intention_id)
 
+    # -- Q12 user autonomy envelope ------------------------------------
+
+    def _autonomy_store(self) -> AutonomyPolicyStore:
+        if self._autonomy_policy is None:
+            self._autonomy_policy = AutonomyPolicyStore(self.resident)
+        return self._autonomy_policy
+
+    def _materialize_allowed(
+        self, trigger: RecurringWillTrigger
+    ) -> tuple[bool, str]:
+        """Apply the user autonomy envelope to the materialize decision.
+
+        Returns ``(allowed, level)``. Fail closed: any policy-store
+        failure is treated as ``require_approval``, which still
+        materializes — materialize is scheduling, not execution, and
+        the approval gate holds at execution time — so a broken store
+        never downgrades execution authority.
+        """
+        domain = autonomy_domain_for_trigger_kind(trigger.schedule_kind)
+        try:
+            level = self._autonomy_store().get_level(domain)
+        except Exception:
+            _LOG.warning(
+                "autonomy policy unreadable; failing closed for domain %s",
+                domain,
+                exc_info=True,
+            )
+            level = REQUIRE_APPROVAL
+        return may_materialize_next_task(level), level
+
+    def _route_gated_occurrence(
+        self,
+        trigger: RecurringWillTrigger,
+        *,
+        scheduled_at: str,
+        level: str,
+    ) -> bool:
+        """Write a gated due occurrence into the P1-1 suggestion bar.
+
+        Returns False when the durable write failed so the caller holds
+        the pending stamp and the next pulse retries the gate instead
+        of losing the occurrence.
+        """
+        domain = autonomy_domain_for_trigger_kind(trigger.schedule_kind)
+        try:
+            self._autonomy_store().record_gated_occurrence(
+                intention_id=trigger.intention_id,
+                task=trigger.task,
+                domain=domain,
+                level=level,
+                scheduled_at=scheduled_at,
+            )
+            return True
+        except Exception:
+            _LOG.warning(
+                "autonomy gate: could not record gated occurrence for %s",
+                trigger.intention_id,
+                exc_info=True,
+            )
+            return False
+
     def _handoff_pending(self, trigger: RecurringWillTrigger) -> None:
         scheduled_at = str(trigger.pending_scheduled_at or "").strip()
         if not scheduled_at:
@@ -677,6 +748,25 @@ class RecurringWillTriggers:
         if hold is False:
             return
         if hold == "void":
+            self._clear_pending(trigger.intention_id, activated_at=scheduled_at)
+            return
+        # Q12 user autonomy envelope: a domain whose autonomy level sits
+        # below "suggest" (observe_only) never materializes into Will's
+        # next_task. The due occurrence is routed to the P1-1 suggestion
+        # bar instead (stable-key dedup + dismissal semantics reused from
+        # suggestions.py); the pending stamp is cleared exactly like a
+        # normal handoff so the slot is neither lost nor retried. The
+        # pending-stamp / coalescing / fresh-revalidation semantics above
+        # are untouched: this gate only decides *where* the stamped
+        # occurrence goes.
+        allowed, level = self._materialize_allowed(trigger)
+        if not allowed:
+            if not self._route_gated_occurrence(
+                trigger, scheduled_at=scheduled_at, level=level
+            ):
+                # Durable write failed: hold the pending stamp; the next
+                # pulse retries the gate instead of losing the occurrence.
+                return
             self._clear_pending(trigger.intention_id, activated_at=scheduled_at)
             return
         self.resident.will.set_next_step(
