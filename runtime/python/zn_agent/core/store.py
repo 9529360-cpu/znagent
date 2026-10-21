@@ -51,6 +51,47 @@ def normalize_expires_at(value: Any) -> str | None:
     return text
 
 
+# Q11 sensitivity tiers for the facts table. ``normal`` is the default:
+# facts behave exactly as before this feature existed. ``sensitive`` is
+# a marker only this round -- it changes no behavior, and is documented
+# for the future sensitivity envelope to consume. ``non_retainable``
+# facts never enter recall / cognition context (Blueprint §6.5: the user
+# can "mark sensitive things non-retainable"); explicit reads
+# (``memory_list``, ``recall_as_of``, ``forget``) still see them.
+SENSITIVITY_NORMAL = "normal"
+SENSITIVITY_SENSITIVE = "sensitive"
+SENSITIVITY_NON_RETAINABLE = "non_retainable"
+SENSITIVITY_LEVELS = (
+    SENSITIVITY_NORMAL, SENSITIVITY_SENSITIVE, SENSITIVITY_NON_RETAINABLE,
+)
+
+# Sentinel for "the caller did not mention sensitivity": an existing fact
+# keeps its current sensitivity instead of being reset. Explicit
+# ``None`` resets to ``normal``; an explicit tier sets it. Shared with
+# memory.py so both layers agree on preserve-vs-set semantics.
+SENSITIVITY_UNSET: Any = object()
+
+
+def normalize_sensitivity(value: Any) -> str:
+    """Normalize a ``sensitivity`` argument to one of ``SENSITIVITY_LEVELS``.
+
+    ``None`` means "clear the marker" and maps to ``"normal"``. A tier
+    name (whitespace-tolerant, exact match otherwise) passes through.
+    Anything else raises ``ValueError`` -- an unknown tier must not
+    silently degrade into a weaker one.
+    """
+    if value is None:
+        return SENSITIVITY_NORMAL
+    if isinstance(value, str):
+        tier = value.strip()
+        if tier in SENSITIVITY_LEVELS:
+            return tier
+    raise ValueError(
+        "sensitivity must be one of "
+        f"{'/'.join(SENSITIVITY_LEVELS)} (or None to clear)"
+    )
+
+
 class KernelStore:
     """Compact durable store for the resident agent's actual state."""
 
@@ -90,7 +131,7 @@ class KernelStore:
             CREATE INDEX IF NOT EXISTS idx_session_events_session ON session_events(session_id, seq);
             CREATE TABLE IF NOT EXISTS session_log_prunes(prune_id TEXT PRIMARY KEY, started_at TEXT NOT NULL, finished_at TEXT NOT NULL, dry_run INTEGER NOT NULL DEFAULT 0, policy TEXT NOT NULL DEFAULT '{}', candidate_sessions INTEGER NOT NULL DEFAULT 0, deleted_sessions INTEGER NOT NULL DEFAULT 0, deleted_events INTEGER NOT NULL DEFAULT 0, skipped_sessions INTEGER NOT NULL DEFAULT 0, retained_boundary TEXT NOT NULL DEFAULT '{}');
             CREATE TABLE IF NOT EXISTS working_state(id INTEGER PRIMARY KEY CHECK(id=1), data TEXT NOT NULL);
-            CREATE TABLE IF NOT EXISTS facts(fact_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, aliases_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT);
+            CREATE TABLE IF NOT EXISTS facts(fact_key TEXT PRIMARY KEY, value_json TEXT NOT NULL, aliases_json TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, expires_at TEXT, sensitivity TEXT NOT NULL DEFAULT 'normal');
             CREATE TABLE IF NOT EXISTS skills(skill_id TEXT PRIMARY KEY, name TEXT NOT NULL, status TEXT NOT NULL, data TEXT NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
             CREATE INDEX IF NOT EXISTS idx_skills_status ON skills(status);
@@ -107,6 +148,15 @@ class KernelStore:
             }
             if "expires_at" not in columns:
                 self._conn.execute("ALTER TABLE facts ADD COLUMN expires_at TEXT")
+            # Migration: databases created before fact sensitivity existed
+            # lack the sensitivity column. The NOT NULL DEFAULT backfills
+            # old rows with "normal" -- recall treats such rows exactly
+            # like before (see _init_schema: fresh tables get the same
+            # column + default).
+            if "sensitivity" not in columns:
+                self._conn.execute(
+                    "ALTER TABLE facts ADD COLUMN sensitivity TEXT NOT NULL DEFAULT 'normal'"
+                )
             self._conn.execute(
                 "INSERT OR IGNORE INTO runtime_metrics VALUES(1,0,0,0,0,0,?)",
                 (utc_now(),),
@@ -1155,6 +1205,7 @@ class KernelStore:
         self, key: str, value: Any, *,
         aliases: tuple[str, ...] = (),
         expires_at: Any = EXPIRES_UNSET,
+        sensitivity: Any = SENSITIVITY_UNSET,
     ) -> None:
         """Upsert one fact row.
 
@@ -1163,6 +1214,13 @@ class KernelStore:
         (:data:`EXPIRES_UNSET`) leaves an existing row's expiry untouched.
         Expired facts are filtered out of recall paths; ``NULL`` expiry
         behaves exactly like before this feature existed.
+
+        ``sensitivity`` is optional: a tier name (see
+        :data:`SENSITIVITY_LEVELS`) sets the fact's sensitivity tier;
+        the default (:data:`SENSITIVITY_UNSET`) leaves an existing row's
+        tier untouched. Explicit ``None`` resets to ``"normal"``.
+        ``non_retainable`` facts are filtered out of recall paths and
+        cognition context; ``sensitive`` is a marker only.
         """
         key = str(key or "").strip()
         if not key:
@@ -1181,16 +1239,27 @@ class KernelStore:
             if expires_at is not EXPIRES_UNSET
             else EXPIRES_UNSET
         )
+        tier = (
+            normalize_sensitivity(sensitivity)
+            if sensitivity is not SENSITIVITY_UNSET
+            else SENSITIVITY_UNSET
+        )
         now = utc_now()
         with self._lock, self._conn:
             existing = self._conn.execute(
-                "SELECT created_at, expires_at FROM facts WHERE fact_key=?", (key,)
+                "SELECT created_at, expires_at, sensitivity FROM facts WHERE fact_key=?", (key,)
             ).fetchone()
             created = existing["created_at"] if existing else now
             if expires is EXPIRES_UNSET:
                 expires = existing["expires_at"] if existing else None
+            if tier is SENSITIVITY_UNSET:
+                tier = (
+                    str(existing["sensitivity"] or SENSITIVITY_NORMAL)
+                    if existing
+                    else SENSITIVITY_NORMAL
+                )
             self._conn.execute(
-                "INSERT OR REPLACE INTO facts VALUES(?,?,?,?,?,?)",
+                "INSERT OR REPLACE INTO facts VALUES(?,?,?,?,?,?,?)",
                 (
                     key,
                     json.dumps(value, ensure_ascii=False),
@@ -1198,6 +1267,7 @@ class KernelStore:
                     created,
                     now,
                     expires,
+                    tier,
                 ),
             )
 
@@ -1211,7 +1281,8 @@ class KernelStore:
             rows = self._conn.execute("SELECT * FROM facts ORDER BY fact_key").fetchall()
         return [{"key": r["fact_key"], "value": json.loads(r["value_json"]),
                  "aliases": tuple(json.loads(r["aliases_json"])), "created_at": r["created_at"],
-                 "updated_at": r["updated_at"], "expires_at": r["expires_at"]} for r in rows]
+                 "updated_at": r["updated_at"], "expires_at": r["expires_at"],
+                 "sensitivity": str(r["sensitivity"] or SENSITIVITY_NORMAL)} for r in rows]
 
     def delete_fact(self, key: str) -> None:
         with self._lock, self._conn:

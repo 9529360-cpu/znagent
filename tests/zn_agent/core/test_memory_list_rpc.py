@@ -41,7 +41,7 @@ class MemoryListRpcTests(unittest.TestCase):
         self.assertEqual(set(by_key), {"project", "response language"})
         for item in listed:
             self.assertEqual(
-                set(item), {"key", "aliases", "updated_at", "tier"}, item
+                set(item), {"key", "aliases", "updated_at", "tier", "sensitivity"}, item
             )
             self.assertNotIn("value", item)
         self.assertEqual(by_key["project"]["aliases"], ["active project"])

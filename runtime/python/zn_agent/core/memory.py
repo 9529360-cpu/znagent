@@ -11,7 +11,10 @@ from typing import TYPE_CHECKING, Any
 
 from .models import utc_now
 from .privacy_choke import strip_tags
-from .store import EXPIRES_UNSET, KernelStore, normalize_expires_at
+from .store import (
+    EXPIRES_UNSET, KernelStore, SENSITIVITY_NON_RETAINABLE, SENSITIVITY_NORMAL,
+    SENSITIVITY_UNSET, normalize_expires_at, normalize_sensitivity,
+)
 
 if TYPE_CHECKING:
     from .models import AgentEvent, CognitionRequest
@@ -94,6 +97,16 @@ def _fact_expired(record: dict[str, Any], now: str) -> bool:
     """
     expires = record.get("expires_at")
     return expires is not None and str(expires) <= now
+
+
+def _fact_non_retainable(record: dict[str, Any]) -> bool:
+    """True when the fact row is marked ``non_retainable`` (Q11).
+
+    Such facts are stored, listed, and forgettable -- they simply never
+    enter live recall or cognition context. Pre-feature rows carry no
+    marker and behave exactly like before (``"normal"``).
+    """
+    return str(record.get("sensitivity") or SENSITIVITY_NORMAL) == SENSITIVITY_NON_RETAINABLE
 
 
 # -- M0-4: hybrid retrieval (BM25 keyword + entity weighting + legacy signals)
@@ -744,15 +757,19 @@ def fact_content_hash(
 
 def _normalize_batch_item(
     item: Any, index: int
-) -> tuple[Any, Any, tuple[str, ...], Any]:
-    """One ``remember_many`` item -> ``(key, value, aliases, expires_at)``.
+) -> tuple[Any, Any, tuple[str, ...], Any, Any]:
+    """One ``remember_many`` item -> ``(key, value, aliases, expires_at,
+    sensitivity)``.
 
     Accepts ``(key, value)``, ``(key, value, aliases)``, or a dict with
-    ``key`` / ``value`` / optional ``aliases`` / optional ``expires_at``.
-    A bare string alias counts as one alias. ``expires_at`` follows the
-    :data:`EXPIRES_UNSET` convention: absent means "leave the existing
-    expiry untouched". Malformed items raise ValueError naming the
-    index; callers validate every item before writing anything.
+    ``key`` / ``value`` / optional ``aliases`` / optional ``expires_at``
+    / optional ``sensitivity``. A bare string alias counts as one alias.
+    ``expires_at`` follows the :data:`EXPIRES_UNSET` convention: absent
+    means "leave the existing expiry untouched". ``sensitivity`` follows
+    the :data:`SENSITIVITY_UNSET` convention: absent means "leave the
+    existing tier untouched" (explicit ``None`` clears to ``"normal"``).
+    Malformed items raise ValueError naming the index; callers validate
+    every item before writing anything.
     """
     if isinstance(item, dict):
         if "key" not in item or "value" not in item:
@@ -763,11 +780,14 @@ def _normalize_batch_item(
         value: Any = item["value"]
         aliases: Any = item.get("aliases", ())
         expires_at: Any = item.get("expires_at", EXPIRES_UNSET)
+        sensitivity: Any = item.get("sensitivity", SENSITIVITY_UNSET)
     elif isinstance(item, (tuple, list)):
         if len(item) == 2:
-            key, value, aliases, expires_at = item[0], item[1], (), EXPIRES_UNSET
+            key, value, aliases = item[0], item[1], ()
+            expires_at, sensitivity = EXPIRES_UNSET, SENSITIVITY_UNSET
         elif len(item) == 3:
-            key, value, aliases, expires_at = item[0], item[1], item[2], EXPIRES_UNSET
+            key, value, aliases = item[0], item[1], item[2]
+            expires_at, sensitivity = EXPIRES_UNSET, SENSITIVITY_UNSET
         else:
             raise ValueError(
                 f"remember_many item {index} must be (key, value) or "
@@ -784,10 +804,17 @@ def _normalize_batch_item(
             raise ValueError(
                 f"remember_many item {index} has a malformed expires_at"
             ) from None
+    if sensitivity is not SENSITIVITY_UNSET:
+        try:
+            sensitivity = normalize_sensitivity(sensitivity)
+        except ValueError:
+            raise ValueError(
+                f"remember_many item {index} has a malformed sensitivity"
+            ) from None
     if isinstance(aliases, str):
-        return key, value, (aliases,), expires_at
+        return key, value, (aliases,), expires_at, sensitivity
     try:
-        return key, value, tuple(aliases), expires_at
+        return key, value, tuple(aliases), expires_at, sensitivity
     except TypeError:
         raise ValueError(
             f"remember_many item {index} aliases must be a tuple/list/str"
@@ -1013,9 +1040,30 @@ class StructuredMemory:
         ).fetchone()
         return row["expires_at"] if row else None
 
+    def _resolve_sensitivity_locked(
+        self, key: str, sensitivity: Any,
+    ) -> str:
+        """Resolve a ``sensitivity`` argument against the live row.
+
+        ``SENSITIVITY_UNSET`` keeps the row's current tier (``"normal"``
+        when the row does not exist yet); an explicit tier -- including
+        ``"normal"`` -- wins. Callers hold the store lock and own the
+        transaction.
+        """
+        if sensitivity is not SENSITIVITY_UNSET:
+            return sensitivity
+        row = self.store._conn.execute(
+            "SELECT sensitivity FROM facts WHERE fact_key=?", (key,)
+        ).fetchone()
+        return (
+            str(row["sensitivity"] or SENSITIVITY_NORMAL) if row
+            else SENSITIVITY_NORMAL
+        )
+
     def _put_fact_locked(
         self, key: str, value: Any, aliases: tuple[str, ...], *,
         now: str, expires_at: str | None = None,
+        sensitivity: str = SENSITIVITY_NORMAL,
     ) -> None:
         """Same checks + upsert as ``KernelStore.put_fact``, no commit.
 
@@ -1023,7 +1071,8 @@ class StructuredMemory:
         credential check runs here too -- no write path may bypass it.
         ``now`` is the caller's timestamp (the batch shares one);
         ``expires_at`` is the already-resolved expiry (see
-        ``_resolve_expires_locked``).
+        ``_resolve_expires_locked``); ``sensitivity`` is the
+        already-resolved tier (see ``_resolve_sensitivity_locked``).
         """
         key = str(key or "").strip()
         if not key:
@@ -1040,7 +1089,7 @@ class StructuredMemory:
         ).fetchone()
         created = existing["created_at"] if existing else now
         conn.execute(
-            "INSERT OR REPLACE INTO facts VALUES(?,?,?,?,?,?)",
+            "INSERT OR REPLACE INTO facts VALUES(?,?,?,?,?,?,?)",
             (
                 key,
                 json.dumps(value, ensure_ascii=False),
@@ -1048,6 +1097,7 @@ class StructuredMemory:
                 created,
                 now,
                 expires_at,
+                sensitivity,
             ),
         )
 
@@ -1079,6 +1129,7 @@ class StructuredMemory:
         self, key: str, value: Any, *,
         aliases: tuple[str, ...] = (),
         expires_at: Any = EXPIRES_UNSET,
+        sensitivity: Any = SENSITIVITY_UNSET,
     ) -> None:
         # CM-3 privacy choke: every memory write passes through the
         # stripTags single point BEFORE supersession/similarity and
@@ -1091,16 +1142,28 @@ class StructuredMemory:
         # its ledger history stay for as-of reads and forget()). Explicit
         # None clears a previously set expiry; omitting it (EXPIRES_UNSET)
         # leaves the existing expiry untouched.
+        #
+        # sensitivity is optional (Q11): a tier name (see SENSITIVITY_LEVELS)
+        # marking the fact's retention tier. ``non_retainable`` facts are
+        # stored but never enter recall or cognition context (explicit
+        # reads and forget() still see them); ``sensitive`` is a marker
+        # only this round. Omitting it (SENSITIVITY_UNSET) leaves the
+        # existing tier untouched; explicit None clears it to "normal".
         key = strip_tags(key)
         value = strip_tags(value)
         aliases = tuple(strip_tags(alias) for alias in aliases)
+        sensitivity = (
+            normalize_sensitivity(sensitivity)
+            if sensitivity is not SENSITIVITY_UNSET
+            else SENSITIVITY_UNSET
+        )
         now = utc_now()
         with self.store._lock, self.store._conn:
             self._ensure_history_schema_locked()
             facts = self.store.list_facts()
             self._remember_one_locked(
                 key, value, aliases, facts=facts, now=now,
-                expires_at=expires_at,
+                expires_at=expires_at, sensitivity=sensitivity,
             )
 
     def remember_many(self, items: Any) -> dict[str, Any]:
@@ -1140,19 +1203,22 @@ class StructuredMemory:
                 strip_tags(item_value),
                 tuple(strip_tags(alias) for alias in item_aliases),
                 item_expires,
+                item_sensitivity,
             )
-            for item_key, item_value, item_aliases, item_expires in normalized
+            for item_key, item_value, item_aliases, item_expires, item_sensitivity
+            in normalized
         ]
         now = utc_now()
         results: list[dict[str, Any]] = []
         with self.store._lock, self.store._conn:
             self._ensure_history_schema_locked()
             facts = self.store.list_facts()
-            for item_key, item_value, item_aliases, item_expires in choked:
+            for item_key, item_value, item_aliases, item_expires, item_sensitivity in choked:
                 results.append(
                     self._remember_one_locked(
                         item_key, item_value, item_aliases,
                         facts=facts, now=now, expires_at=item_expires,
+                        sensitivity=item_sensitivity,
                     )
                 )
         return {
@@ -1167,12 +1233,15 @@ class StructuredMemory:
     def _refresh_snapshot(
         facts: list[dict[str, Any]], key: str, value: Any,
         aliases: tuple[str, ...], now: str, expires_at: str | None,
+        sensitivity: str,
     ) -> None:
         """Apply one write to the in-memory facts snapshot (M0-2).
 
         The batch passes its evolving snapshot from item to item, so
         later items see earlier writes without re-reading the table.
-        ``expires_at`` is the resolved expiry (``None`` = no expiry).
+        ``expires_at`` is the resolved expiry (``None`` = no expiry);
+        ``sensitivity`` is the resolved tier (always concrete, never
+        ``SENSITIVITY_UNSET``).
         """
         for fact in facts:
             if fact["key"] == key:
@@ -1180,15 +1249,38 @@ class StructuredMemory:
                 fact["aliases"] = tuple(aliases)
                 fact["updated_at"] = now
                 fact["expires_at"] = expires_at
+                fact["sensitivity"] = sensitivity
                 return
         facts.append({
             "key": key, "value": value, "aliases": tuple(aliases),
             "created_at": now, "updated_at": now, "expires_at": expires_at,
+            "sensitivity": sensitivity,
         })
+
+    def _write_fact_locked(
+        self, key: str, value: Any, aliases: tuple[str, ...], *,
+        facts: list[dict[str, Any]], now: str,
+        expires_arg: Any, sens_arg: Any,
+    ) -> None:
+        """Resolve expiry + sensitivity and write one facts-table row.
+
+        ``expires_arg`` / ``sens_arg`` are the caller args (or the
+        ``*_UNSET`` sentinels): unset preserves the row's current value,
+        explicit values win. Caller holds the store lock and owns the
+        transaction. The in-memory snapshot stays in sync with the write.
+        """
+        resolved = self._resolve_expires_locked(key, expires_arg)
+        tier = self._resolve_sensitivity_locked(key, sens_arg)
+        self._put_fact_locked(
+            key, value, aliases, now=now, expires_at=resolved,
+            sensitivity=tier,
+        )
+        self._refresh_snapshot(facts, key, value, aliases, now, resolved, tier)
 
     def _remember_one_locked(
         self, key: str, value: Any, aliases: tuple[str, ...], *,
         facts: list[dict[str, Any]], now: str, expires_at: Any = EXPIRES_UNSET,
+        sensitivity: Any = SENSITIVITY_UNSET,
     ) -> dict[str, Any]:
         """One ``remember()`` step inside the caller's lock + transaction.
 
@@ -1197,14 +1289,20 @@ class StructuredMemory:
         ``{"key", "action", "wrote", "linked_memory_ids"}``; action is
         ``created`` | ``versioned`` | ``deduped``. Exact repeats
         (content hash equal to the live fact) write nothing at all --
-        except an explicit ``expires_at`` change, which refreshes the
-        expiry in place without opening a new ledger window.
+        except an explicit ``expires_at`` / ``sensitivity`` change,
+        which refreshes the metadata in place without opening a new
+        ledger window.
         """
         new_key = str(key or "").strip()
         expires_arg = (
             normalize_expires_at(expires_at)
             if expires_at is not EXPIRES_UNSET
             else EXPIRES_UNSET
+        )
+        sens_arg = (
+            normalize_sensitivity(sensitivity)
+            if sensitivity is not SENSITIVITY_UNSET
+            else SENSITIVITY_UNSET
         )
         target = self._supersession_target(key, value, facts=facts)
         if target is not None and target != new_key:
@@ -1229,17 +1327,18 @@ class StructuredMemory:
                 if (
                     expires_arg is not EXPIRES_UNSET
                     and expires_arg != existing.get("expires_at")
+                ) or (
+                    sens_arg is not SENSITIVITY_UNSET
+                    and sens_arg != existing.get("sensitivity")
                 ):
-                    # Content identical, only the expiry changed: refresh
-                    # the expiry in place. No new ledger window -- the
-                    # fact itself did not change (same for supersession
-                    # merges: the target keeps its identity).
-                    self._put_fact_locked(
-                        target, value, merged, now=now,
-                        expires_at=expires_arg,
-                    )
-                    self._refresh_snapshot(
-                        facts, target, value, merged, now, expires_arg
+                    # Content identical, only the expiry or the tier
+                    # changed: refresh the metadata in place. No new
+                    # ledger window -- the fact itself did not change
+                    # (same for supersession merges: the target keeps its
+                    # identity).
+                    self._write_fact_locked(
+                        target, value, merged, facts=facts, now=now,
+                        expires_arg=expires_arg, sens_arg=sens_arg,
                     )
                     return {
                         "key": target, "action": "deduped", "wrote": True,
@@ -1257,24 +1356,21 @@ class StructuredMemory:
                 closed_ids = self._close_open_window_locked(
                     target, now, fallback=existing
                 )
-                resolved = self._resolve_expires_locked(target, expires_arg)
-                self._put_fact_locked(
-                    target, value, merged, now=now, expires_at=resolved
+                self._write_fact_locked(
+                    target, value, merged, facts=facts, now=now,
+                    expires_arg=expires_arg, sens_arg=sens_arg,
                 )
                 self._open_window_locked(
                     target, value, merged, now,
                     linked_memory_ids=tuple(closed_ids),
                 )
-                self._refresh_snapshot(
-                    facts, target, value, merged, now, resolved
-                )
                 return {
                     "key": target, "action": "versioned", "wrote": True,
                     "linked_memory_ids": tuple(closed_ids),
                 }
-            resolved = self._resolve_expires_locked(target, expires_arg)
-            self._put_fact_locked(
-                target, value, merged, now=now, expires_at=resolved
+            self._write_fact_locked(
+                target, value, merged, facts=facts, now=now,
+                expires_arg=expires_arg, sens_arg=sens_arg,
             )
             if existing is not None:
                 self._ensure_open_window_locked(
@@ -1283,7 +1379,6 @@ class StructuredMemory:
                 )
             else:
                 self._open_window_locked(target, value, merged, now)
-            self._refresh_snapshot(facts, target, value, merged, now, resolved)
             return {
                 "key": target,
                 "action": "deduped" if existing is not None else "created",
@@ -1295,8 +1390,8 @@ class StructuredMemory:
         if existing is not None:
             # M0-2 exact dedup: identical content hash -> no write at
             # all (no new ledger row, no facts-table rewrite) -- unless
-            # the caller explicitly changed the expiry, which refreshes
-            # in place without a new window.
+            # the caller explicitly changed the expiry or the tier, which
+            # refreshes in place without a new window.
             if fact_content_hash(
                 new_key, value, aliases
             ) == fact_content_hash(
@@ -1305,13 +1400,13 @@ class StructuredMemory:
                 if (
                     expires_arg is not EXPIRES_UNSET
                     and expires_arg != existing.get("expires_at")
+                ) or (
+                    sens_arg is not SENSITIVITY_UNSET
+                    and sens_arg != existing.get("sensitivity")
                 ):
-                    self._put_fact_locked(
-                        new_key, value, aliases, now=now,
-                        expires_at=expires_arg,
-                    )
-                    self._refresh_snapshot(
-                        facts, new_key, value, aliases, now, expires_arg
+                    self._write_fact_locked(
+                        new_key, value, aliases, facts=facts, now=now,
+                        expires_arg=expires_arg, sens_arg=sens_arg,
                     )
                     return {
                         "key": new_key, "action": "deduped", "wrote": True,
@@ -1329,16 +1424,13 @@ class StructuredMemory:
                 closed_ids = self._close_open_window_locked(
                     new_key, now, fallback=existing
                 )
-                resolved = self._resolve_expires_locked(new_key, expires_arg)
-                self._put_fact_locked(
-                    new_key, value, aliases, now=now, expires_at=resolved
+                self._write_fact_locked(
+                    new_key, value, aliases, facts=facts, now=now,
+                    expires_arg=expires_arg, sens_arg=sens_arg,
                 )
                 self._open_window_locked(
                     new_key, value, aliases, now,
                     linked_memory_ids=tuple(closed_ids),
-                )
-                self._refresh_snapshot(
-                    facts, new_key, value, aliases, now, resolved
                 )
                 return {
                     "key": new_key, "action": "versioned", "wrote": True,
@@ -1346,25 +1438,23 @@ class StructuredMemory:
                 }
             # Same value, different aliases: refresh the aliases, open
             # no new window (dedup, not a new version).
-            resolved = self._resolve_expires_locked(new_key, expires_arg)
-            self._put_fact_locked(
-                new_key, value, aliases, now=now, expires_at=resolved
+            self._write_fact_locked(
+                new_key, value, aliases, facts=facts, now=now,
+                expires_arg=expires_arg, sens_arg=sens_arg,
             )
             self._ensure_open_window_locked(
                 new_key, value, aliases,
                 str(existing.get("created_at") or now),
             )
-            self._refresh_snapshot(facts, new_key, value, aliases, now, resolved)
             return {
                 "key": new_key, "action": "deduped", "wrote": True,
                 "linked_memory_ids": (),
             }
-        resolved = self._resolve_expires_locked(new_key, expires_arg)
-        self._put_fact_locked(
-            new_key, value, aliases, now=now, expires_at=resolved
+        self._write_fact_locked(
+            new_key, value, aliases, facts=facts, now=now,
+            expires_arg=expires_arg, sens_arg=sens_arg,
         )
         self._open_window_locked(new_key, value, aliases, now)
-        self._refresh_snapshot(facts, new_key, value, aliases, now, resolved)
         return {
             "key": new_key, "action": "created", "wrote": True,
             "linked_memory_ids": (),
@@ -1644,10 +1734,13 @@ class StructuredMemory:
         now = utc_now()
         # Expired facts are invisible to recall, so they never take part
         # in alias merging: an expired winner must not swallow a live
-        # loser's value out of the recallable set.
+        # loser's value out of the recallable set. Same for non-retainable
+        # facts (Q11): a merge must not drag a marked fact back into
+        # cognition or move its value under a normal key.
         facts = [
             fact for fact in self.store.list_facts()
             if not _fact_expired(fact, now)
+            and not _fact_non_retainable(fact)
         ]
         # alias -> list of fact keys claiming it (normalized, non-empty).
         claimants: dict[str, list[str]] = {}
@@ -1776,7 +1869,9 @@ class StructuredMemory:
         (ledger rows, no open window) never surface here. Facts whose
         ``expires_at`` has passed are filtered out as well -- expiry is
         a live-recall filter, not a deletion: the row and its ledger
-        history stay for ``recall_as_of()`` and ``forget()``. Use
+        history stay for ``recall_as_of()`` and ``forget()``. Facts marked
+        ``non_retainable`` (Q11) are filtered out of recall the same way --
+        stored but never part of cognition. Use
         recall_as_of() for historical values. The match carries the
         current version's ledger ``id`` and ``linked_memory_ids`` (M0-1);
         legacy rows with no ledger row report ``None`` / ``()``."""
@@ -1788,6 +1883,10 @@ class StructuredMemory:
         now = utc_now()
         for record in self.store.list_facts():
             if _fact_expired(record, now):
+                continue
+            # Q11: non-retainable facts are stored but never enter live
+            # recall or cognition context; explicit reads keep seeing them.
+            if _fact_non_retainable(record):
                 continue
             if not self._is_current(record["key"], index=index):
                 continue
@@ -1965,6 +2064,9 @@ class StructuredMemory:
             candidates: list[dict[str, Any]] = []
             for record in self.store.list_facts():
                 if _fact_expired(record, now):
+                    continue
+                # Q11: non-retainable facts never enter hybrid retrieval.
+                if _fact_non_retainable(record):
                     continue
                 if not self._is_current(record["key"], index=index):
                     continue
@@ -2215,7 +2317,7 @@ class StructuredMemory:
                 if window["invalid_at"] is None:
                     open_windows.add(str(window["fact_key"]))
             rows = self.store._conn.execute(
-                "SELECT fact_key, value_json, substr(aliases_json, 1, 4097) AS aliases_json, updated_at, expires_at "
+                "SELECT fact_key, value_json, substr(aliases_json, 1, 4097) AS aliases_json, updated_at, expires_at, sensitivity "
                 "FROM facts WHERE length(value_json)<=? AND length(fact_key)<=256",
                 (max_fact_chars,),
             )
@@ -2228,6 +2330,10 @@ class StructuredMemory:
                     # Expired facts never enter cognition context; their
                     # rows stay for as-of reads and forget().
                     if row["expires_at"] is not None and str(row["expires_at"]) <= now:
+                        continue
+                    # Q11: non-retainable facts are stored and manageable
+                    # (list/forget) but never enter cognition context.
+                    if str(row["sensitivity"] or "normal") == SENSITIVITY_NON_RETAINABLE:
                         continue
                     try:
                         value = json.loads(row["value_json"])

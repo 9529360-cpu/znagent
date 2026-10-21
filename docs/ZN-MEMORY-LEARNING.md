@@ -143,6 +143,19 @@ still returns what was true at a past moment and `forget()` still works. Omittin
 leaves an existing TTL untouched; explicit `None` clears it. Old databases gain the nullable
 `expires_at` column via migration on open. (Q7, PR: fact-expiry.)
 
+#### 3.3.2 Fact sensitivity (retention tiers)
+
+Facts carry a `sensitivity` tier -- `normal` / `sensitive` / `non_retainable`
+(`StructuredMemory.remember(..., sensitivity=...)` / `KernelStore.put_fact(..., sensitivity=...)` /
+the `remember` RPC's `sensitivity` param; `remember_many` dict items accept a `sensitivity` key).
+`non_retainable` facts are stored, listed (`memory_list`, with the tier shown), and forgettable --
+but they never enter live recall paths (`recall`, `recall_hybrid`, `relevant_context`,
+`bind_cognition_context`) or `consolidate()` merge candidacy (Blueprint §6.5: "mark sensitive
+things non-retainable"). `sensitive` is a marker only this round: it changes no behavior and is
+documented for the future sensitivity envelope to consume. Omitting `sensitivity` leaves an
+existing tier untouched; explicit `None` resets it to `normal`. Old databases gain the
+`sensitivity` column (`NOT NULL DEFAULT 'normal'`) via migration on open. (Q11.)
+
 
 ### 3.4 Associative nervous memory
 
