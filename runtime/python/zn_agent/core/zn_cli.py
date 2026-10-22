@@ -2019,10 +2019,13 @@ def _cmd_work_cancel(args: argparse.Namespace) -> int:
 #   NOT decided, never claiming a mutation happened.
 # - T2-7: TTY-only niceties stay behind ``use_color()``; pipes, NO_COLOR
 #   and ``--json`` keep historic bytes.
-_WORK_T14_RPC_REJECTED_PREFIX = _ERROR_COPY["rpc_rejected"][0].split("{method}")[0]
+# T16 note: these two helpers started life as T14-specific names; they are
+# behavior-generic (one work-driving RPC call + offline rendering) and are
+# shared by T14/T16. Renamed without behavior change.
+_WORK_DRIVE_RPC_REJECTED_PREFIX = _ERROR_COPY["rpc_rejected"][0].split("{method}")[0]
 
 
-def _work_t14_rpc(
+def _work_drive_rpc(
     args: argparse.Namespace, method: str, params: dict[str, Any]
 ) -> tuple[bool, Any]:
     """Call one work-driving RPC, classifying failures.
@@ -2036,21 +2039,21 @@ def _work_t14_rpc(
     try:
         return True, _client(args).call(method, params)
     except CliError as exc:
-        if str(exc).startswith(_WORK_T14_RPC_REJECTED_PREFIX):
+        if str(exc).startswith(_WORK_DRIVE_RPC_REJECTED_PREFIX):
             raise
         return False, str(exc)
 
 
-def _work_t14_offline(
+def _work_drive_offline(
     args: argparse.Namespace,
     error: str,
     *,
     unavailable: str,
     json_payload: dict[str, Any],
 ) -> int:
-    """T2-6-style offline rendering for the T14 command: exit 0.
+    """T2-6-style offline rendering for work-driving commands: exit 0.
 
-    *unavailable* names what could not be done ("没有裁决任何不确定的副作用").
+    *unavailable* names what could not be done ("没有给线程改名").
     Never claims a mutation happened.
     """
     if args.json:
@@ -2155,7 +2158,7 @@ _WORK_RESOLVE_UNCERTAIN_NOTE = (
 
 def _cmd_work_resolve_uncertain(args: argparse.Namespace) -> int:
     try:
-        ok, payload = _work_t14_rpc(
+        ok, payload = _work_drive_rpc(
             args,
             "work_resolve_uncertain",
             {
@@ -2178,7 +2181,7 @@ def _cmd_work_resolve_uncertain(args: argparse.Namespace) -> int:
     if not ok:
         # T2-6: unreachable resident -- exit 0, honestly saying nothing was
         # decided; never claim the decision took effect.
-        return _work_t14_offline(
+        return _work_drive_offline(
             args,
             payload,
             unavailable="没有裁决任何不确定的副作用（这次裁决未生效）",
@@ -2210,6 +2213,187 @@ def _cmd_work_resolve_uncertain(args: argparse.Namespace) -> int:
     )
     state = _one_line(progress.get("state") or progress.get("status") or "?")
     print(f"  state={state}")
+    return 0
+
+
+# --- T16: `zn work rename` / `zn work attach` --------------------------------
+# Terminal entries for the daemon's ``work_rename`` (daemon.py:457) and
+# ``work_attach_workspace`` (daemon.py:484) RPCs. daemon.py is untouched.
+#
+# Contracts, inherited from the T12/T13/T14/D4 lineage:
+# - T2-1: presentation uses only the cli_format contract (plain human copy
+#   always; TTY niceties behind ``use_color()``).
+# - T2-5: server rejections humanized (Chinese body + English technical
+#   snippet in parentheses). ``work_rename`` rejects unknown thread ids
+#   with ``ValueError("unknown work thread")``. ``work_attach_workspace``
+#   also validates the path server-side, but the client pre-checks it first
+#   so a typoed path never leaves the terminal.
+# - T2-6: unreachable resident -> exit 0 + an honest note naming what was
+#   NOT done, never claiming a mutation happened.
+# - T2-7: TTY-only hints stay behind ``use_color()``; pipes, NO_COLOR and
+#   ``--json`` keep historic bytes.
+# - T2-4: ``--json`` prints the RPC result byte-for-byte; exit codes for
+#   missing/illegal CLI args come from argparse (exit 2).
+# Note the strict RPC schema: ``work_rename`` accepts *exactly*
+# {"thread_id", "title"} (the daemon raises otherwise), so the client sends
+# exactly those two keys -- asserted in the tests.
+_WORK_RENAME_UNKNOWN_THREAD_SIGNATURE = "unknown work thread"
+
+
+def _humanize_work_rename_error(
+    exc: CliError, args: argparse.Namespace
+) -> CliError:
+    """Turn ``work_rename`` server rejections into human copy (T2-5).
+
+    Unknown thread ids surface as the daemon's
+    ``ValueError("unknown work thread")``; anything else travels the
+    untouched generic path.
+    """
+    thread_id = str(args.thread_id)
+    if _WORK_RENAME_UNKNOWN_THREAD_SIGNATURE in str(exc):
+        return CliError(
+            "找不到这个工作线程（unknown work thread）："
+            f"线程 '{thread_id}' 不存在。"
+            "用 `zn work list` 看看。"
+        )
+    return exc
+
+
+def _cmd_work_rename(args: argparse.Namespace) -> int:
+    try:
+        ok, payload = _work_drive_rpc(
+            args,
+            "work_rename",
+            {"thread_id": args.thread_id, "title": args.title},
+        )
+    except CliError as exc:
+        raise _humanize_work_rename_error(exc, args)
+    if not ok:
+        # T2-6: unreachable resident -- exit 0, honestly saying the rename
+        # did not happen; never claim the thread got a new title.
+        return _work_drive_offline(
+            args,
+            payload,
+            unavailable="没有给线程改名（这次改名未生效）",
+            json_payload={
+                "renamed": False,
+                "thread_id": args.thread_id,
+                "title": args.title,
+            },
+        )
+    if not isinstance(payload, dict) or not isinstance(payload.get("title"), str):
+        raise _unexpected_result("work_rename", payload)
+    if args.json:
+        # --json passes the RPC result through byte-for-byte (same
+        # serialization convention as every other command).
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+    new_title = payload["title"]
+    print(f"renamed thread={args.thread_id}")
+    print(f"  新标题：{new_title}")
+    if use_color():
+        print(colorize("  用 `zn work list` 确认新标题", "dim"))
+    return 0
+
+
+# The client-side workspace-directory check for `zn work attach` (T16 spec):
+# a typoed path must fail before any RPC leaves the terminal, with human
+# copy that names what was wrong.
+_WORK_ATTACH_NOT_FOUND = (
+    "找不到这个目录（path does not exist: {path}）：请检查路径是否输错，"
+    "zn work attach 需要一个真实存在的目录。"
+)
+_WORK_ATTACH_NOT_A_DIR = (
+    "这不是一个目录（not a directory: {path}）："
+    "zn work attach 需要绑定一个目录，请换一个目录路径。"
+)
+
+
+def _work_attach_checked_path(raw_path: str) -> str:
+    """Validate the user's --path locally; raise CliError (exit 1) on failure."""
+    candidate = os.path.expanduser(raw_path)
+    if not os.path.exists(candidate):
+        raise CliError(_WORK_ATTACH_NOT_FOUND.format(path=raw_path))
+    if not os.path.isdir(candidate):
+        raise CliError(_WORK_ATTACH_NOT_A_DIR.format(path=raw_path))
+    return raw_path
+
+
+_WORK_ATTACH_PATH_UNAVAILABLE_SIGNATURE = "workspace path is unavailable"
+_WORK_ATTACH_NOT_DIRECTORY_SIGNATURE = "workspace path is not a directory"
+
+
+def _humanize_work_attach_error(
+    exc: CliError, args: argparse.Namespace
+) -> CliError:
+    """Turn ``work_attach_workspace`` server rejections into human copy (T2-5).
+
+    The client pre-check makes these rare (a race between the local check
+    and the RPC), but they stay humanized: a path the resident cannot reach,
+    or one that is not a directory. Anything else travels the generic path.
+    """
+    text = str(exc)
+    path = str(args.path)
+    if _WORK_ATTACH_PATH_UNAVAILABLE_SIGNATURE in text:
+        return CliError(
+            "这个目录常驻服务够不着"
+            f"（{_WORK_ATTACH_PATH_UNAVAILABLE_SIGNATURE}）：'{path}'。"
+            "请确认目录存在且常驻服务有权限访问。"
+        )
+    if _WORK_ATTACH_NOT_DIRECTORY_SIGNATURE in text:
+        return CliError(
+            "这不是一个目录"
+            f"（{_WORK_ATTACH_NOT_DIRECTORY_SIGNATURE}）：'{path}'。"
+            "zn work attach 需要绑定一个目录。"
+        )
+    return exc
+
+
+def _cmd_work_attach(args: argparse.Namespace) -> int:
+    # T16 spec: client-side path validation, before any network traffic.
+    checked_path = _work_attach_checked_path(args.path)
+    try:
+        ok, payload = _work_drive_rpc(
+            args,
+            "work_attach_workspace",
+            {"thread_id": args.thread_id, "workspace_path": checked_path},
+        )
+    except CliError as exc:
+        raise _humanize_work_attach_error(exc, args)
+    if not ok:
+        # T2-6: unreachable resident -- exit 0, honestly saying nothing was
+        # attached; never claim the workspace association happened.
+        return _work_drive_offline(
+            args,
+            payload,
+            unavailable="没有给线程绑定工作区（这次绑定未生效）",
+            json_payload={
+                "attached": False,
+                "thread_id": args.thread_id,
+                "workspace_path": checked_path,
+            },
+        )
+    metadata = payload.get("metadata") if isinstance(payload, dict) else None
+    workspace = metadata.get("workspace") if isinstance(metadata, dict) else None
+    if not isinstance(workspace, dict) or not isinstance(workspace.get("path"), str):
+        raise _unexpected_result("work_attach_workspace", payload)
+    if args.json:
+        # --json passes the RPC result through byte-for-byte (same
+        # serialization convention as every other command).
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(f"attached workspace to thread={args.thread_id}")
+    print(f"  目录：{workspace['path']}")
+    name = workspace.get("name")
+    if name:
+        print(f"  名称：{name}")
+    if use_color():
+        print(
+            colorize(
+                f"  用 `zn work get --thread-id {args.thread_id}` 查看绑定的工作区",
+                "dim",
+            )
+        )
     return 0
 
 
@@ -3788,6 +3972,35 @@ def build_parser() -> argparse.ArgumentParser:
     )
     work_resolve_uncertain.add_argument("--json", action="store_true", help="print raw JSON")
     work_resolve_uncertain.set_defaults(func=_cmd_work_resolve_uncertain)
+
+    work_rename = work_sub.add_parser(
+        "rename",
+        help="rename a work thread",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn work rename --thread-id <thread-id> --title \"新标题\"",
+    )
+    work_rename.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
+    work_rename.add_argument("--title", type=lambda v: _require_non_empty(v, name="--title"), required=True)
+    work_rename.add_argument("--json", action="store_true", help="print raw JSON")
+    work_rename.set_defaults(func=_cmd_work_rename)
+
+    work_attach = work_sub.add_parser(
+        "attach",
+        help="attach a workspace directory to a work thread",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn work attach --thread-id <thread-id> --path ~/projects/foo",
+    )
+    work_attach.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
+    work_attach.add_argument(
+        "--path",
+        type=lambda v: _require_non_empty(v, name="--path"),
+        required=True,
+        help="workspace directory on this machine",
+    )
+    work_attach.add_argument("--json", action="store_true", help="print raw JSON")
+    work_attach.set_defaults(func=_cmd_work_attach)
 
     approval = sub.add_parser(
         "approval",
