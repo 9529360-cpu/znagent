@@ -594,6 +594,24 @@ def _print_empty_hint(kind: str) -> None:
         print(colorize(f"  {hint}", "dim"))
 
 
+# --- D2: "what next" hint when pending cards are on screen -------------------
+# When `zn approval list` shows at least one pending card in the current
+# view, name the next step (look at a card, then decide). TTY-only via the
+# same ``use_color()`` gate as ``_print_empty_hint``; the ``--json`` branch
+# returns earlier, so piped / script output stays byte-stable. Copy follows
+# the ``zn approval show`` decide guidance and T2-5 Chinese wording.
+_APPROVAL_PENDING_HINT = (
+    "下一步：先用 `zn approval show <request_id>` 看一张卡的详情，"
+    "再用 `zn approval decide --request-id <id> --allow` 批准（或 `--deny` 拒绝）"
+)
+
+
+def _print_pending_hint() -> None:
+    """Print the one-line D2 next-step hint for a non-empty approval view."""
+    if use_color():
+        print(colorize(f"  {_APPROVAL_PENDING_HINT}", "dim"))
+
+
 def _cmd_work_list(args: argparse.Namespace) -> int:
     result = _client(args).call("work_list", {"limit": args.limit})
     if not isinstance(result, list):
@@ -1118,6 +1136,7 @@ def _cmd_approval_list(args: argparse.Namespace) -> int:
     )
     shown = False
     any_items = False
+    pending_shown = False
     for key, label in sections:
         if wanted != "all" and wanted != key:
             continue
@@ -1133,6 +1152,8 @@ def _cmd_approval_list(args: argparse.Namespace) -> int:
         for item in items:
             if isinstance(item, dict):
                 print(_format_approval_card(item))
+                if key == "pending":
+                    pending_shown = True
     if not shown:  # pragma: no cover - argparse restricts --status choices
         raise CliError(f"unknown approval status filter: {wanted!r}")
     if not any_items:
@@ -1140,6 +1161,11 @@ def _cmd_approval_list(args: argparse.Namespace) -> int:
         # other T3-4 lists. TTY-only (use_color), so piped/JSON output is
         # byte-stable for scripts.
         _print_empty_hint("approval_list")
+    elif pending_shown:
+        # D2: the current view shows at least one pending card; name the
+        # next step. TTY-only like the D1/T3-4 hints, so --status views
+        # without pending cards (denied/expired/applied) stay unchanged.
+        _print_pending_hint()
     return 0
 
 
