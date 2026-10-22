@@ -160,9 +160,7 @@ class TestHelpSnapshot(unittest.TestCase):
 
     def test_snapshot_has_exactly_six_sections(self):
         titles = [title for title, _ in _HELP_SECTIONS]
-        self.assertEqual(
-            titles, ["交办", "审批", "记忆", "团队与自驱", "例行任务", "日常"]
-        )
+        self.assertEqual(titles, ["交办", "审批", "记忆", "团队与自驱", "例行任务", "日常"])
 
     def test_each_section_has_three_to_five_rows(self):
         for title, rows in _HELP_SECTIONS:
