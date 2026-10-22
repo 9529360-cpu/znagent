@@ -2745,6 +2745,96 @@ class ZnCliNextHintT34Tests(_CliHarness):
         self.assertIn("t-1", out)
         self.assertNotIn("下一步", out)
 
+    # D1: `zn approval list` empty state gets the same "what next" hint as
+    # the other T3-4 lists. The RPC returns a dict of sections (not a list),
+    # so these cases are dedicated rather than folded into _EMPTY_CASES.
+    def _empty_approval(self):
+        return {"pending": [], "denied": [], "expired": [], "applied": []}
+
+    def test_approval_list_empty_prints_hint_on_tty(self):
+        code, out, err = self._run_on_tty(
+            ["approval", "list"], self._handler({"approval_list": self._empty_approval()})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("(none)", out)
+        self.assertIn(
+            "下一步：审批卡由 ZN 在需要你确认时自动发出，"
+            "先看看自动批准规则，运行 `zn approval rules list`",
+            out,
+        )
+
+    def test_approval_list_empty_hint_once_for_all_status(self):
+        code, out, err = self._run_on_tty(
+            ["approval", "list", "--status", "all"],
+            self._handler({"approval_list": self._empty_approval()}),
+        )
+        self.assertEqual(code, 0, err)
+        # four sections, but exactly one hint line
+        self.assertEqual(out.count("(none)"), 4)
+        self.assertEqual(out.count("下一步"), 1)
+
+    def test_approval_list_empty_no_hint_on_pipe(self):
+        code, out, err = self._run(
+            ["approval", "list"], self._handler({"approval_list": self._empty_approval()})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("(none)", out)
+        self.assertNotIn("下一步", out)
+        self.assertNotIn("\x1b[", out)
+
+    def test_approval_list_empty_no_hint_in_json_mode(self):
+        payload = self._empty_approval()
+        code, out, err = self._run_on_tty(
+            ["approval", "list", "--json"], self._handler({"approval_list": payload})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), payload)
+        self.assertNotIn("下一步", out)
+
+    def test_approval_list_non_empty_no_hint(self):
+        result = self._empty_approval()
+        result["pending"] = [
+            {
+                "request_id": "req-1",
+                "status": "pending",
+                "action_kind": "send",
+                "target": "t",
+                "scope": "s",
+                "created_at": "2026-10-21T19:00:00Z",
+                "expires_at": "",
+            }
+        ]
+        code, out, err = self._run_on_tty(
+            ["approval", "list"], self._handler({"approval_list": result})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("req-1", out)
+        self.assertNotIn("下一步", out)
+
+    def test_approval_list_filtered_empty_section_gets_hint(self):
+        # `--status pending` shows only pending; denied having cards does not
+        # suppress the hint for the (empty) requested view.
+        result = self._empty_approval()
+        result["denied"] = [{"request_id": "req-d"}]
+        code, out, err = self._run_on_tty(
+            ["approval", "list", "--status", "pending"],
+            self._handler({"approval_list": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("(none)", out)
+        self.assertIn("下一步", out)
+
+    def test_approval_list_all_status_with_items_no_hint(self):
+        result = self._empty_approval()
+        result["denied"] = [{"request_id": "req-d"}]
+        code, out, err = self._run_on_tty(
+            ["approval", "list", "--status", "all"],
+            self._handler({"approval_list": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("req-d", out)
+        self.assertNotIn("下一步", out)
+
 
 class ZnCliApprovalRulesUndoT11Tests(_CliHarness):
     """T11: ``zn approval rules list|delete`` + ``zn approval undo``."""
