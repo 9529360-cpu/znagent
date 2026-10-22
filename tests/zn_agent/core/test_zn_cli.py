@@ -2412,6 +2412,7 @@ class ZnCliStatusT26Tests(_CliHarness):
         self.assertEqual(data["approvals"]["pending"], 2)
         self.assertEqual(data["autonomy"]["explicit_domains"], 2)
 
+
     def test_status_offline_json(self):
         def refused(method, params):
             raise socket.error("connection refused")
@@ -2509,3 +2510,120 @@ class ZnCliFirstRunHintT33Tests(unittest.TestCase):
         # no kernel dir is created by the probe or the hint itself.
         self._run_help(tty=True)
         self.assertFalse((self.home / "kernel").exists())
+
+
+class ZnCliNextHintT34Tests(_CliHarness):
+    """T3-4: empty listings get one dim "what next" line on human terminals.
+
+    Only when stdout is a real TTY with color allowed: ``--json`` mode,
+    piped output, and ``NO_COLOR`` keep the historic single "no ..." line,
+    byte for byte. Non-empty listings never get the hint.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        # T3-4 asserts byte-exact "no ..." lines, so the T3-3 first-run
+        # probe must not leak into this output: point the home at a temp
+        # dir that already holds kernel data (deterministically non-fresh).
+        # No assertion is touched; this only removes ambient-home flakiness.
+        t34_home = Path(self.tmp.name) / "zn-home"
+        (t34_home / "kernel").mkdir(parents=True)
+        home_env = mock.patch.dict(os.environ, {"ZN_AGENT_HOME": str(t34_home)})
+        home_env.start()
+        self.addCleanup(home_env.stop)
+
+    _EMPTY_CASES = [
+        (
+            ["work", "list"],
+            "work_list",
+            "no work threads",
+            "下一步：交办第一件事，运行 `zn work submit --task \"…\"`",
+        ),
+        (
+            ["memory", "list"],
+            "memory_list",
+            "no remembered facts",
+            "下一步：记住一件关于你的事，"
+            "运行 `zn memory remember --key \"…\" --value \"…\"`",
+        ),
+        (
+            ["team", "list"],
+            "team_list",
+            "no active teams",
+            "下一步：交办一件事，团队会在任务里自动组建，"
+            "运行 `zn work submit --task \"…\"`",
+        ),
+        (
+            ["suggestions", "list"],
+            "suggestions_list",
+            "no suggestions",
+            "下一步：看看 ZN 都会什么，运行 `zn help`",
+        ),
+    ]
+
+    def _run_on_tty(self, argv, handler, no_color=False):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        if no_color:
+            env["NO_COLOR"] = "1"
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def test_empty_lists_print_hint_on_tty(self):
+        for argv, method, empty_line, hint in self._EMPTY_CASES:
+            with self.subTest(command=" ".join(argv)):
+                code, out, err = self._run_on_tty(
+                    argv, self._handler({method: []})
+                )
+                self.assertEqual(code, 0, err)
+                self.assertIn(empty_line, out)
+                self.assertIn(hint, out)
+
+    def test_empty_lists_no_hint_on_pipe(self):
+        for argv, method, empty_line, _hint in self._EMPTY_CASES:
+            with self.subTest(command=" ".join(argv)):
+                code, out, err = self._run(argv, self._handler({method: []}))
+                self.assertEqual(code, 0, err)
+                self.assertEqual(out, empty_line + "\n")
+                self.assertNotIn("下一步", out)
+
+    def test_empty_lists_no_hint_with_no_color_on_tty(self):
+        code, out, err = self._run_on_tty(
+            ["work", "list"], self._handler({"work_list": []}), no_color=True
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "no work threads\n")
+
+    def test_empty_lists_no_hint_in_json_mode(self):
+        for argv, method, _empty_line, _hint in self._EMPTY_CASES:
+            with self.subTest(command=" ".join(argv)):
+                code, out, err = self._run_on_tty(
+                    [*argv, "--json"], self._handler({method: []})
+                )
+                self.assertEqual(code, 0, err)
+                self.assertEqual(json.loads(out), [])
+                self.assertNotIn("下一步", out)
+
+    def test_non_empty_lists_never_get_hint(self):
+        thread = {
+            "id": "t-1",
+            "title": "T",
+            "updated_at": "2026-10-22",
+            "messages": [],
+            "active_run": None,
+        }
+        code, out, err = self._run_on_tty(
+            ["work", "list"], self._handler({"work_list": [thread]})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("t-1", out)
+        self.assertNotIn("下一步", out)
