@@ -3200,6 +3200,135 @@ class ZnCliApprovalRulesUndoT11Tests(_CliHarness):
         self.assertNotIn("已撤销", out)
 
 
+class ZnCliApprovalReconsiderT12Tests(_CliHarness):
+    """T12: ``zn approval reconsider <request-id> [--note]``."""
+
+    def _reconsider_result(self, **overrides):
+        result = {
+            "request": {
+                "request_id": "req-fresh",
+                "status": "pending",
+                "action_kind": "shell",
+                "target": "deploy.sh",
+                "created_at": "2026-10-22T20:00:00Z",
+            }
+        }
+        result["request"].update(overrides)
+        return result
+
+    def test_reconsider_success_opens_fresh_pending_card(self):
+        code, out, err = self._run(
+            ["approval", "reconsider", "req-denied"],
+            self._handler({"approval_reconsider_denied": self._reconsider_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        # New card id differs from the denied one; the denied record itself
+        # is never mutated (server contract, audited via deny_overridden).
+        self.assertIn("已为被拒的申请发起重新考虑", out)
+        self.assertIn("新审批卡 req-fresh", out)
+        self.assertNotEqual("req-fresh", "req-denied")
+        self.assertIn("待审批", out)
+        self.assertIn("原卡片：req-denied", out)
+        self.assertIn("记录保持不变", out)
+        self.assertEqual(
+            self.calls,
+            [("approval_reconsider_denied", {"request_id": "req-denied", "note": ""})],
+        )
+
+    def test_reconsider_note_passthrough(self):
+        code, out, err = self._run(
+            ["approval", "reconsider", "req-denied", "--note", "请再看一次"],
+            self._handler({"approval_reconsider_denied": self._reconsider_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("说明：请再看一次", out)
+        self.assertEqual(
+            self.calls,
+            [
+                (
+                    "approval_reconsider_denied",
+                    {"request_id": "req-denied", "note": "请再看一次"},
+                )
+            ],
+        )
+
+    def test_reconsider_unknown_id_humanized(self):
+        code, out, err = self._run(
+            ["approval", "reconsider", "req-nope"],
+            self._handler(
+                {
+                    "approval_reconsider_denied": (
+                        False,
+                        None,
+                        "ValueError: unknown approval request: req-nope",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("找不到审批卡 'req-nope'", err)
+        self.assertIn("unknown approval request", err)  # english kept in parens
+        self.assertIn("zn approval list --status denied", err)
+
+    def test_reconsider_not_denied_humanized(self):
+        code, out, err = self._run(
+            ["approval", "reconsider", "req-1"],
+            self._handler(
+                {
+                    "approval_reconsider_denied": (
+                        False,
+                        None,
+                        "ValueError: only denied approval requests can be "
+                        "reconsidered; request req-1 is pending",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("无法重新考虑", err)
+        self.assertIn("only denied approval requests can be reconsidered", err)
+        self.assertIn("pending", err)
+        self.assertIn("req-1", err)
+
+    def test_reconsider_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(["approval", "reconsider", "req-denied"], refused)
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有为被拒的申请发起重新考虑", out)
+        self.assertIn("保持被拒状态", out)
+        self.assertNotIn("已为被拒的申请发起重新考虑", out)
+
+    def test_reconsider_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            ["approval", "reconsider", "req-denied", "--json"], refused
+        )
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["reconsidered"])
+        self.assertEqual(data["request_id"], "req-denied")
+
+    def test_reconsider_json_byte_stable(self):
+        payload = self._reconsider_result()
+        code, out, err = self._run(
+            ["approval", "reconsider", "req-denied", "--json"],
+            self._handler({"approval_reconsider_denied": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            out,
+            json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n",
+        )
+
+
 class ZnCliWorkSubmitFailureHintD3Tests(_CliHarness):
     """D3: `zn work submit` ending with ``success=False`` names the next step.
 

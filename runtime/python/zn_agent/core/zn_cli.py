@@ -7,7 +7,7 @@ authenticates with the per-process session secret, and forwards one JSON-RPC
 call per command to the already-existing Daemon RPC methods
 (``work_list`` / ``work_get`` / ``work_create`` / ``work_submit`` /
 ``approval_list`` / ``approval_decide`` / ``approval_rule_delete`` /
-``approval_undo`` / ``memory_list`` / ``team_list`` /
+``approval_undo`` / ``approval_reconsider_denied`` / ``memory_list`` / ``team_list`` /
 ``routine_list`` / ``routine_get`` / ``routine_runs`` / ``routine_pause`` /
 ``routine_resume`` / ``diary_list`` / ``diary_get``). All policy, execution, approval and
 persistence decisions stay server-side.
@@ -1232,9 +1232,10 @@ def _cmd_approval_decide(args: argparse.Namespace) -> int:
 # and undo call ``approval_rule_delete`` / ``approval_undo``. No new
 # daemon RPC, no daemon.py changes. Rule *creation* is intentionally not
 # duplicated here: ``zn approval decide --always-allow`` is the existing
-# path that creates an auto-allow rule. ``approval_reconsider_denied``
-# belongs to a different family (denied cards, not consumed changes) and
-# stays on the chat path; it is a follow-up candidate, not this slice.
+# path that creates an auto-allow rule. T12 adds the terminal face for
+# ``approval_reconsider_denied`` (denied cards: create a fresh pending
+# card + audited entry; the denied record is never mutated). Still no new
+# daemon RPC and no daemon.py changes: the RPC already exists.
 #
 # Offline contract (T2-6 style, like diary/routine): every command exits 0
 # when the resident is unreachable and prints a human note; delete/undo
@@ -1417,6 +1418,34 @@ def _humanize_undo_error(exc: CliError, request_id: str) -> CliError:
     return exc
 
 
+def _humanize_reconsider_error(exc: CliError, request_id: str) -> CliError:
+    """Turn ``approval_reconsider_denied`` rejections into human copy (T2-5).
+
+    The daemon raises ValueError with one English reason per failure mode
+    (see ``reconsider_denied`` in approval_cards.py); each becomes a
+    Chinese lead line with the English fragment kept in parentheses so the
+    server contract stays greppable. Unknown errors pass through.
+    """
+    text = str(exc)
+    if "unknown approval request" in text:
+        return CliError(
+            f"找不到审批卡 '{request_id}'（unknown approval request）。"
+            "用 'zn approval list --status denied' 看看被拒的申请。"
+        )
+    if "only denied approval requests can be reconsidered" in text:
+        status = "?"
+        match = re.search(r"is ([a-z_]+)\s*$", text)
+        if match:
+            status = status_word(match.group(1))
+        return CliError(
+            f"这张卡不是被拒的申请，无法重新考虑"
+            f"（only denied approval requests can be reconsidered）："
+            f"'{request_id}' 当前是 {status}。"
+            "只有状态为 denied 的申请才能重新考虑。"
+        )
+    return exc
+
+
 def _cmd_approval_undo(args: argparse.Namespace) -> int:
     request_id = str(args.request_id)
     try:
@@ -1451,6 +1480,53 @@ def _cmd_approval_undo(args: argparse.Namespace) -> int:
         lines.append(f"  说明：{note}")
     if checkpoint:
         lines.append(f"  兜底检查点：{checkpoint}（撤销前已自动备份）")
+    print("\n".join(lines))
+    return 0
+
+
+# --- T12: `zn approval reconsider <request-id> [--note]` --------------------
+# Terminal face for the daemon RPC ``approval_reconsider_denied``: a
+# denied card gets a fresh pending card plus an audited
+# ``deny_overridden`` entry; the denied record is never mutated. Follows
+# the T11 offline contract: unreachable resident -> exit 0 with a human
+# note that never claims a mutation; RPC ok:false -> humanized T2-5
+# error, exit 1. No daemon changes.
+
+
+def _cmd_approval_reconsider(args: argparse.Namespace) -> int:
+    request_id = str(args.request_id)
+    note = str(args.note or "")
+    try:
+        ok, payload = _approval_t11_rpc(
+            args,
+            "approval_reconsider_denied",
+            {"request_id": request_id, "note": note},
+        )
+    except CliError as exc:
+        raise _humanize_reconsider_error(exc, request_id)
+    if not ok:
+        return _approval_t11_offline(
+            args,
+            payload,
+            unavailable=f"没有为被拒的申请发起重新考虑（'{request_id}' 保持被拒状态）",
+            json_payload={"reconsidered": False, "request_id": request_id},
+        )
+    if not isinstance(payload, dict) or not isinstance(
+        payload.get("request"), dict
+    ):
+        raise _unexpected_result("approval_reconsider_denied", payload)
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+    request = payload["request"]
+    new_id = _one_line(request.get("request_id"), limit=40) or "?"
+    status = status_word(request.get("status") or "pending")
+    lines = [
+        f"已为被拒的申请发起重新考虑，新审批卡 {new_id} 待审批（{status}）",
+        f"  原卡片：{request_id}（denied，记录保持不变）",
+    ]
+    if note.strip():
+        lines.append(f"  说明：{_one_line(note.strip(), limit=120)}")
     print("\n".join(lines))
     return 0
 
@@ -3373,6 +3449,30 @@ def build_parser() -> argparse.ArgumentParser:
     )
     approval_undo.add_argument("--json", action="store_true", help="print raw JSON")
     approval_undo.set_defaults(func=_cmd_approval_undo)
+
+    # T12: reconsider a denied card -> fresh pending card + audited entry.
+    approval_reconsider = approval_sub.add_parser(
+        "reconsider",
+        help="reconsider a denied approval: open a fresh pending card",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn approval reconsider <request-id>\n"
+        '  zn approval reconsider <request-id> --note "请再看一次"',
+    )
+    approval_reconsider.add_argument(
+        "request_id",
+        type=lambda v: _require_non_empty(v, name="request_id"),
+        help="the denied approval card id, as printed by 'zn approval list --status denied'",
+    )
+    approval_reconsider.add_argument(
+        "--note",
+        default="",
+        help="note recorded in the audit entry (optional)",
+    )
+    approval_reconsider.add_argument(
+        "--json", action="store_true", help="print raw JSON"
+    )
+    approval_reconsider.set_defaults(func=_cmd_approval_reconsider)
 
     memory = sub.add_parser("memory", help="inspect durable memory")
     memory_sub = memory.add_subparsers(
