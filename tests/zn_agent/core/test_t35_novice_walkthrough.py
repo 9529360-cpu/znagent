@@ -221,10 +221,24 @@ class T35NoviceWalkthroughTest(unittest.TestCase):
         lines) and the empty-list "下一步" tail are terminal-only affordances
         and must not leak into piped/scripted output.
         """
+        import faulthandler
+
+        # Windows CI once killed this test's whole shard process with no
+        # output (silent exit 1). faulthandler turns a native crash into a
+        # traceback; the phase markers below (flushed, CI is unbuffered)
+        # pinpoint which step the process died in.
+        faulthandler.enable()
+
+        def _mark(phase: str) -> None:
+            print(f"[t35-pipe] {phase}", flush=True)
+
+        _mark("enter")
         wt = _NoviceWalkthrough()  # env + resident harness only, no pty
+        _mark("harness-init-ok")
 
         # T3-3: fresh ZN_HOME on purpose (no kernel/ yet, so the first-run
         # probe is armed). On pipes the hint must stay silent.
+        _mark("help-spawn-begin")
         help_proc = subprocess.run(
             wt._cli_argv(["help"]),
             env=wt.child_env,
@@ -233,14 +247,19 @@ class T35NoviceWalkthroughTest(unittest.TestCase):
             text=True,
             timeout=60,
         )
+        _mark(f"help-spawn-ok rc={help_proc.returncode}")
         self.assertEqual(help_proc.returncode, 0, help_proc.stderr)
         self.assertIn("交办", help_proc.stdout)  # help content itself intact
         self.assertNotIn("①", help_proc.stdout, "T3-3 首行提示必须在管道下沉默")
         self.assertNotIn("③", help_proc.stdout, "T3-3 首行提示必须在管道下沉默")
+        _mark("t33-asserts-ok")
 
         # T3-4: empty home + running resident => empty list; the "下一步"
         # tail is terminal-only and must stay silent on pipes.
+        _mark("boot-resident-begin")
         wt._boot_resident()
+        _mark("boot-resident-ok")
+        _mark("list-spawn-begin")
         list_proc = subprocess.run(
             wt._cli_argv(["work", "list"]),
             env=wt.child_env,
@@ -249,9 +268,11 @@ class T35NoviceWalkthroughTest(unittest.TestCase):
             text=True,
             timeout=60,
         )
+        _mark(f"list-spawn-ok rc={list_proc.returncode}")
         self.assertEqual(list_proc.returncode, 0, list_proc.stderr)
         self.assertIn("no work threads", list_proc.stdout)
         self.assertNotIn("下一步", list_proc.stdout, "T3-4 空态尾巴必须在管道下沉默")
+        _mark("t34-asserts-ok")
 
 
 class _NoviceWalkthrough:
