@@ -3341,3 +3341,112 @@ class ZnCliWorkSubmitFailureHintD3Tests(_CliHarness):
         self.assertEqual(code, 0, err)
         self.assertEqual(json.loads(out), result)
         self.assertNotIn("下一步", out)
+
+
+class ZnCliWorkCancelFinishedRunD4Tests(_CliHarness):
+    """D4: `zn work cancel` on a finished run is humanized with a next step.
+
+    New test class (Floor Guard: existing tests and assertions untouched).
+    """
+
+    _FINISHED_ERROR = "RuntimeError: work cancellation requires an active Work run"
+    _GENERIC_ERROR = (
+        "zn: error: 服务端返回错误（work_cancel）："
+        f"{_FINISHED_ERROR}\n"
+    )
+
+    def _run_on_tty(self, argv, handler, no_color=False):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        if no_color:
+            env["NO_COLOR"] = "1"
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def _cancel(self, argv_extra=()):
+        return (
+            ["work", "cancel", "--thread-id", "t1", "--event-id", "e9", *argv_extra],
+            self._handler({"work_cancel": (False, None, self._FINISHED_ERROR)}),
+        )
+
+    def test_finished_run_cancel_humanized_with_hint_on_tty(self):
+        argv, handler = self._cancel()
+        code, out, err = self._run_on_tty(argv, handler)
+        self.assertEqual(code, 1, err)
+        # human body + English technical snippet in parentheses (T2-5)
+        self.assertIn("zn: error: 这个任务已经结束了，取消不了", err)
+        self.assertIn("（work cancellation requires an active Work run）", err)
+        self.assertNotIn("服务端返回错误", err)
+        # dim next-step hint on stdout, exactly once
+        self.assertIn(
+            "下一步：活已经结束了，用 `zn work get --thread-id t1` 看结果",
+            out,
+        )
+        self.assertEqual(out.count("下一步"), 1)
+        self.assertIn("\x1b[2m", out)
+
+    def test_finished_run_cancel_generic_on_pipe(self):
+        # piped output keeps the historic generic error byte-stable
+        argv, handler = self._cancel()
+        code, out, err = self._run(argv, handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertEqual(err, self._GENERIC_ERROR)
+        self.assertNotIn("下一步", err)
+        self.assertNotIn("\x1b[", out + err)
+
+    def test_finished_run_cancel_generic_with_no_color_on_tty(self):
+        argv, handler = self._cancel()
+        code, out, err = self._run_on_tty(argv, handler, no_color=True)
+        self.assertEqual(code, 1, err)
+        # the T3-3 first-run hint may share stdout on a real TTY in a fresh
+        # home; the D4 contract is only that the D4 hint line is absent.
+        self.assertNotIn("下一步", out)
+        self.assertEqual(err, self._GENERIC_ERROR)
+        self.assertNotIn("下一步", err)
+
+    def test_finished_run_cancel_generic_in_json_mode(self):
+        argv, handler = self._cancel(["--json"])
+        code, out, err = self._run_on_tty(argv, handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertEqual(err, self._GENERIC_ERROR)
+        self.assertNotIn("下一步", err)
+
+    def test_other_server_error_unchanged_on_tty(self):
+        # a different work_cancel rejection keeps the generic path on TTY
+        handler = self._handler(
+            {"work_cancel": (False, None, "RuntimeError: something else broke")}
+        )
+        code, out, err = self._run_on_tty(
+            ["work", "cancel", "--thread-id", "t1", "--event-id", "e9"], handler
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("服务端返回错误（work_cancel）：RuntimeError: something else broke", err)
+        self.assertNotIn("下一步", out)
+        self.assertNotIn("下一步", err)
+        self.assertNotIn("已经结束了", err)
+
+    def test_successful_cancel_unchanged_on_tty(self):
+        # the happy path is untouched: no hint, normal output
+        payload = {
+            "progress": {"state": "cancelled", "cancelled": True},
+            "thread": {"id": "t1"},
+        }
+        code, out, err = self._run_on_tty(
+            ["work", "cancel", "--thread-id", "t1", "--event-id", "e9"],
+            self._handler({"work_cancel": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("cancelled event=e9 on thread=t1", out)
+        self.assertNotIn("下一步", out)
