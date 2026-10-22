@@ -6,7 +6,9 @@ reads the resident endpoint file published by
 authenticates with the per-process session secret, and forwards one JSON-RPC
 call per command to the already-existing Daemon RPC methods
 (``work_list`` / ``work_get`` / ``work_create`` / ``work_submit`` /
-``approval_list`` / ``approval_decide`` / ``memory_list`` / ``team_list``). All policy, execution, approval and
+``approval_list`` / ``approval_decide`` / ``memory_list`` / ``team_list`` /
+``routine_list`` / ``routine_get`` / ``routine_runs`` / ``routine_pause`` /
+``routine_resume``). All policy, execution, approval and
 persistence decisions stay server-side.
 
 Running ``zn`` with no subcommand (or ``zn chat``) opens the interactive
@@ -472,6 +474,7 @@ _EMPTY_RESULT_HINTS: dict[str, str] = {
     "memory_list": "下一步：记住一件关于你的事，运行 `zn memory remember --key \"…\" --value \"…\"`",
     "team_list": "下一步：交办一件事，团队会在任务里自动组建，运行 `zn work submit --task \"…\"`",
     "suggestions_list": "下一步：看看 ZN 都会什么，运行 `zn help`",
+    "routine_list": "下一步：跟 ZN 说一句话就能创建例行任务，比如「每天早上 8 点提醒我看今天的日程」",
 }
 
 
@@ -1517,6 +1520,315 @@ def _cmd_goal_status(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- T9: `zn routine ...` --------------------------------------------------
+# Terminal face for the daemon's routine_* RPCs (already dispatched in
+# daemon.py ``_routine_result``): list / get / runs are read-only,
+# pause / resume are the only mutations in this slice. propose / edit /
+# confirm / delete / test_run stay on the chat path and are NOT exposed
+# here. No new daemon RPC, no daemon.py changes.
+#
+# Offline contract (T2-6 style): every command exits 0 when the resident is
+# unreachable and still prints a human note (what is unavailable + how to
+# start the resident). pause / resume never print a success line offline:
+# they report that nothing was changed (fail-closed: no false success).
+# A server-side rejection (RPC ok:false, e.g. "unknown routine") is NOT
+# swallowed: it surfaces as a humanized error on stderr, exit 1.
+
+_ROUTINE_RPC_REJECTED_PREFIX = _ERROR_COPY["rpc_rejected"][0].split("{method}")[0]
+
+
+def _routine_rpc(
+    args: argparse.Namespace, method: str, params: dict[str, Any]
+) -> tuple[bool, Any]:
+    """Call one ``routine_*`` RPC, classifying failures.
+
+    Returns ``(True, result)`` on success, or ``(False, error_text)`` when
+    the call never got a usable answer from the resident (missing / bad
+    endpoint, connection, auth or transport problems) -- the offline path.
+    A server-side rejection (``ok: false``) re-raises as :class:`CliError`
+    so the humanized ``rpc_rejected`` copy reaches stderr with exit 1.
+    """
+    try:
+        return True, _client(args).call(method, params)
+    except CliError as exc:
+        text = str(exc)
+        if text.startswith(_ROUTINE_RPC_REJECTED_PREFIX):
+            raise
+        return False, text
+
+
+def _unknown_routine_error(exc: CliError, routine_id: str) -> CliError:
+    """Swap the raw server ``KeyError: unknown routine`` for human copy.
+
+    The daemon answers ``ok: false`` with ``KeyError: unknown routine:
+    <id>`` (see ``RoutineManager.snapshot`` / ``_require``); this turns it
+    into "not found + where to look". Any other error is returned
+    unchanged.
+    """
+    if "unknown routine" in str(exc):
+        return CliError(
+            f"找不到例行任务 '{routine_id}'。"
+            "用 'zn routine list' 看看现有的例行任务。"
+        )
+    return exc
+
+
+def _routine_offline(
+    args: argparse.Namespace,
+    error: str,
+    *,
+    unavailable: str,
+    json_payload: dict[str, Any],
+) -> int:
+    """T2-6-style offline rendering for routine commands: exit 0.
+
+    *unavailable* names what could not be done ("看不到例行任务列表",
+    "没有暂停任何例行任务", ...). Never claims a mutation happened.
+    """
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "daemon_reachable": False,
+                    "daemon_error": _one_line(error, limit=200),
+                    **json_payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        )
+        return 0
+    print(f"常驻服务未运行（unreachable）：{unavailable}")
+    print("下一步：检查 ZN_HOME 是否正确，或启动常驻服务（zn-resident）")
+    return 0
+
+
+def _format_routine_line(item: dict[str, Any]) -> str:
+    """One-line list row: id + status word (+ TTY glyph) + schedule + title."""
+    routine_id = _one_line(item.get("routine_id"), limit=24) or "?"
+    status = item.get("status") or "?"
+    mark = status_symbol(status)
+    head = f"{mark + ' ' if mark else ''}{routine_id}  [{status_word(status)}]"
+    schedule = _one_line(item.get("schedule_description"), limit=60)
+    title = _one_line(item.get("title"), limit=60)
+    line = f"{head}  {schedule}  {title}" if schedule else f"{head}  {title}"
+    if status == "paused":
+        reason = _one_line(item.get("paused_reason"), limit=60)
+        if reason:
+            line += f"  （暂停原因：{reason}）"
+    return line
+
+
+def _format_routine_run_line(run: dict[str, Any]) -> str:
+    """One-line run-history row for ``zn routine runs`` / ``routine get``."""
+    run_id = _one_line(run.get("run_id"), limit=20) or "?"
+    status = run.get("status") or "?"
+    mark = status_symbol(status)
+    trigger = _one_line(run.get("trigger_kind"), limit=16) or "?"
+    started = _one_line(run.get("started_at"), limit=30) or "-"
+    finished = _one_line(run.get("finished_at"), limit=30)
+    span = f"{started} → {finished}" if finished else f"{started} → 进行中"
+    note = _one_line(run.get("failure_reason") or run.get("summary"), limit=80)
+    line = (
+        f"{mark + ' ' if mark else ''}{run_id}  [{status_word(status)}]  "
+        f"{trigger}  {span}"
+    )
+    if note:
+        line += f"  {note}"
+    return line
+
+
+def _format_routine_detail(item: dict[str, Any]) -> str:
+    """Full detail view of one routine (``zn routine get``).
+
+    Two-segment style like the approval detail card: headline row, then
+    indented label rows for every non-empty field the ``routine_get`` RPC
+    already returns, then the recent runs.
+    """
+    routine_id = str(item.get("routine_id") or "?")
+    status = item.get("status") or "?"
+    mark = status_symbol(status)
+    schedule = _one_line(item.get("schedule_description"), limit=80)
+    head = f"{mark + ' ' if mark else ''}例行任务 {routine_id}  [{status_word(status)}]"
+    if schedule:
+        head += f"  {schedule}"
+    lines = [head]
+    rows: list[tuple[str, str]] = []
+    for label, key, limit in (
+        ("任务", "task", 200),
+        ("负责人", "owner", 40),
+        ("计划", "schedule_spec", 120),
+        ("时区", "timezone", 40),
+        ("输入来源", "input_source", 120),
+        ("期望结果", "expected_result", 200),
+        ("审批边界", "approval_boundary", 120),
+        ("缺失数据策略", "missing_data_policy", 120),
+        ("上次运行", "last_run_at", 40),
+        ("创建时间", "created_at", 40),
+    ):
+        value = _one_line(item.get(key), limit=limit)
+        if value:
+            rows.append((label, value))
+    if status == "paused":
+        reason = _one_line(item.get("paused_reason"), limit=120)
+        if reason:
+            rows.append(("暂停原因", reason))
+    for label, value in rows:
+        lines.append(f"  {label}：{value}")
+    runs = item.get("recent_runs")
+    if isinstance(runs, list) and runs:
+        lines.append(f"  最近运行（{len(runs)}）：")
+        for run in runs:
+            if isinstance(run, dict):
+                lines.append(f"    {_format_routine_run_line(run)}")
+    return "\n".join(lines)
+
+
+def _cmd_routine_list(args: argparse.Namespace) -> int:
+    ok, payload = _routine_rpc(args, "routine_list", {"limit": args.limit})
+    if not ok:
+        return _routine_offline(
+            args,
+            payload,
+            unavailable="看不到例行任务列表",
+            json_payload={"routines": []},
+        )
+    routines = payload
+    if not isinstance(routines, list):
+        raise _unexpected_result("routine_list", routines)
+    if args.json:
+        print(json.dumps(routines, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if not routines:
+        print("no routines")
+        _print_empty_hint("routine_list")
+        return 0
+    print(section("routines", len(routines)))
+    for item in routines:
+        if isinstance(item, dict):
+            print(_format_routine_line(item))
+    return 0
+
+
+def _cmd_routine_get(args: argparse.Namespace) -> int:
+    try:
+        ok, payload = _routine_rpc(
+            args, "routine_get", {"routine_id": args.routine_id}
+        )
+    except CliError as exc:
+        raise _unknown_routine_error(exc, args.routine_id) from None
+    if not ok:
+        return _routine_offline(
+            args,
+            payload,
+            unavailable="看不到例行任务详情",
+            json_payload={"routine": None},
+        )
+    result = payload
+    if not isinstance(result, dict) or not result:
+        raise _unexpected_result("routine_get", result)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(_format_routine_detail(result))
+    return 0
+
+
+def _cmd_routine_runs(args: argparse.Namespace) -> int:
+    try:
+        ok, payload = _routine_rpc(
+            args,
+            "routine_runs",
+            {"routine_id": args.routine_id, "limit": args.limit},
+        )
+    except CliError as exc:
+        raise _unknown_routine_error(exc, args.routine_id) from None
+    if not ok:
+        return _routine_offline(
+            args,
+            payload,
+            unavailable="看不到运行历史",
+            json_payload={"routine_id": args.routine_id, "runs": []},
+        )
+    runs = payload
+    if not isinstance(runs, list):
+        raise _unexpected_result("routine_runs", runs)
+    if args.json:
+        print(json.dumps(runs, ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(section("routine runs", len(runs)))
+    if not runs:
+        print("(none)")
+        return 0
+    for run in runs:
+        if isinstance(run, dict):
+            print(_format_routine_run_line(run))
+    return 0
+
+
+def _cmd_routine_pause(args: argparse.Namespace) -> int:
+    params: dict[str, Any] = {"routine_id": args.routine_id}
+    if args.reason:
+        params["reason"] = args.reason
+    try:
+        ok, payload = _routine_rpc(args, "routine_pause", params)
+    except CliError as exc:
+        raise _unknown_routine_error(exc, args.routine_id) from None
+    if not ok:
+        return _routine_offline(
+            args,
+            payload,
+            unavailable="没有暂停任何例行任务",
+            json_payload={"changed": False, "routine": None},
+        )
+    result = payload
+    if not isinstance(result, dict) or not result:
+        raise _unexpected_result("routine_pause", result)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    status = result.get("status") or "paused"
+    mark = status_symbol(status)
+    print(
+        f"{mark + ' ' if mark else ''}例行任务 {args.routine_id} "
+        f"已暂停 [{status_word(status)}]"
+    )
+    reason = _one_line(result.get("paused_reason"), limit=200)
+    if reason:
+        print(f"  原因：{reason}")
+    return 0
+
+
+def _cmd_routine_resume(args: argparse.Namespace) -> int:
+    try:
+        ok, payload = _routine_rpc(
+            args, "routine_resume", {"routine_id": args.routine_id}
+        )
+    except CliError as exc:
+        raise _unknown_routine_error(exc, args.routine_id) from None
+    if not ok:
+        return _routine_offline(
+            args,
+            payload,
+            unavailable="没有恢复任何例行任务",
+            json_payload={"changed": False, "routine": None},
+        )
+    result = payload
+    if not isinstance(result, dict) or not result:
+        raise _unexpected_result("routine_resume", result)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    status = result.get("status") or "active"
+    mark = status_symbol(status)
+    print(
+        f"{mark + ' ' if mark else ''}例行任务 {args.routine_id} "
+        f"已恢复 [{status_word(status)}]"
+    )
+    return 0
+
+
 # --- T2-6: `zn status` aggregate -----------------------------------------
 # One-screen ZN health: resident liveness, status summary, model channel,
 # connector mounts, pending approvals, autonomy envelope. Read-only: only
@@ -2100,6 +2412,36 @@ _HELP_SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
                 "goal status",
                 "看 ZN 自驱的当前状态",
                 "zn goal status",
+            ),
+        ),
+    ),
+    (
+        "例行任务",
+        (
+            (
+                "routine list",
+                "看有哪些例行任务在跑",
+                "zn routine list",
+            ),
+            (
+                "routine get",
+                "看某条例行任务的详情",
+                "zn routine get <id>",
+            ),
+            (
+                "routine runs",
+                "看某条例行任务的运行历史",
+                "zn routine runs <id>",
+            ),
+            (
+                "routine pause",
+                "暂停一条例行任务",
+                "zn routine pause <id>",
+            ),
+            (
+                "routine resume",
+                "恢复一条被暂停的例行任务",
+                "zn routine resume <id>",
             ),
         ),
     ),
@@ -2695,6 +3037,104 @@ def build_parser() -> argparse.ArgumentParser:
     )
     goal_status.add_argument("--json", action="store_true", help="print raw JSON")
     goal_status.set_defaults(func=_cmd_goal_status)
+
+    # T9: routines -- read + pause/resume. propose/edit stay on the chat path.
+    routine = sub.add_parser(
+        "routine", help="inspect or pause/resume the resident's routines"
+    )
+    routine_sub = routine.add_subparsers(
+        dest="routine_command", metavar="subcommand", required=True
+    )
+
+    routine_list = routine_sub.add_parser(
+        "list",
+        help="list routines (read-only)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn routine list\n"
+        "  zn routine list --limit 20",
+    )
+    routine_list.add_argument(
+        "--limit",
+        type=lambda v: _require_positive_int(v, name="--limit", maximum=200),
+        default=20,
+        help="max routines to show (default 20)",
+    )
+    routine_list.add_argument("--json", action="store_true", help="print raw JSON")
+    routine_list.set_defaults(func=_cmd_routine_list)
+
+    routine_get = routine_sub.add_parser(
+        "get",
+        help="show one routine in detail (read-only)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn routine get routine-abc123",
+    )
+    routine_get.add_argument(
+        "routine_id",
+        type=lambda v: _require_non_empty(v, name="routine_id"),
+        help="routine id, e.g. routine-abc123",
+    )
+    routine_get.add_argument("--json", action="store_true", help="print raw JSON")
+    routine_get.set_defaults(func=_cmd_routine_get)
+
+    routine_runs = routine_sub.add_parser(
+        "runs",
+        help="show a routine's run history (read-only)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn routine runs routine-abc123\n"
+        "  zn routine runs routine-abc123 --limit 5",
+    )
+    routine_runs.add_argument(
+        "routine_id",
+        type=lambda v: _require_non_empty(v, name="routine_id"),
+        help="routine id, e.g. routine-abc123",
+    )
+    routine_runs.add_argument(
+        "--limit",
+        type=lambda v: _require_positive_int(v, name="--limit", maximum=100),
+        default=20,
+        help="max runs to show (default 20)",
+    )
+    routine_runs.add_argument("--json", action="store_true", help="print raw JSON")
+    routine_runs.set_defaults(func=_cmd_routine_runs)
+
+    routine_pause = routine_sub.add_parser(
+        "pause",
+        help="pause one routine (audited server-side)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn routine pause routine-abc123\n"
+        '  zn routine pause routine-abc123 --reason "出差一周"',
+    )
+    routine_pause.add_argument(
+        "routine_id",
+        type=lambda v: _require_non_empty(v, name="routine_id"),
+        help="routine id, e.g. routine-abc123",
+    )
+    routine_pause.add_argument(
+        "--reason",
+        default=None,
+        help="optional pause reason recorded with the routine",
+    )
+    routine_pause.add_argument("--json", action="store_true", help="print raw JSON")
+    routine_pause.set_defaults(func=_cmd_routine_pause)
+
+    routine_resume = routine_sub.add_parser(
+        "resume",
+        help="resume a paused routine",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn routine resume routine-abc123",
+    )
+    routine_resume.add_argument(
+        "routine_id",
+        type=lambda v: _require_non_empty(v, name="routine_id"),
+        help="routine id, e.g. routine-abc123",
+    )
+    routine_resume.add_argument("--json", action="store_true", help="print raw JSON")
+    routine_resume.set_defaults(func=_cmd_routine_resume)
 
     # T2-6: one-screen aggregate; read-only, reuses existing daemon RPCs.
     # T3-2: epilog examples live on this leaf parser like every other command.
