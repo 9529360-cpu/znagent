@@ -2695,6 +2695,56 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# T3-3: first-run onboarding hint. Per-process one-shot; never persisted to
+# disk -- the "fresh home" condition converges naturally once the resident
+# has created its kernel data, so the hint fades away on its own.
+_FIRST_RUN_HINT_SHOWN = False
+
+_FIRST_RUN_HINT_LINES = (
+    "① 直接运行 `zn` 开口说话交办（已支持交互对话）",
+    "② `zn work submit --task \"…\"` 从命令行交办",
+    "③ `zn help` 查看全部能干的事",
+)
+
+
+def _zn_home_is_fresh() -> bool:
+    """Read-only first-run probe.
+
+    True only when the ZN home holds no resident data yet: neither
+    ``<home>/kernel/resident-endpoint.json`` nor the ``<home>/kernel`` data
+    directory exists. Never writes anything.
+    """
+    try:
+        endpoint_path = _default_endpoint_path()
+    except Exception:
+        return False
+    return not endpoint_path.exists() and not endpoint_path.parent.is_dir()
+
+
+def _maybe_print_first_run_hint(args: argparse.Namespace) -> None:
+    """Append the T3-3 three-line onboarding hint to stdout.
+
+    Fires only when the ZN home is fresh (no resident data), the call is
+    interactive (stdout is a TTY and ``--json`` was not passed), and only
+    once per process. The individual ``_cmd_*`` handlers stay unaware of
+    this; the tail of :func:`run` owns it.
+    """
+    global _FIRST_RUN_HINT_SHOWN
+    if _FIRST_RUN_HINT_SHOWN:
+        return
+    if getattr(args, "json", False):
+        return
+    stdout = sys.stdout
+    isatty = getattr(stdout, "isatty", None)
+    if not callable(isatty) or not isatty():
+        return
+    if not _zn_home_is_fresh():
+        return
+    _FIRST_RUN_HINT_SHOWN = True
+    for line in _FIRST_RUN_HINT_LINES:
+        print(line, file=stdout)
+
+
 def run(argv: list[str] | None = None) -> int:
     """Parse argv and run one command. Returns a process exit code."""
 
@@ -2708,12 +2758,16 @@ def run(argv: list[str] | None = None) -> int:
         # chat REPL instead of printing help at the user.
         args.func = _cmd_chat
     try:
-        return int(args.func(args))
+        code = int(args.func(args))
     except CliError as exc:
         print(f"zn: error: {exc}", file=sys.stderr)
-        return 1
+        code = 1
     except BrokenPipeError:
+        # stdout is gone; nothing more can be printed.
         return 1
+    # T3-3: first-run onboarding hint (fresh home + interactive only).
+    _maybe_print_first_run_hint(args)
+    return code
 
 
 def main(argv: list[str] | None = None) -> int:
