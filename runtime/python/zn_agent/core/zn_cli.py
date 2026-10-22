@@ -2156,22 +2156,36 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command", metavar="command")
 
     # T3-1: scenario-organized help overview; pure local, no daemon.
+    # T3-2: every leaf subcommand carries runnable examples in epilog.
     help_cmd = sub.add_parser(
         "help",
         help="按场景看 ZN 能帮你干的事（离线可用）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn help",
     )
     help_cmd.set_defaults(func=_cmd_help)
 
     chat = sub.add_parser(
         "chat",
         help="talk to ZN interactively (same as running zn with no command)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn chat",
     )
     chat.set_defaults(func=_cmd_chat)
 
     work = sub.add_parser("work", help="list, inspect, or submit resident work")
     work_sub = work.add_subparsers(dest="work_command", metavar="subcommand", required=True)
 
-    work_list = work_sub.add_parser("list", help="list work threads")
+    work_list = work_sub.add_parser(
+        "list",
+        help="list work threads",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn work list\n"
+        "  zn work list --limit 5",
+    )
     work_list.add_argument(
         "--limit", type=lambda v: _require_positive_int(v, name="--limit", maximum=100),
         default=24,
@@ -2179,7 +2193,14 @@ def build_parser() -> argparse.ArgumentParser:
     work_list.add_argument("--json", action="store_true", help="print raw JSON")
     work_list.set_defaults(func=_cmd_work_list)
 
-    work_get = work_sub.add_parser("get", help="show one work thread")
+    work_get = work_sub.add_parser(
+        "get",
+        help="show one work thread",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn work get --thread-id <thread-id>\n"
+        "  zn work get --thread-id <thread-id> --message-limit 20",
+    )
     work_get.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
     work_get.add_argument(
         "--message-limit",
@@ -2189,7 +2210,14 @@ def build_parser() -> argparse.ArgumentParser:
     work_get.add_argument("--json", action="store_true", help="print raw JSON")
     work_get.set_defaults(func=_cmd_work_get)
 
-    work_submit = work_sub.add_parser("submit", help="submit a task to a work thread")
+    work_submit = work_sub.add_parser(
+        "submit",
+        help="submit a task to a work thread",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn work submit --task \"把 downloads 里昨天的发票整理成一张表\"\n"
+        "  zn work submit --thread-id <thread-id> --task \"继续，把明细也加上\"",
+    )
     work_submit.add_argument("--thread-id", default=None,
                              help="existing thread id; omitted = create a new thread")
     work_submit.add_argument("--title", default=None,
@@ -2198,7 +2226,13 @@ def build_parser() -> argparse.ArgumentParser:
     work_submit.add_argument("--json", action="store_true", help="print raw JSON")
     work_submit.set_defaults(func=_cmd_work_submit)
 
-    work_cancel = work_sub.add_parser("cancel", help="cancel an active work event")
+    work_cancel = work_sub.add_parser(
+        "cancel",
+        help="cancel an active work event",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn work cancel --thread-id <thread-id> --event-id <event-id>",
+    )
     work_cancel.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
     work_cancel.add_argument("--event-id", type=lambda v: _require_non_empty(v, name="--event-id"), required=True)
     work_cancel.add_argument("--json", action="store_true", help="print raw JSON")
@@ -2209,7 +2243,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="approval_command", metavar="subcommand", required=True
     )
 
-    approval_list = approval_sub.add_parser("list", help="list approval cards")
+    approval_list = approval_sub.add_parser(
+        "list",
+        help="list approval cards",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn approval list\n"
+        "  zn approval list --status all",
+    )
     approval_list.add_argument(
         "--status",
         choices=["pending", "denied", "expired", "applied", "all"],
@@ -2220,7 +2261,12 @@ def build_parser() -> argparse.ArgumentParser:
     approval_list.set_defaults(func=_cmd_approval_list)
 
     approval_decide = approval_sub.add_parser(
-        "decide", help="decide one pending approval card"
+        "decide",
+        help="decide one pending approval card",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn approval decide --request-id <request-id> --allow\n"
+        "  zn approval decide --request-id <request-id> --deny",
     )
     approval_decide.add_argument(
         "--request-id",
@@ -2239,7 +2285,11 @@ def build_parser() -> argparse.ArgumentParser:
     approval_decide.set_defaults(func=_cmd_approval_decide)
 
     approval_show = approval_sub.add_parser(
-        "show", help="show one approval card with full detail"
+        "show",
+        help="show one approval card with full detail",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn approval show <request-id>",
     )
     approval_show.add_argument(
         "request_id",
@@ -2254,7 +2304,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="memory_command", metavar="subcommand", required=True
     )
 
-    memory_list = memory_sub.add_parser("list", help="list remembered fact keys")
+    memory_list = memory_sub.add_parser(
+        "list",
+        help="list remembered fact keys",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn memory list\n"
+        "  zn memory list --limit 50",
+    )
     memory_list.add_argument(
         "--limit", type=lambda v: _require_positive_int(v, name="--limit", maximum=200),
         default=20,
@@ -2262,7 +2319,14 @@ def build_parser() -> argparse.ArgumentParser:
     memory_list.add_argument("--json", action="store_true", help="print raw JSON")
     memory_list.set_defaults(func=_cmd_memory_list)
 
-    memory_remember = memory_sub.add_parser("remember", help="store one durable fact")
+    memory_remember = memory_sub.add_parser(
+        "remember",
+        help="store one durable fact",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn memory remember --key user.timezone --value \"Europe/Berlin\"\n"
+        "  zn memory remember --key wifi.password --value \"...\" --sensitivity sensitive",
+    )
     memory_remember.add_argument("--key", type=lambda v: _require_non_empty(v, name="--key"), required=True)
     memory_remember.add_argument("--value", type=lambda v: _require_non_empty(v, name="--value"), required=True)
     memory_remember.add_argument(
@@ -2274,7 +2338,14 @@ def build_parser() -> argparse.ArgumentParser:
     memory_remember.add_argument("--json", action="store_true", help="print raw JSON")
     memory_remember.set_defaults(func=_cmd_memory_remember)
 
-    memory_forget = memory_sub.add_parser("forget", help="forget one durable fact")
+    memory_forget = memory_sub.add_parser(
+        "forget",
+        help="forget one durable fact",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn memory forget --key <key>\n"
+        "  zn memory forget --key <key> --yes",
+    )
     memory_forget.add_argument("--key", type=lambda v: _require_non_empty(v, name="--key"), required=True)
     memory_forget.add_argument(
         "--yes",
@@ -2285,7 +2356,11 @@ def build_parser() -> argparse.ArgumentParser:
     memory_forget.set_defaults(func=_cmd_memory_forget)
 
     memory_export = memory_sub.add_parser(
-        "export", help="export all remembered facts to a versioned JSON file"
+        "export",
+        help="export all remembered facts to a versioned JSON file",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn memory export --out ~/memory-backup.json",
     )
     memory_export.add_argument(
         "--out",
@@ -2297,7 +2372,12 @@ def build_parser() -> argparse.ArgumentParser:
     memory_export.set_defaults(func=_cmd_memory_export)
 
     memory_import = memory_sub.add_parser(
-        "import", help="restore facts from a memory export file"
+        "import",
+        help="restore facts from a memory export file",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn memory import --in ~/memory-backup.json\n"
+        "  zn memory import --in ~/memory-backup.json --overwrite",
     )
     memory_import.add_argument(
         "--in",
@@ -2319,7 +2399,14 @@ def build_parser() -> argparse.ArgumentParser:
         dest="team_command", metavar="subcommand", required=True
     )
 
-    team_list = team_sub.add_parser("list", help="list active project teams")
+    team_list = team_sub.add_parser(
+        "list",
+        help="list active project teams",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn team list\n"
+        "  zn team list --limit 10",
+    )
     team_list.add_argument(
         "--limit", type=lambda v: _require_positive_int(v, name="--limit", maximum=200),
         default=20,
@@ -2327,7 +2414,13 @@ def build_parser() -> argparse.ArgumentParser:
     team_list.add_argument("--json", action="store_true", help="print raw JSON")
     team_list.set_defaults(func=_cmd_team_list)
 
-    team_timeline = team_sub.add_parser("timeline", help="show the team timeline of a work thread")
+    team_timeline = team_sub.add_parser(
+        "timeline",
+        help="show the team timeline of a work thread",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn team timeline --thread-id <thread-id>",
+    )
     team_timeline.add_argument(
         "--thread-id",
         type=lambda v: _require_non_empty(v, name="--thread-id"),
@@ -2345,6 +2438,10 @@ def build_parser() -> argparse.ArgumentParser:
     skill_usage = skill_sub.add_parser(
         "usage",
         help="show per-skill usage stats (local, read-only, no resident needed)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn skill usage\n"
+        "  zn skill usage --dormant-days 60",
     )
     skill_usage.add_argument(
         "--dormant-days",
@@ -2360,6 +2457,9 @@ def build_parser() -> argparse.ArgumentParser:
     skill_prune = skill_sub.add_parser(
         "prune",
         help="list dormant skill candidates (dry-run only, never deletes)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn skill prune",
     )
     skill_prune.add_argument(
         "--dormant-days",
@@ -2384,7 +2484,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     model_check = model_sub.add_parser(
-        "check", help="probe configured model routes (local, no resident needed)"
+        "check",
+        help="probe configured model routes (local, no resident needed)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn model check\n"
+        "  zn model check --probe-timeout 10",
     )
     model_check.add_argument(
         "--probe-timeout",
@@ -2404,19 +2509,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     connector_list = connector_sub.add_parser(
-        "list", help="list known connectors (local, no resident needed)"
+        "list",
+        help="list known connectors (local, no resident needed)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn connector list",
     )
     connector_list.add_argument("--json", action="store_true", help="print raw JSON")
     connector_list.set_defaults(func=_cmd_connector_list)
 
     connector_status = connector_sub.add_parser(
-        "status", help="show connector mount status"
+        "status",
+        help="show connector mount status",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn connector status",
     )
     connector_status.add_argument("--json", action="store_true", help="print raw JSON")
     connector_status.set_defaults(func=_cmd_connector_status)
 
     connector_reload = connector_sub.add_parser(
-        "reload", help="hot-reload connectors.yaml (no daemon restart)"
+        "reload",
+        help="hot-reload connectors.yaml (no daemon restart)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn connector reload",
     )
     connector_reload.add_argument("--json", action="store_true", help="print raw JSON")
     connector_reload.set_defaults(func=_cmd_connector_reload)
@@ -2429,13 +2546,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     autonomy_list = autonomy_sub.add_parser(
-        "list", help="list explicit per-domain autonomy levels"
+        "list",
+        help="list explicit per-domain autonomy levels",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn autonomy list",
     )
     autonomy_list.add_argument("--json", action="store_true", help="print raw JSON")
     autonomy_list.set_defaults(func=_cmd_autonomy_list)
 
     autonomy_get = autonomy_sub.add_parser(
-        "get", help="show the autonomy level of one domain"
+        "get",
+        help="show the autonomy level of one domain",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn autonomy get recurring.interval\n"
+        "  zn autonomy get connector.weather",
     )
     autonomy_get.add_argument(
         "domain",
@@ -2446,7 +2572,12 @@ def build_parser() -> argparse.ArgumentParser:
     autonomy_get.set_defaults(func=_cmd_autonomy_get)
 
     autonomy_set = autonomy_sub.add_parser(
-        "set", help="set the autonomy level of one domain (audited)"
+        "set",
+        help="set the autonomy level of one domain (audited)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn autonomy set recurring.interval suggest\n"
+        "  zn autonomy set connector.weather require_approval",
     )
     autonomy_set.add_argument(
         "domain",
@@ -2471,7 +2602,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     suggestions_list = suggestions_sub.add_parser(
-        "list", help="list active suggestions"
+        "list",
+        help="list active suggestions",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn suggestions list\n"
+        "  zn suggestions list --limit 5",
     )
     suggestions_list.add_argument(
         "--limit",
@@ -2483,7 +2619,11 @@ def build_parser() -> argparse.ArgumentParser:
     suggestions_list.set_defaults(func=_cmd_suggestions_list)
 
     suggestions_dismiss = suggestions_sub.add_parser(
-        "dismiss", help="dismiss one suggestion by key"
+        "dismiss",
+        help="dismiss one suggestion by key",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn suggestions dismiss --key <key>",
     )
     suggestions_dismiss.add_argument(
         "--key",
@@ -2504,7 +2644,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
 
     goal_list = goal_sub.add_parser(
-        "list", help="list self-drive goals (read-only)"
+        "list",
+        help="list self-drive goals (read-only)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn goal list\n"
+        "  zn goal list --limit 20",
     )
     goal_list.add_argument(
         "--limit",
@@ -2516,15 +2661,24 @@ def build_parser() -> argparse.ArgumentParser:
     goal_list.set_defaults(func=_cmd_goal_list)
 
     goal_status = goal_sub.add_parser(
-        "status", help="show self-drive status (read-only)"
+        "status",
+        help="show self-drive status (read-only)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn goal status",
     )
     goal_status.add_argument("--json", action="store_true", help="print raw JSON")
     goal_status.set_defaults(func=_cmd_goal_status)
 
     # T2-6: one-screen aggregate; read-only, reuses existing daemon RPCs.
+    # T3-2: epilog examples live on this leaf parser like every other command.
     status_cmd = sub.add_parser(
         "status",
         help="one-screen ZN status: resident, model, connectors, approvals, autonomy",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn status\n"
+        "  zn status --probe-timeout 10",
     )
     status_cmd.add_argument(
         "--probe-timeout",
