@@ -40,8 +40,9 @@ daemon RPC + 真 ``zn`` 入口 + 真 PTY（T3-3/T3-4 的提示只在真终端上
 已知局限（写进记录，不藏着）：
   - 沙箱常驻无模型配置，run 在 1s 内以 success=False 结束；
     「执行中取消」(mid-run cancel) 路径本次未覆盖。
-  - 需要 POSIX pty，Windows CI 上整类 skip（真终端模拟在 Windows
-    控制台上不诚实，不硬凑）。
+  - 完整 15 步走查需要 POSIX pty（真终端模拟在 Windows 控制台上不
+    诚实，不硬凑）。Windows CI 上跑管道变体：真实断言 T3-3 首行提示与
+    T3-4 空态尾巴在非 TTY 下沉默（不是跳过，断言不减少）。
 """
 
 from __future__ import annotations
@@ -57,11 +58,7 @@ import time
 import unittest
 from dataclasses import dataclass, field
 from pathlib import Path
-
-try:
-    import pty
-except ImportError:  # Windows: no pty module
-    pty = None  # type: ignore[assignment]
+from types import ModuleType
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "runtime" / "python"))
 
@@ -92,9 +89,10 @@ def _sanitize(text: str) -> str:
 class _PtyProc:
     """One CLI invocation on a real PTY, like a novice typing at a terminal."""
 
-    def __init__(self, argv: list[str], env: dict[str, str]) -> None:
-        assert pty is not None
-        master, slave = pty.openpty()
+    def __init__(
+        self, argv: list[str], env: dict[str, str], pty_module: ModuleType
+    ) -> None:
+        master, slave = pty_module.openpty()
         self.master = master
         self.captured = bytearray()
         self.proc = subprocess.Popen(
@@ -188,12 +186,22 @@ class _Step:
     checks: list[_Check] = field(default_factory=list)
 
 
-@unittest.skipIf(os.name == "nt" or pty is None, "T3-5 walkthrough needs a POSIX pty")
 class T35NoviceWalkthroughTest(unittest.TestCase):
     """Scripted walkthrough of the TERM-3 novice path. See module docstring."""
 
     def test_novice_path_walkthrough(self):
-        wt = _NoviceWalkthrough()
+        if os.name == "nt":
+            # No POSIX pty on Windows: assert the pipe-mode contract instead.
+            # This is a real coverage variant, not a skip (Floor Guard bans
+            # skip markers on new code): off a TTY the T3-3 first-run hint
+            # and the T3-4 empty-list tail must stay silent.
+            self._test_novice_path_pipe_mode()
+            return
+        # Local import on purpose: pty only exists on POSIX, and this
+        # branch never executes on Windows. No module-level suppression.
+        import pty
+
+        wt = _NoviceWalkthrough(pty_module=pty)
         record_path = os.environ.get("T35_WRITE_RECORD") or str(
             Path(tempfile.gettempdir()) / "t35-novice-walkthrough-record.md"
         )
@@ -206,13 +214,53 @@ class T35NoviceWalkthroughTest(unittest.TestCase):
         for d in wt.defects:
             print(f"[T3-5] defect [{d.step}] {d.title}")
 
+    def _test_novice_path_pipe_mode(self) -> None:
+        """Pipe-mode (non-TTY) variant of the T3-3/T3-4 acceptance contract.
+
+        Real assertions about scripted usage: the onboarding hint (the ①②③
+        lines) and the empty-list "下一步" tail are terminal-only affordances
+        and must not leak into piped/scripted output.
+        """
+        wt = _NoviceWalkthrough()  # env + resident harness only, no pty
+
+        # T3-3: fresh ZN_HOME on purpose (no kernel/ yet, so the first-run
+        # probe is armed). On pipes the hint must stay silent.
+        help_proc = subprocess.run(
+            wt._cli_argv(["help"]),
+            env=wt.child_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(help_proc.returncode, 0, help_proc.stderr)
+        self.assertIn("交办", help_proc.stdout)  # help content itself intact
+        self.assertNotIn("①", help_proc.stdout, "T3-3 首行提示必须在管道下沉默")
+        self.assertNotIn("③", help_proc.stdout, "T3-3 首行提示必须在管道下沉默")
+
+        # T3-4: empty home + running resident => empty list; the "下一步"
+        # tail is terminal-only and must stay silent on pipes.
+        wt._boot_resident()
+        list_proc = subprocess.run(
+            wt._cli_argv(["work", "list"]),
+            env=wt.child_env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=60,
+        )
+        self.assertEqual(list_proc.returncode, 0, list_proc.stderr)
+        self.assertIn("no work threads", list_proc.stdout)
+        self.assertNotIn("下一步", list_proc.stdout, "T3-4 空态尾巴必须在管道下沉默")
+
 
 class _NoviceWalkthrough:
     """Drives the walkthrough. Raises AssertionError on hard-check failure."""
 
     TASK_TEXT = "帮我整理今天的三件事"
 
-    def __init__(self) -> None:
+    def __init__(self, pty_module: ModuleType | None = None) -> None:
+        self._pty_module = pty_module
         self.tmp = Path(tempfile.mkdtemp(prefix="t35-walkthrough-"))
         self.home = self.tmp / "home"  # sandbox ZN_HOME; kernel/ appears at boot
         self.steps: list[_Step] = []
@@ -296,7 +344,9 @@ class _NoviceWalkthrough:
             self.defects.append(defect)
 
     def _run_cli(self, args: list[str], timeout: float = 120.0) -> tuple[int, str]:
-        proc = _PtyProc(self._cli_argv(args), self.child_env)
+        if self._pty_module is None:
+            raise AssertionError("_run_cli needs a POSIX pty module")
+        proc = _PtyProc(self._cli_argv(args), self.child_env, self._pty_module)
         return proc.run_to_exit(timeout)
 
     def _step_cli(
@@ -349,7 +399,9 @@ class _NoviceWalkthrough:
         )
 
         # S4: the front door. Bare `zn` opens the TERM-1 REPL.
-        proc = _PtyProc(self._cli_argv([]), self.child_env)
+        if self._pty_module is None:
+            raise AssertionError("run_all needs a POSIX pty module")
+        proc = _PtyProc(self._cli_argv([]), self.child_env, self._pty_module)
         code, raw = proc.interact(
             [(b"zn> ", b"/help\n"), (b"zn> ", b"/exit\n")]
         )
