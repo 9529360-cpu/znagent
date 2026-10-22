@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import contextlib
 import io
 import json
@@ -17,6 +18,7 @@ from unittest import mock
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "runtime" / "python"))
 
 from zn_agent.core.daemon import ResidentRpcServer
+from zn_agent.core import zn_cli as _zn_cli_module
 from zn_agent.core.provider_bridge import (
     build_resident_runtime_from_existing_stack,
 )
@@ -2427,3 +2429,83 @@ class ZnCliStatusT26Tests(_CliHarness):
         self.assertTrue(data["connectors"]["local_evaluation"])
         self.assertIsNone(data["approvals"]["pending"])
         self.assertIsNone(data["autonomy"]["explicit_domains"])
+
+
+class ZnCliFirstRunHintT33Tests(unittest.TestCase):
+    """T3-3: three-line onboarding hint appended at the end of ``run()``.
+
+    The hint fires only when the ZN home is fresh (no
+    ``kernel/resident-endpoint.json`` and no ``kernel`` data dir), the call
+    is interactive (stdout is a TTY and ``--json`` was not passed), and only
+    once per process. ``_cmd_*`` handlers stay unaware of it.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.home = Path(self.tmp.name) / "fresh-home"
+        self.home.mkdir()
+        env = mock.patch.dict(os.environ, {"ZN_AGENT_HOME": str(self.home)})
+        env.start()
+        self.addCleanup(env.stop)
+        flag = mock.patch.object(_zn_cli_module, "_FIRST_RUN_HINT_SHOWN", False)
+        flag.start()
+        self.addCleanup(flag.stop)
+
+    def _run_help(self, tty: bool):
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        stdout, stderr = (_Tty() if tty else io.StringIO()), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = run(["help"])
+        return code, stdout.getvalue()
+
+    def test_fresh_home_tty_shows_hint_at_tail(self):
+        code, out = self._run_help(tty=True)
+        self.assertEqual(code, 0)
+        self.assertEqual(
+            out.splitlines()[-3:], list(_zn_cli_module._FIRST_RUN_HINT_LINES)
+        )
+
+    def test_fresh_home_pipe_no_hint(self):
+        code, out = self._run_help(tty=False)
+        self.assertEqual(code, 0)
+        self.assertNotIn("①", out)
+
+    def test_home_with_endpoint_and_kernel_dir_no_hint(self):
+        kernel = self.home / "kernel"
+        kernel.mkdir()
+        (kernel / "resident-endpoint.json").write_text("{}", encoding="utf-8")
+        code, out = self._run_help(tty=True)
+        self.assertEqual(code, 0)
+        self.assertNotIn("①", out)
+
+    def test_home_with_kernel_dir_only_no_hint(self):
+        # kernel dir alone already means the home is not fresh.
+        (self.home / "kernel").mkdir()
+        code, out = self._run_help(tty=True)
+        self.assertEqual(code, 0)
+        self.assertNotIn("①", out)
+
+    def test_shown_only_once_per_process(self):
+        _, first = self._run_help(tty=True)
+        _, second = self._run_help(tty=True)
+        self.assertEqual(first.count("①"), 1)
+        self.assertEqual(second.count("①"), 0)
+
+    def test_json_flag_suppresses_hint(self):
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        stdout = _Tty()
+        with contextlib.redirect_stdout(stdout):
+            _zn_cli_module._maybe_print_first_run_hint(argparse.Namespace(json=True))
+        self.assertEqual(stdout.getvalue(), "")
+
+    def test_fresh_probe_is_read_only(self):
+        # no kernel dir is created by the probe or the hint itself.
+        self._run_help(tty=True)
+        self.assertFalse((self.home / "kernel").exists())
