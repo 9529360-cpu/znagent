@@ -76,6 +76,30 @@ _EVENT_RE = re.compile(r"evt-[0-9a-zA-Z_-]{6,}")
 _TS_RE = re.compile(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?")
 
 
+def _windows_child_kwargs() -> dict:
+    """Windows-hardened spawn flags for CLI children (test harness only).
+
+    The pipe-mode walkthrough spawns ``zn`` CLI children while a resident
+    subprocess is alive. On Windows CI the ``zn work list`` spawn silently
+    killed the whole test process (exit 1, no output, no traceback) while
+    the identical ``zn help`` spawn with no resident alive was fine. The
+    repo's own terminal.py isolates Windows children the same way:
+    CREATE_NEW_PROCESS_GROUP detaches the child from the parent's console
+    process group and CREATE_NO_WINDOW keeps it off the shared console;
+    stdin=DEVNULL avoids inheriting the CI step's half-consumed stdin pipe.
+    Stdout/stderr stay pipes, so assertions see exactly the same streams.
+    """
+    if os.name != "nt":
+        return {}
+    return {
+        "stdin": subprocess.DEVNULL,
+        "creationflags": (
+            getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+            | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        ),
+    }
+
+
 def _sanitize(text: str) -> str:
     """Strip ANSI and normalize volatile ids/timestamps for a stable record."""
     text = _ANSI_RE.sub("", text)
@@ -266,18 +290,28 @@ class T35NoviceWalkthroughTest(unittest.TestCase):
             wt._boot_resident_subprocess()
             _mark("boot-resident-ok")
             _mark("list-spawn-begin")
-            list_proc = subprocess.run(
+            # Split Popen/communicate on purpose: if the Windows CI shard
+            # still dies here, the markers say whether it died inside
+            # CreateProcess or while draining the child's pipes.
+            list_proc = subprocess.Popen(
                 wt._cli_argv(["work", "list"]),
                 env=wt.child_env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=60,
+                **_windows_child_kwargs(),
             )
-            _mark(f"list-spawn-ok rc={list_proc.returncode}")
-            self.assertEqual(list_proc.returncode, 0, list_proc.stderr)
-            self.assertIn("no work threads", list_proc.stdout)
-            self.assertNotIn("下一步", list_proc.stdout, "T3-4 空态尾巴必须在管道下沉默")
+            _mark(f"list-popen-ok pid={list_proc.pid}")
+            try:
+                list_out, list_err = list_proc.communicate(timeout=60)
+            except subprocess.TimeoutExpired:
+                list_proc.kill()
+                list_out, list_err = list_proc.communicate()
+                raise AssertionError("zn work list did not exit within 60s")
+            _mark(f"list-communicate-ok rc={list_proc.returncode}")
+            self.assertEqual(list_proc.returncode, 0, list_err)
+            self.assertIn("no work threads", list_out)
+            self.assertNotIn("下一步", list_out, "T3-4 空态尾巴必须在管道下沉默")
             _mark("t34-asserts-ok")
         finally:
             wt._stop_resident_subprocess()
