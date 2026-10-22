@@ -658,5 +658,140 @@ class ZnChatWiringTests(unittest.TestCase):
         self.assertIn("does not appear to be running", stderr.getvalue())
 
 
+class ChatSessionResumeTests(_SessionCase):
+    """/resume: attach the REPL to the most recent existing thread.
+
+    Decision (T15): explicit /resume only, no auto-attach at startup --
+    a fresh REPL always begins empty, like ``claude -c`` / Codex
+    ``resume --last`` which are opt-in, never default.
+    """
+
+    def resume_client(self, *, fail=False, empty=False, malformed=False):
+        client = self.basic_client()
+
+        def work_list(params):
+            if fail:
+                raise CliError("resident down (fake work_list failure)")
+            if empty:
+                return []
+            if malformed:
+                return {"oops": True}
+            # Newest first, as the daemon orders work_list by updated_at DESC.
+            return [
+                {"id": "thread-new", "title": "昨天的天气讨论", "messages": []},
+                {"id": "thread-old", "title": "更早的事", "messages": []},
+            ]
+
+        client.on("work_list", work_list)
+        return client
+
+    def test_resume_attaches_most_recent_thread(self):
+        client = self.resume_client()
+        session, out, err, _ = self.make_session(client, ["/resume"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(session.thread_id, "thread-new")
+        self.assertEqual(client.calls[0], ("work_list", {"limit": 1}))
+        text = out.getvalue()
+        self.assertIn("thread-new", text)
+        self.assertIn("昨天的天气讨论", text)
+        self.assertNotIn("thread-old", text)
+        self.assertEqual(err.getvalue(), "")
+
+    def test_resume_twice_reports_already_there(self):
+        client = self.resume_client()
+        session, out, err, _ = self.make_session(client, ["/resume", "/resume"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(session.thread_id, "thread-new")
+        self.assertIn("已经在最近的会话里了", out.getvalue())
+        self.assertEqual(client.methods().count("work_list"), 2)
+
+    def test_followup_after_resume_continues_same_thread(self):
+        client = self.resume_client()
+        session, out, err, _ = self.make_session(client, ["/resume", "那明天呢"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(client.methods().count("work_create"), 0)
+        starts = [p for m, p in client.calls if m == "work_start"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["thread_id"], "thread-new")
+        self.assertEqual(starts[0]["task"], "那明天呢")
+        self.assertIn("done:ev-那明天呢", out.getvalue())
+
+    def test_resume_then_new_opens_fresh_thread(self):
+        client = self.resume_client()
+        session, out, err, _ = self.make_session(client, ["/resume", "/new", "换个话题"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(client.methods().count("work_create"), 1)
+        starts = [p for m, p in client.calls if m == "work_start"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["thread_id"], "thread-1")
+        self.assertIn("开新会话", out.getvalue())
+
+    def test_resume_failure_falls_back_to_new_thread(self):
+        client = self.resume_client(fail=True)
+        session, out, err, _ = self.make_session(client, ["/resume"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        # Falls back to new-thread behaviour: no crash, nothing attached.
+        self.assertIsNone(session.thread_id)
+        message = err.getvalue()
+        self.assertIn("最近的会话没恢复出来", message)
+        self.assertIn("work_list", message)
+
+    def test_turn_after_failed_resume_creates_new_thread(self):
+        client = self.resume_client(fail=True)
+        session, out, err, _ = self.make_session(client, ["/resume", "直接说事"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(client.methods().count("work_create"), 1)
+        starts = [p for m, p in client.calls if m == "work_start"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["thread_id"], "thread-1")
+        self.assertIn("done:ev-直接说事", out.getvalue())
+
+    def test_resume_failure_keeps_existing_thread(self):
+        client = self.resume_client(fail=True)
+        session, out, err, _ = self.make_session(client, ["先说一句", "/resume"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        # A failed /resume must not destroy the live conversation.
+        self.assertEqual(session.thread_id, "thread-1")
+        self.assertIn("最近的会话没恢复出来", err.getvalue())
+
+    def test_resume_with_empty_history_stays_new(self):
+        client = self.resume_client(empty=True)
+        session, out, err, _ = self.make_session(client, ["/resume"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertIsNone(session.thread_id)
+        self.assertIn("还没有历史会话", out.getvalue())
+        self.assertEqual(err.getvalue(), "")
+
+    def test_resume_with_malformed_work_list_result_stays_new(self):
+        client = self.resume_client(malformed=True)
+        session, out, err, _ = self.make_session(client, ["/resume"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertIsNone(session.thread_id)
+        self.assertIn("还没有历史会话", out.getvalue())
+        self.assertEqual(err.getvalue(), "")
+
+    def test_piped_input_never_calls_work_list(self):
+        # Non-TTY behaviour is unchanged: no auto-attach at startup.
+        client = self.resume_client()
+        session, out, err, read = self.make_session(
+            client, ["管道里的一句"], interactive=False
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertNotIn("work_list", client.methods())
+        self.assertEqual(client.methods().count("work_create"), 1)
+        self.assertEqual(read.prompts, ["", ""])  # one read per line plus the EOF read
+        self.assertNotIn("ZN 会话模式", out.getvalue())
+        self.assertIn("done:ev-管道里的一句", out.getvalue())
+
+    def test_piped_resume_command_still_works(self):
+        # Typing /resume explicitly through a pipe is honoured like any line.
+        client = self.resume_client()
+        session, out, err, _ = self.make_session(
+            client, ["/resume"], interactive=False
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(session.thread_id, "thread-new")
+
+
 if __name__ == "__main__":
     unittest.main()
