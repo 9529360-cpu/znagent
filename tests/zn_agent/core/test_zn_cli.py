@@ -3883,3 +3883,275 @@ class ZnCliWorkCancelFinishedRunD4Tests(_CliHarness):
         self.assertEqual(code, 0, err)
         self.assertIn("cancelled event=e9 on thread=t1", out)
         self.assertNotIn("下一步", out)
+
+
+class ZnCliWorkResolveUncertainT14Tests(_CliHarness):
+    """T14: ``zn work resolve-uncertain`` -- terminal entry for uncertain side-effect decisions.
+
+    New test class (Floor Guard: existing tests and assertions untouched).
+    """
+
+    _NON_ACTIVE_ERROR = (
+        "RuntimeError: work uncertain-effect resolution requires an active Work run"
+    )
+    _GENERIC_NON_ACTIVE_ERROR = (
+        "zn: error: 服务端返回错误（work_resolve_uncertain）："
+        f"{_NON_ACTIVE_ERROR}\n"
+    )
+
+    def _run_on_tty(self, argv, handler, no_color=False):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        if no_color:
+            env["NO_COLOR"] = "1"
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def _argv(self, decision="effect_happened", extra=()):
+        return (
+            [
+                "work",
+                "resolve-uncertain",
+                "--thread-id",
+                "t1",
+                "--event-id",
+                "e9",
+                "--attempt-id",
+                "a3",
+                "--decision",
+                decision,
+                *extra,
+            ]
+        )
+
+    def _result(self, **overrides):
+        result = {"progress": {"state": "running", "status": "working"}, "thread": {"id": "t1"}}
+        result.update(overrides)
+        return result
+
+    # -- happy paths ---------------------------------------------------------
+
+    def test_effect_happened_success_renders_decision(self):
+        code, out, err = self._run(
+            self._argv("effect_happened"),
+            self._handler({"work_resolve_uncertain": self._result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("resolved event=e9 attempt=a3 on thread=t1", out)
+        self.assertIn("裁决：effect_happened（副作用已发生，不再重发）", out)
+        self.assertIn("state=running", out)
+        self.assertEqual(
+            self.calls,
+            [
+                (
+                    "work_resolve_uncertain",
+                    {
+                        "thread_id": "t1",
+                        "event_id": "e9",
+                        "attempt_id": "a3",
+                        "decision": "effect_happened",
+                    },
+                )
+            ],
+        )
+
+    def test_retry_authorized_success_renders_decision(self):
+        code, out, err = self._run(
+            self._argv("retry_authorized"),
+            self._handler({"work_resolve_uncertain": self._result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("裁决：retry_authorized（允许 ZN 重试这一步）", out)
+
+    def test_json_passes_rpc_result_through(self):
+        payload = self._result()
+        code, out, err = self._run(
+            self._argv("retry_authorized", extra=["--json"]),
+            self._handler({"work_resolve_uncertain": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), payload)
+        self.assertIn('"progress"', out)
+
+    # -- argparse: illegal / missing values exit 2 ----------------------------
+
+    def test_illegal_decision_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(self._argv("maybe_retry"), handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_missing_attempt_id_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(
+                [
+                    "work",
+                    "resolve-uncertain",
+                    "--thread-id",
+                    "t1",
+                    "--event-id",
+                    "e9",
+                    "--decision",
+                    "effect_happened",
+                ],
+                handler,
+            )
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    # -- T2-6: unreachable resident -> exit 0, nothing claimed ------------------
+
+    def test_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._argv("effect_happened"), refused)
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有裁决任何不确定的副作用", out)
+        self.assertIn("未生效", out)
+        self.assertNotIn("resolved event=e9", out)
+
+    def test_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            self._argv("retry_authorized", extra=["--json"]), refused
+        )
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["resolved"])
+        self.assertEqual(data["thread_id"], "t1")
+        self.assertEqual(data["event_id"], "e9")
+        self.assertEqual(data["attempt_id"], "a3")
+
+    # -- T2-5: server rejections humanized, exit 1 -------------------------------
+
+    def _reject(self, error_text):
+        return self._handler({"work_resolve_uncertain": (False, None, error_text)})
+
+    def test_non_active_run_humanized_with_hint_on_tty(self):
+        code, out, err = self._run_on_tty(
+            self._argv("effect_happened"), self._reject(self._NON_ACTIVE_ERROR)
+        )
+        self.assertEqual(code, 1, err)
+        # human body + English technical snippet in parentheses (T2-5)
+        self.assertIn("zn: error: 这个任务已经结束了，裁决不了", err)
+        self.assertIn(
+            "（work uncertain-effect resolution requires an active Work run）", err
+        )
+        self.assertNotIn("服务端返回错误", err)
+        # dim next-step hint on stdout, exactly once
+        self.assertIn(
+            "下一步：活已经结束了，用 `zn work get --thread-id t1` 看结果", out
+        )
+        self.assertEqual(out.count("下一步"), 1)
+        self.assertIn("\x1b[2m", out)
+
+    def test_non_active_run_generic_on_pipe(self):
+        # piped output keeps the historic generic error byte-stable
+        code, out, err = self._run(
+            self._argv("effect_happened"), self._reject(self._NON_ACTIVE_ERROR)
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertEqual(err, self._GENERIC_NON_ACTIVE_ERROR)
+        self.assertNotIn("下一步", err)
+        self.assertNotIn("\x1b[", out + err)
+
+    def test_non_active_run_generic_with_no_color_on_tty(self):
+        code, out, err = self._run_on_tty(
+            self._argv("effect_happened"), self._reject(self._NON_ACTIVE_ERROR),
+            no_color=True,
+        )
+        self.assertEqual(code, 1, err)
+        self.assertNotIn("下一步", out)
+        self.assertEqual(err, self._GENERIC_NON_ACTIVE_ERROR)
+
+    def test_non_active_run_generic_in_json_mode(self):
+        code, out, err = self._run_on_tty(
+            self._argv("effect_happened", extra=["--json"]),
+            self._reject(self._NON_ACTIVE_ERROR),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertEqual(err, self._GENERIC_NON_ACTIVE_ERROR)
+        self.assertNotIn("下一步", err)
+
+    def test_unknown_event_humanized(self):
+        code, out, err = self._run(
+            self._argv("effect_happened"),
+            self._reject("ValueError: unknown work event for thread"),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "zn: error: 找不到这个工作事件（unknown work event for thread）", err
+        )
+        self.assertIn("zn work get --thread-id t1", err)
+        self.assertNotIn("服务端返回错误", err)
+
+    def test_attempt_checkpoint_mismatch_humanized(self):
+        code, out, err = self._run(
+            self._argv("retry_authorized"),
+            self._reject(
+                "RuntimeError: uncertain event resolution attempt does not match "
+                "the active recovery checkpoint"
+            ),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error: 这次尝试现在不在等待人工裁决的状态", err)
+        self.assertIn(
+            "（uncertain event resolution attempt does not match "
+            "the active recovery checkpoint）",
+            err,
+        )
+        self.assertNotIn("服务端返回错误", err)
+
+    def test_other_server_error_unchanged_on_tty(self):
+        # a different rejection keeps the generic path on TTY
+        code, out, err = self._run_on_tty(
+            self._argv("effect_happened"),
+            self._reject("RuntimeError: something else broke"),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "服务端返回错误（work_resolve_uncertain）：RuntimeError: something else broke",
+            err,
+        )
+        self.assertNotIn("下一步", out)
+        self.assertNotIn("已经结束了", err)
+
+    # -- TTY niceties -----------------------------------------------------------
+
+    def test_tty_prints_uncertain_meaning_note(self):
+        code, out, err = self._run_on_tty(
+            self._argv("effect_happened"),
+            self._handler({"work_resolve_uncertain": self._result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("说明：「副作用不确定」", out)
+
+    def test_pipe_output_has_no_note(self):
+        code, out, err = self._run(
+            self._argv("effect_happened"),
+            self._handler({"work_resolve_uncertain": self._result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("说明：", out)
+        self.assertNotIn("\x1b[", out + err)
