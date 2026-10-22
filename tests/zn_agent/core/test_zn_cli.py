@@ -591,6 +591,123 @@ class ZnCliUnitTests(_CliHarness):
         with mock.patch("os.kill", return_value=None):
             self.assertFalse(_pid_is_dead(424242))
 
+    def test_pid_is_dead_windows_snapshot_overrides_spurious_87(self):
+        # Windows false positive seen on CI: OpenProcess reports a LIVE pid
+        # as dead (OSError winerror 87). The Toolhelp snapshot is the second
+        # opinion: pid listed -> alive even when os.kill said dead.
+        dead_windows = OSError(87, "invalid parameter")
+        dead_windows.winerror = 87
+        with (
+            mock.patch("os.kill", side_effect=dead_windows),
+            mock.patch.object(
+                _zn_cli_module,
+                "_windows_pid_in_process_snapshot",
+                return_value=True,
+            ),
+        ):
+            self.assertFalse(_pid_is_dead(424242))
+        with (
+            mock.patch("os.kill", side_effect=dead_windows),
+            mock.patch.object(
+                _zn_cli_module,
+                "_windows_pid_in_process_snapshot",
+                return_value=False,
+            ),
+        ):
+            self.assertTrue(_pid_is_dead(424242))
+        with (
+            mock.patch("os.kill", side_effect=dead_windows),
+            mock.patch.object(
+                _zn_cli_module,
+                "_windows_pid_in_process_snapshot",
+                return_value=None,
+            ),
+        ):
+            # Snapshot unavailable: fall back to the os.kill verdict.
+            self.assertTrue(_pid_is_dead(424242))
+
+    def test_windows_process_snapshot_lists_live_pids(self):
+        # Validates the ctypes Toolhelp plumbing itself. On non-Windows the
+        # helper is defined to stay out of the way (None).
+        probe = _zn_cli_module._windows_pid_in_process_snapshot
+        if os.name != "nt":
+            self.assertIsNone(probe(os.getpid()))
+            return
+        self.assertTrue(probe(os.getpid()))
+        self.assertFalse(probe(2147483646))
+
+    def test_work_list_child_reaches_inprocess_resident(self):
+        # Regression shape of the CI paradox: the resident lives in THIS
+        # process (endpoint pid == our own pid) while a spawned `zn work
+        # list` child checks that pid. The child must reach the resident
+        # instead of misreporting the live parent as a stale endpoint.
+        import subprocess
+
+        with tempfile.TemporaryDirectory(prefix="win-pid-e2e-") as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            home.mkdir(parents=True, exist_ok=True)
+            db = home / "kernel.db"
+            endpoint_path = home / "kernel" / "resident-endpoint.json"
+            resident = build_resident_runtime_from_existing_stack(
+                config={"model": {}},
+                store_path=db,
+            )
+            rpc = ResidentRpcServer(resident=resident, life_interval=0.1)
+            service = ResidentSocketService(rpc, endpoint_path=endpoint_path)
+            thread = threading.Thread(
+                target=service.serve_forever,
+                name="test-win-pid-e2e-resident",
+                daemon=True,
+            )
+            thread.start()
+            try:
+                deadline = time.monotonic() + 15.0
+                while not endpoint_path.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(endpoint_path.exists(), "resident endpoint not published")
+
+                repo_root = Path(__file__).resolve().parents[3]
+                child_env = dict(os.environ)
+                child_env.update(
+                    {
+                        "ZN_HOME": str(home),
+                        "ZN_AGENT_HOME": str(home),
+                        "PYTHONPATH": str(repo_root / "runtime" / "python"),
+                        "PYTHONIOENCODING": "utf-8",
+                    }
+                )
+                popen_kwargs: dict = {
+                    "env": child_env,
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.PIPE,
+                    "text": True,
+                }
+                if os.name == "nt":
+                    popen_kwargs["stdin"] = subprocess.DEVNULL
+                    popen_kwargs["creationflags"] = (
+                        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                        | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    )
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "zn_agent.core.zn_cli", "work", "list"],
+                    **popen_kwargs,
+                )
+                try:
+                    out, err = proc.communicate(timeout=60)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    out, err = proc.communicate()
+                    self.fail("zn work list child did not exit within 60s")
+                self.assertEqual(proc.returncode, 0, err)
+                self.assertNotIn("stale", err)
+                self.assertNotIn("已过期", err)
+                self.assertIn("no work threads", out)
+            finally:
+                _best_effort_shutdown(endpoint_path)
+                thread.join(timeout=10.0)
+                resident.store.close()
+
     def test_load_endpoint_rejects_short_secret(self):
         self.endpoint_path.write_text(
             json.dumps(

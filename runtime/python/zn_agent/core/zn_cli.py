@@ -270,6 +270,72 @@ def _default_endpoint_path() -> Path:
     return get_zn_home() / "kernel" / "resident-endpoint.json"
 
 
+def _windows_pid_in_process_snapshot(pid: int) -> bool | None:
+    """Second-opinion liveness check on Windows via the Toolhelp process list.
+
+    ``os.kill(pid, 0)`` on Windows is ``OpenProcess`` under the hood, and a
+    confirmed CI false positive showed it reporting a live pid as dead
+    (``OSError`` with ``winerror == 87``). The Toolhelp snapshot enumerates
+    the kernel's process list without opening the target, so a pid present
+    here is definitively alive regardless of what ``OpenProcess`` said.
+
+    Returns True when the pid is listed, False when it is definitively
+    absent, None when the snapshot could not be taken (the caller then falls
+    back to the ``os.kill`` verdict) or on non-Windows platforms.
+    """
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+
+        TH32CS_SNAPPROCESS = 0x00000002
+
+        class PROCESSENTRY32(ctypes.Structure):
+            _fields_ = [
+                ("dwSize", ctypes.c_ulong),
+                ("cntUsage", ctypes.c_ulong),
+                ("th32ProcessID", ctypes.c_ulong),
+                ("th32DefaultHeapID", ctypes.c_void_p),
+                ("th32ModuleID", ctypes.c_ulong),
+                ("cntThreads", ctypes.c_ulong),
+                ("th32ParentProcessID", ctypes.c_ulong),
+                ("pcPriClassBase", ctypes.c_long),
+                ("dwFlags", ctypes.c_ulong),
+                ("szExeFile", ctypes.c_wchar * 260),
+            ]
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        create_snapshot = kernel32.CreateToolhelp32Snapshot
+        create_snapshot.argtypes = [ctypes.c_ulong, ctypes.c_ulong]
+        create_snapshot.restype = ctypes.c_void_p
+        process_first = kernel32.Process32FirstW
+        process_first.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32)]
+        process_first.restype = ctypes.c_bool
+        process_next = kernel32.Process32NextW
+        process_next.argtypes = [ctypes.c_void_p, ctypes.POINTER(PROCESSENTRY32)]
+        process_next.restype = ctypes.c_bool
+        close_handle = kernel32.CloseHandle
+        close_handle.argtypes = [ctypes.c_void_p]
+        close_handle.restype = ctypes.c_bool
+
+        snapshot = create_snapshot(TH32CS_SNAPPROCESS, 0)
+        if snapshot == ctypes.c_void_p(-1).value:
+            return None
+        try:
+            entry = PROCESSENTRY32()
+            entry.dwSize = ctypes.sizeof(PROCESSENTRY32)
+            listed = process_first(snapshot, ctypes.byref(entry))
+            while listed:
+                if entry.th32ProcessID == pid:
+                    return True
+                listed = process_next(snapshot, ctypes.byref(entry))
+            return False
+        finally:
+            close_handle(snapshot)
+    except Exception:
+        return None
+
+
 def _pid_is_dead(pid: int) -> bool:
     """True only when the OS positively reports the pid does not exist.
 
@@ -278,17 +344,30 @@ def _pid_is_dead(pid: int) -> bool:
     (ERROR_INVALID_PARAMETER from OpenProcess). Any other failure --
     notably access denied for a live process owned by someone else -- is
     inconclusive and treated as alive; the connect attempt below decides.
+
+    Windows caveat: ``OpenProcess`` has a confirmed false positive where it
+    reports a live pid as dead (winerror 87). On a dead verdict the Toolhelp
+    process snapshot gets the final word: a pid present in the snapshot is
+    alive, so the stale-endpoint verdict is withheld and the real connection
+    attempt decides instead.
     """
 
     try:
         os.kill(pid, 0)
     except ProcessLookupError:
-        return True
+        dead_signal = True
     except PermissionError:
         return False
     except OSError as exc:
-        return getattr(exc, "winerror", None) == 87
-    return False
+        dead_signal = getattr(exc, "winerror", None) == 87
+        if not dead_signal:
+            return False
+    else:
+        return False
+    if _windows_pid_in_process_snapshot(pid) is True:
+        # Spurious winerror 87: the kernel's process list still has this pid.
+        return False
+    return True
 
 
 def load_endpoint(
