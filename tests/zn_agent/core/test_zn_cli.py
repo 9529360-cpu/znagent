@@ -3198,3 +3198,146 @@ class ZnCliApprovalRulesUndoT11Tests(_CliHarness):
         self.assertIn("常驻服务未运行", out)
         self.assertIn("没有撤销任何变更", out)
         self.assertNotIn("已撤销", out)
+
+
+class ZnCliWorkSubmitFailureHintD3Tests(_CliHarness):
+    """D3: `zn work submit` ending with ``success=False`` names the next step.
+
+    New test class (Floor Guard: existing tests and assertions untouched).
+    """
+
+    def _run_on_tty(self, argv, handler, no_color=False):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        if no_color:
+            env["NO_COLOR"] = "1"
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def _failed_submit(self, *, response=""):
+        return {
+            "thread": {"id": "thread-1", "title": "T"},
+            "run": {
+                "event_id": "ev-1",
+                "success": False,
+                "cancelled": False,
+                "execution_path": "direct",
+                "model_invocations": 1,
+                "response": response,
+            },
+            "recovery_required": False,
+        }
+
+    def _submit(self, argv, handler):
+        return self._run(
+            ["work", "submit", "--thread-id", "thread-1", "--task", "do the thing",
+             *argv],
+            handler,
+        )
+
+    def test_failure_shows_next_hint_on_tty(self):
+        code, out, err = self._run_on_tty(
+            ["work", "submit", "--thread-id", "thread-1", "--task", "do the thing"],
+            self._handler({"work_submit": self._failed_submit()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("success=False", out)
+        self.assertIn(
+            "下一步：这次交办失败了（success=False），"
+            "用 `zn work get --thread-id thread-1` 看失败原因",
+            out,
+        )
+        # exactly one hint line, at the end, dim on a TTY
+        self.assertEqual(out.count("下一步"), 1)
+        self.assertIn("下一步", out.rstrip("\n").splitlines()[-1])
+        self.assertIn("\x1b[2m", out)
+
+    def test_failure_without_response_still_hints(self):
+        # the walkthrough case: only the one-line summary, no reply text.
+        code, out, err = self._run_on_tty(
+            ["work", "submit", "--thread-id", "thread-1", "--task", "do the thing"],
+            self._handler({"work_submit": self._failed_submit()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("success=False", out)
+        self.assertIn("zn work get --thread-id thread-1", out)
+
+    def test_failure_hint_sits_right_after_summary_line(self):
+        code, out, err = self._run_on_tty(
+            ["work", "submit", "--thread-id", "thread-1", "--task", "do the thing"],
+            self._handler(
+                {"work_submit": self._failed_submit(response="出了点问题")}
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        lines = out.rstrip("\n").splitlines()
+        summary_idx = next(
+            i for i, line in enumerate(lines) if line.startswith("run event=")
+        )
+        self.assertIn("下一步", lines[summary_idx + 1])
+
+    def test_success_has_no_hint(self):
+        result = {
+            "thread": {"id": "thread-1", "title": "T"},
+            "run": {
+                "event_id": "ev-1",
+                "success": True,
+                "cancelled": False,
+                "execution_path": "direct",
+                "model_invocations": 2,
+                "response": "finished",
+            },
+            "recovery_required": False,
+        }
+        code, out, err = self._run_on_tty(
+            ["work", "submit", "--thread-id", "thread-1", "--task", "do the thing"],
+            self._handler({"work_submit": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("success=True", out)
+        self.assertNotIn("下一步", out)
+
+    def test_failure_no_hint_on_pipe(self):
+        code, out, err = self._submit([], self._handler({"work_submit": self._failed_submit()}))
+        self.assertEqual(code, 0, err)
+        self.assertIn("success=False", out)
+        self.assertNotIn("下一步", out)
+        self.assertNotIn("\x1b[", out)
+
+    def test_failure_no_hint_with_no_color_on_tty(self):
+        code, out, err = self._run_on_tty(
+            ["work", "submit", "--thread-id", "thread-1", "--task", "do the thing"],
+            self._handler({"work_submit": self._failed_submit()}),
+            no_color=True,
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("success=False", out)
+        self.assertNotIn("下一步", out)
+        self.assertNotIn("\x1b[", out)
+
+    def test_failure_no_hint_in_json_mode(self):
+        result = self._failed_submit()
+        code, out, err = self._run_on_tty(
+            [
+                "work",
+                "submit",
+                "--thread-id",
+                "thread-1",
+                "--task",
+                "do the thing",
+                "--json",
+            ],
+            self._handler({"work_submit": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), result)
+        self.assertNotIn("下一步", out)
