@@ -114,6 +114,23 @@ _EXPECTED_SNAPSHOT = """ZN 能帮你干的事（按场景）
     看 ZN 自驱的当前状态
     例：zn goal status
 
+--- 例行任务 (5) ---
+  routine list
+    看有哪些例行任务在跑
+    例：zn routine list
+  routine get
+    看某条例行任务的详情
+    例：zn routine get <id>
+  routine runs
+    看某条例行任务的运行历史
+    例：zn routine runs <id>
+  routine pause
+    暂停一条例行任务
+    例：zn routine pause <id>
+  routine resume
+    恢复一条被暂停的例行任务
+    例：zn routine resume <id>
+
 --- 日常 (5) ---
   suggestions list
     看 ZN 给你的建议
@@ -141,9 +158,9 @@ class TestHelpSnapshot(unittest.TestCase):
             _EXPECTED_SNAPSHOT,
         )
 
-    def test_snapshot_has_exactly_five_sections(self):
+    def test_snapshot_has_exactly_six_sections(self):
         titles = [title for title, _ in _HELP_SECTIONS]
-        self.assertEqual(titles, ["交办", "审批", "记忆", "团队与自驱", "日常"])
+        self.assertEqual(titles, ["交办", "审批", "记忆", "团队与自驱", "例行任务", "日常"])
 
     def test_each_section_has_three_to_five_rows(self):
         for title, rows in _HELP_SECTIONS:
