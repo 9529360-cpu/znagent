@@ -829,6 +829,27 @@ def _watch_work_submit(
     return discovered_title
 
 
+# --- D3: "what next" hint when the submitted run reports failure ---------------
+# When `zn work submit` finishes with ``success=False``, the summary line
+# alone ("run event=… success=False …") is a dead end for a novice: nothing
+# says what to do next. Name the next step: inspect the thread with
+# `zn work get --thread-id <thread_id>` to see the failure reason. TTY-only
+# via the same ``use_color()`` gate as the T3-4/D2 hints; the ``--json``
+# branch of ``_cmd_work_submit`` returns earlier, so piped / script output
+# stays byte-stable. Copy follows the T2-5 Chinese wording convention
+# ("下一步：" + 人话 + backtick command + （英文技术片段）).
+_WORK_SUBMIT_FAILURE_HINT = (
+    "下一步：这次交办失败了（success=False），用 "
+    "`zn work get --thread-id {thread_id}` 看失败原因"
+)
+
+
+def _print_submit_failure_hint(thread_id: str) -> None:
+    """Print the one-line D3 next-step hint for a failed work_submit run."""
+    if use_color():
+        print(colorize(f"  {_WORK_SUBMIT_FAILURE_HINT.format(thread_id=thread_id)}", "dim"))
+
+
 def _print_work_submit_result(result: dict[str, Any], thread_id: str) -> None:
     """Final human summary of a work_submit result (pre-T2-2 format kept)."""
     thread = result.get("thread") if isinstance(result.get("thread"), dict) else {}
@@ -841,6 +862,10 @@ def _print_work_submit_result(result: dict[str, Any], thread_id: str) -> None:
             f"cancelled={run.get('cancelled')}  path={run.get('execution_path') or '-'}  "
             f"model_invocations={run.get('model_invocations')}"
         )
+        if not run.get("success"):
+            # D3: the run reports failure (or the result is not success=True);
+            # name the next step so the failure is not a dead end.
+            _print_submit_failure_hint(thread_id)
         if run.get("response"):
             # T2-4: the reply keeps its line structure instead of being
             # crushed to one line. Long replies paginate to 60 lines on a
