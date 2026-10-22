@@ -280,14 +280,20 @@ class T35NoviceWalkthroughTest(unittest.TestCase):
 
         # T3-4: empty home + running resident => empty list; the "下一步"
         # tail is terminal-only and must stay silent on pipes.
-        # The resident boots as a real subprocess (like the zn-resident
-        # service), not in-process: spawning CLI children from a process
-        # that already hosts the resident's daemon threads silently killed
-        # the whole Windows CI shard (exit 1, no output). The subprocess
-        # pattern is the one test_resident_socket_service uses on Windows.
+        # The resident runs in-process (its daemon threads live in the test
+        # process, like the POSIX walkthrough and like
+        # test_resident_socket_service's threaded service on Windows CI).
+        # A resident *subprocess* was tried first: it dies ~0.3s after
+        # publishing its endpoint on Windows CI (stale-endpoint pid), for
+        # reasons inside the resident's own startup, so the CLI child can
+        # never reach it. The in-process resident has no such failure mode.
+        # Spawning CLI children while the resident's threads are hosted here
+        # used to kill the whole Windows shard process (exit 1, no output);
+        # _windows_child_kwargs() below isolates the child from the parent's
+        # console/process group, which fixed that.
         _mark("boot-resident-begin")
         try:
-            wt._boot_resident_subprocess()
+            wt._boot_resident()
             _mark("boot-resident-ok")
             _mark("list-spawn-begin")
             # Split Popen/communicate on purpose: if the Windows CI shard
@@ -314,8 +320,7 @@ class T35NoviceWalkthroughTest(unittest.TestCase):
             self.assertNotIn("下一步", list_out, "T3-4 空态尾巴必须在管道下沉默")
             _mark("t34-asserts-ok")
         finally:
-            wt._stop_resident_subprocess()
-            _mark("resident-stopped-ok")
+            _mark("pipe-done")
 
 
 class _NoviceWalkthrough:
@@ -370,58 +375,6 @@ class _NoviceWalkthrough:
         if not endpoint_path.exists():
             raise AssertionError("sandbox resident did not publish its endpoint")
         return ResidentClient(load_endpoint(str(endpoint_path)))
-
-    def _boot_resident_subprocess(self) -> subprocess.Popen:
-        """Boot the sandbox resident as a real subprocess (pipe-mode only).
-
-        Same resident, same sandbox home -- but a separate OS process, like
-        the real zn-resident service. Keeps the test process free of the
-        resident's daemon threads while it spawns CLI children.
-        """
-        kernel = self.home / "kernel"
-        kernel.mkdir(parents=True, exist_ok=True)
-        endpoint_path = kernel / "resident-endpoint.json"
-        if endpoint_path.exists():
-            endpoint_path.unlink()
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "zn_agent.core.resident_server",
-                "--home",
-                str(self.home),
-            ],
-            env=self.child_env,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-            text=True,
-        )
-        self._resident_proc = proc
-        deadline = time.monotonic() + 30.0
-        while not endpoint_path.exists() and time.monotonic() < deadline:
-            if proc.poll() is not None:
-                err = proc.stderr.read() if proc.stderr else ""
-                raise AssertionError(
-                    "sandbox resident subprocess died on boot: "
-                    f"rc={proc.returncode}\n{err[-2000:]}"
-                )
-            time.sleep(0.05)
-        if not endpoint_path.exists():
-            self._stop_resident_subprocess()
-            raise AssertionError("sandbox resident did not publish its endpoint")
-        return proc
-
-    def _stop_resident_subprocess(self) -> None:
-        proc = getattr(self, "_resident_proc", None)
-        self._resident_proc = None
-        if proc is None or proc.poll() is not None:
-            return
-        proc.terminate()
-        try:
-            proc.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=10)
 
     # -- step plumbing ----------------------------------------------------
     def _record_step(
