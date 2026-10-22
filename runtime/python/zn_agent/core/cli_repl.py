@@ -12,9 +12,14 @@ line the user types is one turn of work on a durable resident Work thread:
   finalized thread snapshot supplies the authoritative final answer;
 * Ctrl-C during a turn sends ``work_cancel`` for just that event and
   returns to the prompt -- the REPL itself keeps running;
-* ``/new`` starts a fresh thread, ``/history`` re-reads the thread via
-  ``work_get``, ``/help`` lists the session commands, ``/exit`` (or
-  Ctrl-D / EOF) leaves.
+* ``/new`` starts a fresh thread, ``/resume`` attaches the REPL to the
+  most recent existing thread (via ``work_list``), ``/history`` re-reads
+  the thread via ``work_get``, ``/help`` lists the session commands,
+  ``/exit`` (or Ctrl-D / EOF) leaves. The REPL never attaches to an old
+  thread on its own: ``/resume`` is the only way to pick one up, so a
+  fresh start always begins empty. If ``work_list`` fails, ``/resume``
+  falls back to new-thread behaviour with a human-readable note instead
+  of crashing.
 
 No backend semantics are added: every operation is an existing Daemon
 RPC, the resident keeps owning execution, approvals and persistence.
@@ -46,11 +51,12 @@ _PROMPT = "zn> "
 
 _WELCOME = (
     "ZN 会话模式：直接说话就能交办（回车发送），同一会话里可以接着追问。\n"
-    "/help 看会话命令，/new 开新会话，/exit 退出。"
+    "/help 看会话命令，/resume 回到最近的会话，/new 开新会话，/exit 退出。"
 )
 
 _HELP_TEXT = """会话命令（单独一行输入）：
   /new       开新会话（下一句话在新 thread 里交办）
+  /resume    回到最近的会话（下一句话接上它的上下文继续说）
   /history   回看当前会话的历史消息
   /help      显示这份帮助
   /exit      退出会话（Ctrl-D 也可以）
@@ -83,6 +89,24 @@ def _last_assistant_text(snapshot: Any) -> str:
         if isinstance(message, dict) and message.get("role") in _REPLY_ROLES:
             return str(message.get("text") or "")
     return ""
+
+
+def _latest_thread(result: Any) -> tuple[str, str] | None:
+    """Return ``(thread_id, title)`` of the newest snapshot in a ``work_list`` result.
+
+    ``work_list`` returns snapshots newest-first (``updated_at DESC``), so
+    the first entry is the most recent thread. Returns ``None`` when there
+    is no usable thread -- empty history or a malformed payload.
+    """
+    if not isinstance(result, list) or not result:
+        return None
+    first = result[0]
+    if not isinstance(first, dict):
+        return None
+    thread_id = str(first.get("id") or "").strip()
+    if not thread_id:
+        return None
+    return thread_id, _one_line(first.get("title"), limit=60)
 
 
 class ChatSession:
@@ -157,6 +181,9 @@ class ChatSession:
                 self.thread_id = None
                 self._say("好，开新会话：下一句话会是新会话的第一句。")
                 continue
+            if text == "/resume":
+                self._resume_latest()
+                continue
             if text == "/history":
                 self._show_history()
                 continue
@@ -174,6 +201,36 @@ class ChatSession:
             return None
 
     # -- session commands -------------------------------------------------
+
+    def _resume_latest(self) -> None:
+        """Attach to the most recent thread, if the resident has one (``/resume``).
+
+        Only the newest snapshot from ``work_list`` is read; the limit of 1
+        keeps the RPC cheap. On failure the session falls back to
+        new-thread behaviour -- the pre-existing thread (if any) is left
+        untouched and the next turn just creates a new thread as usual.
+        """
+        try:
+            result = self.client.call("work_list", {"limit": 1})
+        except CliError as exc:
+            self._error(
+                f"最近的会话没恢复出来（work_list failed）：{exc}",
+                hint="确认 ZN 常驻进程还在运行，再试一次 /resume；直接说话会开一个新会话。",
+            )
+            return
+        latest = _latest_thread(result)
+        if latest is None:
+            self._say("（还没有历史会话——先跟 ZN 说句话，开一个新会话吧。）")
+            return
+        thread_id, title = latest
+        if thread_id == self.thread_id:
+            self._say(f"· 已经在最近的会话里了（{thread_id}），继续说话就行。")
+            return
+        self.thread_id = thread_id
+        title_text = f"「{title}」" if title else ""
+        self._say(
+            f"· 回到了最近的会话{title_text}（{thread_id}）：下一句话接着它的上下文说。"
+        )
 
     def _show_history(self) -> None:
         if self.thread_id is None:
