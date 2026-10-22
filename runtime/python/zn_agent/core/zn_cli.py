@@ -460,6 +460,28 @@ def _emit(args: argparse.Namespace, result: Any, *, human: str) -> None:
         print(human)
 
 
+# --- T3-4: "what next" hint for empty results --------------------------------
+# An empty listing prints its "no ..." line and, on a real human terminal
+# only, one dim follow-up line naming the most useful next command.
+# ``--json`` branches return before any empty print, and ``use_color()`` is
+# false on pipes, under ``NO_COLOR``, or on ``TERM=dumb``, so script
+# consumers never see this line. Hint copy stays in Chinese like the T2-5
+# error copy; the historic "no ..." lines are untouched (script-safe).
+_EMPTY_RESULT_HINTS: dict[str, str] = {
+    "work_list": "下一步：交办第一件事，运行 `zn work submit --task \"…\"`",
+    "memory_list": "下一步：记住一件关于你的事，运行 `zn memory remember --key \"…\" --value \"…\"`",
+    "team_list": "下一步：交办一件事，团队会在任务里自动组建，运行 `zn work submit --task \"…\"`",
+    "suggestions_list": "下一步：看看 ZN 都会什么，运行 `zn help`",
+}
+
+
+def _print_empty_hint(kind: str) -> None:
+    """Print the one-line "what next" hint for an empty human-mode listing."""
+    hint = _EMPTY_RESULT_HINTS.get(kind)
+    if hint and use_color():
+        print(colorize(f"  {hint}", "dim"))
+
+
 def _cmd_work_list(args: argparse.Namespace) -> int:
     result = _client(args).call("work_list", {"limit": args.limit})
     if not isinstance(result, list):
@@ -469,6 +491,7 @@ def _cmd_work_list(args: argparse.Namespace) -> int:
         return 0
     if not result:
         print("no work threads")
+        _print_empty_hint("work_list")
         return 0
     for item in result:
         if not isinstance(item, dict):
@@ -1041,6 +1064,7 @@ def _cmd_memory_list(args: argparse.Namespace) -> int:
         return 0
     if not result:
         print("no remembered facts")
+        _print_empty_hint("memory_list")
         return 0
     for item in result:
         if not isinstance(item, dict):
@@ -1068,6 +1092,7 @@ def _cmd_team_list(args: argparse.Namespace) -> int:
         return 0
     if not result:
         print("no active teams")
+        _print_empty_hint("team_list")
         return 0
     for item in result:
         if not isinstance(item, dict):
@@ -1397,6 +1422,7 @@ def _cmd_suggestions_list(args: argparse.Namespace) -> int:
         return 0
     if not result:
         print("no suggestions")
+        _print_empty_hint("suggestions_list")
         return 0
     for item in result:
         if not isinstance(item, dict):
