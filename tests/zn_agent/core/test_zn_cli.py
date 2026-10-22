@@ -2791,7 +2791,12 @@ class ZnCliNextHintT34Tests(_CliHarness):
         self.assertEqual(json.loads(out), payload)
         self.assertNotIn("下一步", out)
 
-    def test_approval_list_non_empty_no_hint(self):
+    # D2: when the current view shows at least one pending card, the list
+    # ends with one dim "what next" hint. This deliberately inverts the
+    # D1-era expectation of the test above it (same scenario, changed
+    # product behavior): the recorded CONSTRAINTS §1.3 exception lives in
+    # the PR body.
+    def test_approval_list_pending_shows_next_hint(self):
         result = self._empty_approval()
         result["pending"] = [
             {
@@ -2809,7 +2814,98 @@ class ZnCliNextHintT34Tests(_CliHarness):
         )
         self.assertEqual(code, 0, err)
         self.assertIn("req-1", out)
+        self.assertIn(
+            "下一步：先用 `zn approval show <request_id>` 看一张卡的详情，"
+            "再用 `zn approval decide --request-id <id> --allow` 批准"
+            "（或 `--deny` 拒绝）",
+            out,
+        )
+        # exactly one hint line, at the end, dim on a TTY
+        self.assertEqual(out.count("下一步"), 1)
+        self.assertIn("下一步", out.rstrip("\n").splitlines()[-1])
+        self.assertIn("\x1b[2m", out)
+
+    def test_approval_list_pending_shows_hint_once_for_all_status(self):
+        result = self._empty_approval()
+        result["pending"] = [{"request_id": "req-1", "status": "pending"}]
+        result["denied"] = [{"request_id": "req-d"}]
+        code, out, err = self._run_on_tty(
+            ["approval", "list", "--status", "all"],
+            self._handler({"approval_list": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("req-1", out)
+        self.assertIn("req-d", out)
+        self.assertEqual(out.count("下一步"), 1)
+        self.assertIn("下一步", out.rstrip("\n").splitlines()[-1])
+
+    def test_approval_list_pending_no_hint_on_pipe(self):
+        result = self._empty_approval()
+        result["pending"] = [{"request_id": "req-1", "status": "pending"}]
+        code, out, err = self._run(
+            ["approval", "list"], self._handler({"approval_list": result})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("req-1", out)
         self.assertNotIn("下一步", out)
+        self.assertNotIn("\x1b[", out)
+
+    def test_approval_list_pending_no_hint_with_no_color_on_tty(self):
+        result = self._empty_approval()
+        result["pending"] = [{"request_id": "req-1", "status": "pending"}]
+        code, out, err = self._run_on_tty(
+            ["approval", "list"],
+            self._handler({"approval_list": result}),
+            no_color=True,
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("req-1", out)
+        self.assertNotIn("下一步", out)
+        self.assertNotIn("\x1b[", out)
+
+    def test_approval_list_pending_no_hint_in_json_mode(self):
+        payload = self._empty_approval()
+        payload["pending"] = [{"request_id": "req-1", "status": "pending"}]
+        code, out, err = self._run_on_tty(
+            ["approval", "list", "--json"], self._handler({"approval_list": payload})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), payload)
+        self.assertNotIn("下一步", out)
+
+    def test_approval_list_non_pending_views_no_hint(self):
+        # denied-only, expired-only, applied-only views show cards but no
+        # pending ones: no D2 hint.
+        for status, card_id in (
+            ("denied", "req-d"),
+            ("expired", "req-e"),
+            ("applied", "req-a"),
+        ):
+            result = self._empty_approval()
+            result[status] = [{"request_id": card_id}]
+            code, out, err = self._run_on_tty(
+                ["approval", "list", "--status", status],
+                self._handler({"approval_list": result}),
+            )
+            self.assertEqual(code, 0, err)
+            self.assertIn(card_id, out)
+            self.assertNotIn("下一步", out)
+
+    def test_approval_list_empty_keeps_only_d1_hint(self):
+        # empty view: the D1 empty-state hint only; the D2 pending hint must
+        # not appear and the two must never duplicate.
+        code, out, err = self._run_on_tty(
+            ["approval", "list"], self._handler({"approval_list": self._empty_approval()})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("(none)", out)
+        self.assertIn(
+            "下一步：审批卡由 ZN 在需要你确认时自动发出，"
+            "先看看自动批准规则，运行 `zn approval rules list`",
+            out,
+        )
+        self.assertNotIn("zn approval show", out)
+        self.assertEqual(out.count("下一步"), 1)
 
     def test_approval_list_filtered_empty_section_gets_hint(self):
         # `--status pending` shows only pending; denied having cards does not
