@@ -21,16 +21,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "runtime" / "python
 
 from zn_agent.core.cli_format import (
     _detect_stdout_encoding,
+    _symbol_table,
     colorize,
     is_tty,
     kv,
     section,
+    status_symbol,
     status_word,
     symbol,
     table,
     use_color,
 )
-from zn_agent.core.zn_cli import _format_approval_card
+from zn_agent.core.zn_cli import _format_approval_card, _format_approval_detail
 
 
 class _Tty:
@@ -208,6 +210,119 @@ class SymbolTests(unittest.TestCase):
         self.assertEqual(symbol("nope", stream=_Tty(), environ=_COLOR_ENV), "")
 
 
+class _TtyWithEncoding(_Tty):
+    """TTY stand-in that also reports a console encoding (T2-7)."""
+
+    def __init__(self, encoding: str) -> None:
+        super().__init__()
+        self.encoding = encoding
+
+
+class EncodingDowngradeTests(unittest.TestCase):
+    """T2-7: cp936-style consoles fall back to ASCII glyphs on TTY."""
+
+    def test_utf8_tty_gets_unicode_glyphs(self):
+        stream = _TtyWithEncoding("utf-8")
+        self.assertEqual(symbol("ok", stream=stream, environ=_COLOR_ENV), "✓")
+        self.assertEqual(symbol("fail", stream=stream, environ=_COLOR_ENV), "✗")
+        self.assertEqual(symbol("warn", stream=stream, environ=_COLOR_ENV), "!")
+        self.assertEqual(symbol("pending", stream=stream, environ=_COLOR_ENV), "…")
+
+    def test_cp936_tty_degrades_to_ascii(self):
+        # ✓/✗ are not encodable in cp936; the whole table must degrade
+        # (all-or-nothing, never a mixed ✓/FAIL line).
+        stream = _TtyWithEncoding("cp936")
+        self.assertEqual(symbol("ok", stream=stream, environ=_COLOR_ENV), "OK")
+        self.assertEqual(symbol("fail", stream=stream, environ=_COLOR_ENV), "FAIL")
+        self.assertEqual(symbol("warn", stream=stream, environ=_COLOR_ENV), "!")
+        self.assertEqual(symbol("pending", stream=stream, environ=_COLOR_ENV), "...")
+
+    def test_cp936_detected_from_sys_stdout_when_no_stream(self):
+        # The T2-7 spec mechanism: sys.stdout.encoding drives selection.
+        from unittest import mock
+
+        tty = _Tty()
+        tty.encoding = "cp936"
+        with mock.patch.object(sys, "stdout", tty):
+            self.assertEqual(_detect_stdout_encoding(), "cp936")
+            self.assertEqual(symbol("ok", environ=_COLOR_ENV), "OK")
+            self.assertEqual(symbol("fail", environ=_COLOR_ENV), "FAIL")
+
+    def test_gb18030_tty_keeps_unicode(self):
+        # gb18030 encodes all of Unicode, so no downgrade -- the probe is
+        # a real encode test, not a codec-name blocklist.
+        stream = _TtyWithEncoding("gb18030")
+        self.assertEqual(symbol("ok", stream=stream, environ=_COLOR_ENV), "✓")
+
+    def test_unknown_codec_fails_safe_to_ascii(self):
+        stream = _TtyWithEncoding("bogus-codec-xyz")
+        self.assertEqual(symbol("ok", stream=stream, environ=_COLOR_ENV), "OK")
+        self.assertEqual(symbol("fail", stream=stream, environ=_COLOR_ENV), "FAIL")
+
+    def test_cp936_without_tty_still_empty(self):
+        # TTY-only contract wins over encoding: piped cp936 output must
+        # stay glyph-free and byte-identical.
+        class _Pipe:
+            encoding = "cp936"
+
+            def isatty(self):
+                return False
+
+        self.assertEqual(symbol("ok", stream=_Pipe(), environ=_COLOR_ENV), "")
+
+    def test_symbol_table_picks_ascii_for_cp936(self):
+        self.assertIs(_symbol_table(_TtyWithEncoding("cp936"))["ok"], "OK")
+        self.assertEqual(_symbol_table(_TtyWithEncoding("utf-8"))["ok"], "✓")
+
+
+class StatusSymbolTests(unittest.TestCase):
+    """T2-7: status values map to the four canonical glyphs."""
+
+    def test_ok_family_gets_check(self):
+        for value in ("allowed", "active", "applied", True, "success"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    status_symbol(value, stream=_Tty(), environ=_COLOR_ENV), "✓"
+                )
+
+    def test_err_family_gets_cross(self):
+        for value in ("denied", "failed", "rejected", "unreachable", False):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    status_symbol(value, stream=_Tty(), environ=_COLOR_ENV), "✗"
+                )
+
+    def test_pending_gets_bang(self):
+        self.assertEqual(
+            status_symbol("pending", stream=_Tty(), environ=_COLOR_ENV), "!"
+        )
+
+    def test_dim_family_gets_no_glyph(self):
+        for value in ("expired", "finalized", "cancelled", "unknown"):
+            with self.subTest(value=value):
+                self.assertEqual(
+                    status_symbol(value, stream=_Tty(), environ=_COLOR_ENV), ""
+                )
+
+    def test_unknown_values_get_no_glyph(self):
+        self.assertEqual(
+            status_symbol("weird-state", stream=_Tty(), environ=_COLOR_ENV), ""
+        )
+
+    def test_non_color_mode_gets_no_glyph(self):
+        self.assertEqual(
+            status_symbol("denied", stream=io.StringIO(), environ=_COLOR_ENV), ""
+        )
+        self.assertEqual(
+            status_symbol("allowed", stream=_Tty(), environ=_NO_COLOR_ENV), ""
+        )
+
+    def test_cp936_tty_gets_ascii_glyph(self):
+        stream = _TtyWithEncoding("cp936")
+        self.assertEqual(status_symbol("allowed", stream=stream, environ=_COLOR_ENV), "OK")
+        self.assertEqual(status_symbol("denied", stream=stream, environ=_COLOR_ENV), "FAIL")
+
+
 class ZnCliWiringTests(unittest.TestCase):
     """The two representative rewired commands: byte-stable in non-TTY."""
 
@@ -252,6 +367,57 @@ class ZnCliWiringTests(unittest.TestCase):
             card = _format_approval_card(item)
         self.assertIn("\x1b[31mdenied\x1b[0m", card)
         self.assertIn("\n  target=x  scope=chat  expires=-", card)
+
+    def test_approval_headlines_prepend_status_glyph_in_color_mode(self):
+        # T2-7: unified glyph before the status word on TTY.
+        import contextlib
+        from unittest import mock
+
+        tty = _Tty()
+        with contextlib.redirect_stdout(tty), mock.patch.dict(
+            "os.environ", _COLOR_ENV, clear=True
+        ):
+            card = _format_approval_card(
+                {
+                    "request_id": "req-1",
+                    "status": "pending",
+                    "action_kind": "send",
+                    "target": "x",
+                    "scope": "chat",
+                    "expires_at": "",
+                }
+            )
+            detail = _format_approval_detail(
+                {
+                    "request_id": "req-9",
+                    "status": "denied",
+                    "action_kind": "send",
+                    "target": "x",
+                    "scope": "chat",
+                }
+            )
+        self.assertTrue(card.startswith("! req-1  ["))
+        self.assertIn("\x1b[33mpending\x1b[0m", card)
+        self.assertTrue(detail.startswith("✗ 审批卡 req-9  ["))
+        self.assertIn("\x1b[31mdenied\x1b[0m", detail)
+
+    def test_approval_headlines_have_no_leading_space_off_tty(self):
+        # Off-TTY the glyph is "" and no stray space may appear.
+        import contextlib
+
+        item = {
+            "request_id": "req-1",
+            "status": "pending",
+            "action_kind": "send",
+            "target": "x",
+            "scope": "chat",
+            "expires_at": "",
+        }
+        with contextlib.redirect_stdout(io.StringIO()):
+            card = _format_approval_card(item)
+            detail = _format_approval_detail(item)
+        self.assertTrue(card.splitlines()[0].startswith("req-1  [pending]"))
+        self.assertTrue(detail.splitlines()[0].startswith("审批卡 req-1  [pending]"))
 
 
 if __name__ == "__main__":
