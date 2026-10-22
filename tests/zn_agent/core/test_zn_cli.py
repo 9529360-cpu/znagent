@@ -3329,6 +3329,310 @@ class ZnCliApprovalReconsiderT12Tests(_CliHarness):
         )
 
 
+class ZnCliTeamDriveT13Tests(_CliHarness):
+    """T13: ``zn team assign @specialist <instruction>`` + ``zn team handover-done``."""
+
+    def _assign_result(self, **overrides):
+        result = {
+            "team_id": "team-7",
+            "specialist": "设计",
+            "item_id": "item-9",
+            "item_title": "重做首页排版",
+            "instruction": "用新版设计稿",
+        }
+        result.update(overrides)
+        return result
+
+    def _handover_result(self, **overrides):
+        result = {
+            "team_id": "team-7",
+            "handover_id": "handover-abc123",
+            "kind": "password",
+            "status": "resolved",
+        }
+        result.update(overrides)
+        return result
+
+    # -- team assign --------------------------------------------------------
+
+    def test_assign_success_reassigns_next_pending_item(self):
+        code, out, err = self._run(
+            ["team", "assign", "@设计", "用新版设计稿", "--thread-id", "thread-1"],
+            self._handler({"team_assign": self._assign_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("已把团队下一项任务指派给 @设计", out)
+        self.assertIn("任务：重做首页排版", out)
+        self.assertIn("团队：team-7", out)
+        self.assertIn("说明：用新版设计稿", out)
+        # The override is journaled; the timeline is where the user sees it.
+        self.assertIn("zn team timeline --thread-id thread-1", out)
+        # Leading @ is a CLI spelling; the RPC takes the bare member name.
+        self.assertEqual(
+            self.calls,
+            [
+                (
+                    "team_assign",
+                    {
+                        "thread_id": "thread-1",
+                        "specialist": "设计",
+                        "instruction": "用新版设计稿",
+                    },
+                )
+            ],
+        )
+
+    def test_assign_specialist_without_at_sign(self):
+        code, out, err = self._run(
+            ["team", "assign", "qa", "跑一遍回归测试", "--thread-id", "thread-1"],
+            self._handler(
+                {
+                    "team_assign": self._assign_result(
+                        specialist="qa",
+                        item_title="回归测试",
+                        instruction="跑一遍回归测试",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("已把团队下一项任务指派给 @qa", out)
+        self.assertEqual(
+            self.calls[0][1]["specialist"], "qa", "bare name passes through"
+        )
+
+    def test_assign_unknown_thread_humanized(self):
+        code, out, err = self._run(
+            ["team", "assign", "@设计", "做事", "--thread-id", "thread-nope"],
+            self._handler(
+                {
+                    "team_assign": (
+                        False,
+                        None,
+                        "ValueError: unknown work thread: 'thread-nope'",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("找不到工作线程 'thread-nope'", err)
+        self.assertIn("unknown work thread", err)  # english kept in parens
+        self.assertIn("zn work list", err)
+
+    def test_assign_no_running_team_passthrough(self):
+        # The daemon message is already Chinese and actionable; it passes
+        # through unchanged (no English fragment to keep).
+        code, out, err = self._run(
+            ["team", "assign", "@设计", "做事", "--thread-id", "thread-1"],
+            self._handler(
+                {
+                    "team_assign": (
+                        False,
+                        None,
+                        "ValueError: 该 Work 没有运行中的团队，@指派需要先组团队",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("该 Work 没有运行中的团队", err)
+        self.assertIn("@指派需要先组团队", err)
+
+    def test_assign_unknown_specialist_passthrough(self):
+        code, out, err = self._run(
+            ["team", "assign", "@ghost", "做事", "--thread-id", "thread-1"],
+            self._handler(
+                {
+                    "team_assign": (
+                        False,
+                        None,
+                        "ValueError: 团队里没有专员 'ghost'，可选：设计, qa",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("团队里没有专员 'ghost'", err)
+        self.assertIn("可选：设计, qa", err)
+
+    def test_assign_no_pending_item_passthrough(self):
+        code, out, err = self._run(
+            ["team", "assign", "@设计", "做事", "--thread-id", "thread-1"],
+            self._handler(
+                {
+                    "team_assign": (
+                        False,
+                        None,
+                        "ValueError: 团队已无待派发任务，@指派无下一步可派",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("团队已无待派发任务", err)
+
+    def test_assign_work_ledger_missing_humanized(self):
+        code, out, err = self._run(
+            ["team", "assign", "@设计", "做事", "--thread-id", "thread-1"],
+            self._handler(
+                {
+                    "team_assign": (
+                        False,
+                        None,
+                        "ValueError: resident has no work ledger",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("缺少工作账本", err)
+        self.assertIn("resident has no work ledger", err)  # english kept in parens
+
+    def test_assign_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            ["team", "assign", "@设计", "做事", "--thread-id", "thread-1"], refused
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有为团队指派新的专员", out)
+        self.assertIn("未生效", out)
+        self.assertNotIn("已把团队下一项任务指派给", out)
+
+    def test_assign_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            ["team", "assign", "@设计", "做事", "--thread-id", "thread-1", "--json"],
+            refused,
+        )
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["assigned"])
+        self.assertEqual(data["thread_id"], "thread-1")
+        self.assertEqual(data["specialist"], "设计")
+
+    def test_assign_json_byte_stable(self):
+        payload = self._assign_result()
+        code, out, err = self._run(
+            ["team", "assign", "@设计", "用新版设计稿", "--thread-id", "thread-1", "--json"],
+            self._handler({"team_assign": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            out,
+            json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n",
+        )
+
+    def test_assign_missing_thread_id_is_argparse_error(self):
+        with self.assertRaises(SystemExit) as caught:
+            self._run(
+                ["team", "assign", "@设计", "做事"],
+                self._handler({"team_assign": self._assign_result()}),
+            )
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [], "no RPC fires before argparse rejects")
+
+    # -- team handover-done --------------------------------------------------
+
+    def test_handover_done_success_releases_team(self):
+        code, out, err = self._run(
+            ["team", "handover-done", "--thread-id", "thread-1"],
+            self._handler({"team_handover_done": self._handover_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("敏感步骤已放行，团队继续", out)
+        self.assertIn("交接：handover-abc123（password）", out)
+        self.assertIn("团队：team-7", out)
+        self.assertEqual(
+            self.calls,
+            [("team_handover_done", {"thread_id": "thread-1"})],
+        )
+
+    def test_handover_done_no_pending_refused_nonzero(self):
+        code, out, err = self._run(
+            ["team", "handover-done", "--thread-id", "thread-1"],
+            self._handler(
+                {
+                    "team_handover_done": (
+                        False,
+                        None,
+                        "ValueError: 该团队当前没有待主人完成的敏感步骤",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1, "spec: refusal is human, but non-zero")
+        self.assertEqual(out, "")
+        self.assertIn("没有待主人完成的敏感步骤", err)
+        self.assertIn("no pending handover", err)  # english kept in parens
+        self.assertIn("无需放行", err)
+
+    def test_handover_done_unknown_thread_humanized(self):
+        code, out, err = self._run(
+            ["team", "handover-done", "--thread-id", "thread-nope"],
+            self._handler(
+                {
+                    "team_handover_done": (
+                        False,
+                        None,
+                        "ValueError: unknown work thread: 'thread-nope'",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("找不到工作线程 'thread-nope'", err)
+        self.assertIn("unknown work thread", err)
+
+    def test_handover_done_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            ["team", "handover-done", "--thread-id", "thread-1"], refused
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有放行任何敏感步骤", out)
+        self.assertNotIn("敏感步骤已放行", out)
+
+    def test_handover_done_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            ["team", "handover-done", "--thread-id", "thread-1", "--json"], refused
+        )
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["resolved"])
+        self.assertEqual(data["thread_id"], "thread-1")
+
+    def test_handover_done_json_byte_stable(self):
+        payload = self._handover_result()
+        code, out, err = self._run(
+            ["team", "handover-done", "--thread-id", "thread-1", "--json"],
+            self._handler({"team_handover_done": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            out,
+            json.dumps(payload, ensure_ascii=False, indent=2, default=str) + "\n",
+        )
+
+
 class ZnCliWorkSubmitFailureHintD3Tests(_CliHarness):
     """D3: `zn work submit` ending with ``success=False`` names the next step.
 
