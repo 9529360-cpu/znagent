@@ -1,8 +1,8 @@
 """Terminal presentation primitives for the ``zn`` CLI (T2-1, TERM-2 foundation).
 
-Single formatting home for terminal output in ``zn_cli.py`` and the
-TERM-1 REPL: semantic colors, symbols, ``key=value`` pairs, aligned
-tables, section headers, and a status-word vocabulary.
+Single formatting home for terminal output in ``zn_cli.py``: semantic
+colors, symbols, ``key=value`` pairs, aligned tables, section headers, and
+a status-word vocabulary.
 
 Rules (fail-closed, script-safe):
 
@@ -17,14 +17,46 @@ Rules (fail-closed, script-safe):
   ``zn_cli.py``); escape codes are fixed constants, never built from
   user data.
 
-Extension point for T2-7 (Windows console encoding downgrade):
+Status-word vocabulary (T2-7; the rules live in :data:`_STATUS_VOCAB`):
 
-- :func:`symbol` currently returns the Unicode glyph in color mode and the
-  empty string otherwise. T2-7 will switch its selection to be encoding
-  aware -- ``cp936``/non-UTF consoles fall back to the ASCII table --
-  using :func:`_detect_stdout_encoding` plus the ``_ASCII_SYMBOLS`` table
-  below. Callers will not change; only the selection logic inside
-  :func:`symbol` does.
+- ``ok`` family (green): ``allowed``, ``allow_once`` (shown "allowed"),
+  ``always_allow`` (shown "always allow"), ``approved_once`` (shown
+  "approved"), ``applied``, ``active``, ``success``, ``yes``, ``True``
+  (shown "ok").
+- ``warn`` family (yellow): ``pending`` -- needs a human decision or
+  attention.
+- ``err`` family (red): ``denied``, ``deny`` (shown "denied"),
+  ``rejected``, ``failed``, ``False`` (shown "failed"), ``unreachable``,
+  ``no``.
+- ``dim`` family (gray): ``expired``, ``finalized``, ``cancelled``,
+  ``unknown`` -- terminal or informational states that stay quiet.
+- Unknown values pass through as ``str(value)`` unchanged; the
+  vocabulary never invents a word.
+
+Symbols (T2-7): the whole CLI uses four glyphs, always selected through
+:func:`symbol` so the rules below apply everywhere. Callers never embed
+a glyph literal.
+
+- success ``✓`` (``symbol("ok")``), failure ``✗`` (``symbol("fail")``),
+  warning ``!`` (``symbol("warn")``), in-progress ``…``
+  (``symbol("pending")``).
+- :func:`status_symbol` maps a status value to its glyph through the
+  color family above: ok-family -> ``✓``, err-family -> ``✗``,
+  warn-family -> ``!``. Dim-family values and unknown values take no
+  glyph.
+- A *pending* status value maps to ``!`` (it waits on a human); the
+  ``…`` glyph is reserved for in-progress spinners such as the
+  ``zn work submit`` watcher.
+- Symbols are a TTY-only affordance: on non-color streams ``symbol()``
+  returns ``""`` so piped/script output never changes.
+- Windows console encoding: every glyph lives in the BMP. When the
+  target stream's encoding cannot render a glyph (Windows ``cp936``
+  cannot encode ``✓``/``✗``), the whole table degrades to ASCII --
+  ``OK`` / ``FAIL`` / ``!`` / ``...`` -- detected from the encoding of
+  the stream the glyph is written to (``sys.stdout.encoding`` when the
+  caller passes no stream). Degradation is all-or-nothing so a line
+  never mixes ``✓`` with ``FAIL``; an unrecognised codec name is treated
+  as cannot-render (fail-safe to ASCII).
 """
 
 from __future__ import annotations
@@ -41,6 +73,7 @@ __all__ = [
     "kv",
     "table",
     "status_word",
+    "status_symbol",
     "symbol",
     "COLOR_OK",
     "COLOR_WARN",
@@ -71,9 +104,9 @@ _UNICODE_SYMBOLS = {
     "pending": "…",
 }
 
-# T2-7 extension point: ASCII fallback for consoles whose encoding cannot
-# render the BMP glyphs above (e.g. Windows cp936). Not selected by
-# ``symbol()`` yet -- T2-7 adds the encoding-aware selection.
+# T2-7: ASCII fallback for consoles whose encoding cannot render the BMP
+# glyphs above (e.g. Windows cp936). Selected by ``symbol()`` when the
+# target stream's encoding fails to encode any Unicode glyph.
 _ASCII_SYMBOLS = {
     "ok": "OK",
     "fail": "FAIL",
@@ -208,24 +241,87 @@ def status_word(value: Any, *, stream: TextIO | None = None,
 
 
 def _detect_stdout_encoding() -> str:
-    """Report the stdout encoding (T2-7 extension point).
+    """Report the stdout encoding.
 
-    Today this is only consulted in tests. T2-7 will use it inside
-    :func:`symbol` to select :data:`_ASCII_SYMBOLS` when the console
-    encoding (e.g. Windows ``cp936``) cannot render the Unicode glyphs.
+    Kept as the explicit ``sys.stdout.encoding`` probe (per the T2-7
+    spec); :func:`symbol` consults the encoding of the actual target
+    stream, which is ``sys.stdout`` unless the caller passes a stream.
     """
     encoding = getattr(sys.stdout, "encoding", None)
     return str(encoding or "utf-8")
+
+
+def _stream_encoding(stream: TextIO | None = None) -> str:
+    """Encoding of the stream a glyph would be written to.
+
+    ``sys.stdout.encoding`` when *stream* is None; otherwise the passed
+    stream's ``encoding`` attribute. Falls back to ``"utf-8"`` when the
+    stream reports nothing (e.g. a test stand-in without an encoding).
+    """
+    if stream is None:
+        return _detect_stdout_encoding()
+    encoding = getattr(stream, "encoding", None)
+    return str(encoding or "utf-8")
+
+
+def _symbol_table(stream: TextIO | None = None) -> dict[str, str]:
+    """Pick the glyph table for *stream* (T2-7).
+
+    Unicode when the stream's encoding renders every glyph; the ASCII
+    table otherwise (e.g. Windows ``cp936`` cannot encode ``✓``/``✗``).
+    All-or-nothing on purpose: a mixed ``✓``/``FAIL`` line is worse than
+    a uniform ASCII line. An unrecognised codec name fails safe to ASCII.
+    """
+    encoding = _stream_encoding(stream)
+    for glyph in _UNICODE_SYMBOLS.values():
+        try:
+            glyph.encode(encoding, errors="strict")
+        except (UnicodeEncodeError, LookupError):
+            return _ASCII_SYMBOLS
+    return _UNICODE_SYMBOLS
 
 
 def symbol(name: str, *, stream: TextIO | None = None,
            environ: Mapping[str, str] | None = None) -> str:
     """Glyph for *name* (``ok`` / ``fail`` / ``warn`` / ``pending``).
 
-    TTY-only affordance: returns the Unicode glyph when color is allowed,
-    the empty string otherwise -- so non-TTY output is never polluted with
-    symbols scripts cannot parse. Unknown names return "".
+    TTY-only affordance: returns ``""`` when color is not allowed, so
+    non-TTY output is never polluted with symbols scripts cannot parse.
+    On color-allowed streams the table is encoding-aware (T2-7): consoles
+    whose encoding cannot render the Unicode glyphs (e.g. Windows
+    ``cp936``) get the ASCII table (``OK``/``FAIL``/``!``/``...``).
+    Unknown names return "".
     """
     if not use_color(stream=stream, environ=environ):
         return ""
-    return _UNICODE_SYMBOLS.get(name, "")
+    return _symbol_table(stream).get(name, "")
+
+
+# Status value -> symbol name, derived from the _STATUS_VOCAB color family:
+# ok-family gets ✓, err-family ✗, warn-family !. Dim-family values
+# (expired/finalized/cancelled/unknown) are quiet terminal states and take
+# no glyph.
+_SYMBOL_BY_FAMILY = {
+    "ok": "ok",
+    "warn": "warn",
+    "err": "fail",
+}
+
+
+def status_symbol(value: Any, *, stream: TextIO | None = None,
+                  environ: Mapping[str, str] | None = None) -> str:
+    """Glyph for a status *value* (T2-7), or ``""`` when it takes none.
+
+    Maps through the :data:`_STATUS_VOCAB` color family: ok-family ->
+    ``✓``, err-family -> ``✗``, warn-family -> ``!``. Dim-family values
+    (``expired``, ``finalized``, ``cancelled``, ``unknown``) and unknown
+    values get no glyph. Non-color streams get ``""``, like
+    :func:`symbol`.
+    """
+    entry = _STATUS_VOCAB.get(value)
+    if entry is None:
+        return ""
+    name = _SYMBOL_BY_FAMILY.get(entry[1])
+    if name is None:
+        return ""
+    return symbol(name, stream=stream, environ=environ)

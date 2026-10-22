@@ -58,7 +58,7 @@ from pathlib import Path
 from typing import Any
 
 from .home import get_zn_home
-from .cli_format import colorize, kv, section, status_word, symbol, use_color
+from .cli_format import colorize, kv, section, status_symbol, status_word, symbol, use_color
 from .model_check import (
     DEFAULT_PROBE_TIMEOUT_SECONDS,
     check_model_routes,
@@ -845,13 +845,18 @@ def _format_approval_card(
     """Two-line approval card (T2-3): headline + indented detail line.
 
     Headline: ``<request_id> [<status>] <action_kind>`` (status colored via
-    the cli_format contract on TTY). Detail line: ``target= scope=
-    expires=`` plus ``waited=`` for pending cards with a known
-    ``created_at``. Non-TTY/NO_COLOR output is plain text.
+    the cli_format contract on TTY; a status glyph is prepended on TTY
+    via ``status_symbol`` -- non-TTY output stays byte-identical).
+    Detail line: ``target= scope= expires=`` plus ``waited=`` for pending
+    cards with a known ``created_at``. Non-TTY/NO_COLOR output is plain
+    text.
     """
+    status = item.get("status") or "?"
+    mark = status_symbol(status)
     head = (
+        f"{mark + ' ' if mark else ''}"
         f"{item.get('request_id') or '?'}  "
-        f"[{status_word(item.get('status') or '?')}]  "
+        f"[{status_word(status)}]  "
         f"{item.get('action_kind') or '?'}"
     )
     detail = [
@@ -870,12 +875,13 @@ def _format_approval_detail(item: dict[str, Any], now: datetime | None = None) -
 
     Renders every field the ``approval_list`` RPC already returns, skipping
     empty ones; labels are plain Chinese text, the status word follows the
-    cli_format contract (colored only on TTY).
+    cli_format contract (colored only on TTY, glyph prepended on TTY).
     """
     request_id = str(item.get("request_id") or "?")
-    status = status_word(item.get("status") or "?")
+    status = item.get("status") or "?"
+    mark = status_symbol(status)
     kind = _one_line(item.get("action_kind"), limit=40) or "?"
-    lines = [f"审批卡 {request_id}  [{status}]  {kind}"]
+    lines = [f"{mark + ' ' if mark else ''}审批卡 {request_id}  [{status_word(status)}]  {kind}"]
     rows: list[tuple[str, str]] = []
     for label, key in (
         ("目标", "target"),
@@ -1251,14 +1257,17 @@ def _cmd_connector_status(args: argparse.Namespace) -> int:
     for item in result["connectors"]:
         if not isinstance(item, dict):
             continue
+        # T2-7: unified state glyph on TTY; the state words stay untouched
+        # so off-TTY output keeps its historic bytes.
         if item.get("approved") and not item.get("mounted"):
-            state = "FAILED "
+            state, mark = "FAILED ", symbol("fail")
             failed += 1
         elif item.get("mounted"):
-            state = "mounted"
+            state, mark = "mounted", symbol("ok")
         else:
-            state = "off    "
+            state, mark = "off    ", ""
         print(
+            f"{mark + ' ' if mark else ''}"
             f"{_one_line(item.get('r_series'), limit=4):4} "
             f"{_one_line(item.get('name'), limit=16):16} "
             f"{state}  {_one_line(item.get('reason'), limit=100)}"
@@ -1616,9 +1625,13 @@ def _cmd_status(args: argparse.Namespace) -> int:
     print(section("ZN status"))
 
     def _row(
-        label: str, text: str, *, kind: str | None = None, hint: str | None = None
+        label: str, text: str, *, kind: str | None = None, hint: str | None = None,
+        sym: str | None = None,
     ) -> None:
-        cell = f"{label:<10} {text}"
+        # T2-7: unified status glyph, TTY-only via symbol() ("" off-TTY, so
+        # piped output keeps its historic bytes).
+        mark = symbol(sym) if sym else ""
+        cell = f"{label:<10} {mark + ' ' if mark else ''}{text}"
         if kind:
             cell = colorize(cell, kind)
         if hint:
@@ -1630,15 +1643,16 @@ def _cmd_status(args: argparse.Namespace) -> int:
         alive = data["resident"]["alive"]
         pulse = _one_line(data["resident"]["pulse_count"], limit=12)
         if alive:
-            _row("resident", f"{status_word(True)} (pulse_count={pulse})")
+            _row("resident", f"{status_word(True)} (pulse_count={pulse})", sym="ok")
         else:
-            _row("resident", status_word("unknown"), kind="err", hint="zn-resident")
+            _row("resident", status_word("unknown"), kind="err", hint="zn-resident", sym="fail")
     else:
         _row(
             "resident",
             f"{status_word('unreachable')} ({_one_line(daemon_error, limit=90)})",
             kind="err",
             hint="check ZN_HOME, or start the resident service (zn-resident)",
+            sym="fail",
         )
 
     # summary row
@@ -1656,18 +1670,19 @@ def _cmd_status(args: argparse.Namespace) -> int:
 
     # model row (local probe, works without a running resident)
     if not report.configured:
-        _row("model", "no model routes configured", kind="err", hint="zn model check")
+        _row("model", "no model routes configured", kind="err", hint="zn model check", sym="fail")
     else:
         reached = report.reachable_count
         total = len(report.results)
         if reached:
-            _row("model", f"{reached} of {total} route(s) reachable")
+            _row("model", f"{reached} of {total} route(s) reachable", sym="ok")
         else:
             _row(
                 "model",
                 f"{reached} of {total} route(s) reachable",
                 kind="err",
                 hint="zn model check",
+                sym="fail",
             )
 
     # connector row
@@ -1678,6 +1693,7 @@ def _cmd_status(args: argparse.Namespace) -> int:
             f"config error: {counts['config_error']}",
             kind="err",
             hint="check connectors.yaml",
+            sym="fail",
         )
     elif connector_local:
         approved, failed = counts["approved"], counts["failed"]
@@ -1687,12 +1703,14 @@ def _cmd_status(args: argparse.Namespace) -> int:
                 f"{approved} approved, {failed} failed (local config evaluation)",
                 kind="err",
                 hint="zn connector status",
+                sym="fail",
             )
         else:
             _row(
                 "connectors",
                 f"{approved} approved (local config evaluation)",
                 hint="zn connector status",
+                sym="ok",
             )
     else:
         mounted, approved, failed = (
@@ -1706,20 +1724,22 @@ def _cmd_status(args: argparse.Namespace) -> int:
                 f"{mounted} of {approved} mounted, {failed} failed",
                 kind="err",
                 hint="zn connector status",
+                sym="fail",
             )
         else:
-            _row("connectors", f"{mounted} of {approved} mounted")
+            _row("connectors", f"{mounted} of {approved} mounted", sym="ok")
 
     # approvals row
     pending = data["approvals"]["pending"]
     if pending is None:
-        _row("approvals", status_word("unreachable"), kind="err")
+        _row("approvals", status_word("unreachable"), kind="err", sym="fail")
     elif pending:
         _row(
             "approvals",
             f"{pending} pending",
             kind="warn",
             hint="zn approval list",
+            sym="warn",
         )
     else:
         _row("approvals", "none pending")
@@ -1757,19 +1777,22 @@ def _cmd_connector_status_offline(args: argparse.Namespace, error: str) -> int:
     print(f"daemon unreachable ({_one_line(error, limit=90)}); showing local config evaluation")
     for item in status:
         mount = item.get("last_mount") or {}
+        # T2-7: unified state glyph on TTY; state words stay untouched so
+        # off-TTY output keeps its historic bytes.
         if not item.get("approved"):
-            state = "off    "
+            state, mark = "off    ", ""
             reason = "not approved in connectors.yaml (default off)"
         elif mount.get("mounted") is True:
-            state = "mounted"
+            state, mark = "mounted", symbol("ok")
             reason = str(mount.get("reason") or "")
         elif mount.get("mounted") is False:
-            state = "FAILED "
+            state, mark = "FAILED ", symbol("fail")
             reason = str(mount.get("reason") or "")
         else:
-            state = "pending"
+            state, mark = "pending", symbol("warn")
             reason = str(item.get("readiness") or "will mount on next daemon start")
         print(
+            f"{mark + ' ' if mark else ''}"
             f"{_one_line(item.get('r_series'), limit=4):4} "
             f"{_one_line(item.get('name'), limit=16):16} "
             f"{state}  {_one_line(reason, limit=100)}"
@@ -1926,9 +1949,13 @@ def _cmd_model_check(args: argparse.Namespace) -> int:
                 if result.latency_seconds is not None
                 else "?"
             )
-            print(f"reachable   {identity}  {latency}")
+            # T2-7: unified ok/fail glyph on TTY; the words stay so scripts
+            # grepping "reachable"/"unreachable" keep working off-TTY.
+            mark = symbol("ok")
+            print(f"{mark + ' ' if mark else ''}reachable   {identity}  {latency}")
         else:
-            print(f"unreachable {identity}  {_one_line(result.detail, limit=160)}")
+            mark = symbol("fail")
+            print(f"{mark + ' ' if mark else ''}unreachable {identity}  {_one_line(result.detail, limit=160)}")
     print(f"{report.reachable_count} of {len(report.results)} route(s) reachable")
     return 0 if report.any_reachable else 1
 
