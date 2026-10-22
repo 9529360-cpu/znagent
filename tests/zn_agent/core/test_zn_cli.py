@@ -661,47 +661,52 @@ class ZnCliUnitTests(_CliHarness):
                 daemon=True,
             )
             thread.start()
-            deadline = time.monotonic() + 15.0
-            while not endpoint_path.exists() and time.monotonic() < deadline:
-                time.sleep(0.05)
-            self.assertTrue(endpoint_path.exists(), "resident endpoint not published")
-
-            repo_root = Path(__file__).resolve().parents[3]
-            child_env = dict(os.environ)
-            child_env.update(
-                {
-                    "ZN_HOME": str(home),
-                    "ZN_AGENT_HOME": str(home),
-                    "PYTHONPATH": str(repo_root / "runtime" / "python"),
-                    "PYTHONIOENCODING": "utf-8",
-                }
-            )
-            popen_kwargs: dict = {
-                "env": child_env,
-                "stdout": subprocess.PIPE,
-                "stderr": subprocess.PIPE,
-                "text": True,
-            }
-            if os.name == "nt":
-                popen_kwargs["stdin"] = subprocess.DEVNULL
-                popen_kwargs["creationflags"] = (
-                    getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
-                    | getattr(subprocess, "CREATE_NO_WINDOW", 0)
-                )
-            proc = subprocess.Popen(
-                [sys.executable, "-m", "zn_agent.core.zn_cli", "work", "list"],
-                **popen_kwargs,
-            )
             try:
-                out, err = proc.communicate(timeout=60)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                out, err = proc.communicate()
-                self.fail("zn work list child did not exit within 60s")
-            self.assertEqual(proc.returncode, 0, err)
-            self.assertNotIn("stale", err)
-            self.assertNotIn("已过期", err)
-            self.assertIn("no work threads", out)
+                deadline = time.monotonic() + 15.0
+                while not endpoint_path.exists() and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                self.assertTrue(endpoint_path.exists(), "resident endpoint not published")
+
+                repo_root = Path(__file__).resolve().parents[3]
+                child_env = dict(os.environ)
+                child_env.update(
+                    {
+                        "ZN_HOME": str(home),
+                        "ZN_AGENT_HOME": str(home),
+                        "PYTHONPATH": str(repo_root / "runtime" / "python"),
+                        "PYTHONIOENCODING": "utf-8",
+                    }
+                )
+                popen_kwargs: dict = {
+                    "env": child_env,
+                    "stdout": subprocess.PIPE,
+                    "stderr": subprocess.PIPE,
+                    "text": True,
+                }
+                if os.name == "nt":
+                    popen_kwargs["stdin"] = subprocess.DEVNULL
+                    popen_kwargs["creationflags"] = (
+                        getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+                        | getattr(subprocess, "CREATE_NO_WINDOW", 0)
+                    )
+                proc = subprocess.Popen(
+                    [sys.executable, "-m", "zn_agent.core.zn_cli", "work", "list"],
+                    **popen_kwargs,
+                )
+                try:
+                    out, err = proc.communicate(timeout=60)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    out, err = proc.communicate()
+                    self.fail("zn work list child did not exit within 60s")
+                self.assertEqual(proc.returncode, 0, err)
+                self.assertNotIn("stale", err)
+                self.assertNotIn("已过期", err)
+                self.assertIn("no work threads", out)
+            finally:
+                _best_effort_shutdown(endpoint_path)
+                thread.join(timeout=10.0)
+                resident.store.close()
 
     def test_load_endpoint_rejects_short_secret(self):
         self.endpoint_path.write_text(
