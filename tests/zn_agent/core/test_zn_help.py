@@ -131,6 +131,17 @@ _EXPECTED_SNAPSHOT = """ZN 能帮你干的事（按场景）
     恢复一条被暂停的例行任务
     例：zn routine resume <id>
 
+--- 日记 (3) ---
+  diary list
+    看 ZN 写过哪些日记（最新在前）
+    例：zn diary list
+  diary get
+    看某天的日记正文
+    例：zn diary get --date 2026-10-22
+  diary get
+    看某天日记的原始内容（脚本用）
+    例：zn diary get --date 2026-10-22 --json
+
 --- 日常 (5) ---
   suggestions list
     看 ZN 给你的建议
@@ -158,9 +169,9 @@ class TestHelpSnapshot(unittest.TestCase):
             _EXPECTED_SNAPSHOT,
         )
 
-    def test_snapshot_has_exactly_six_sections(self):
+    def test_snapshot_has_exactly_seven_sections(self):
         titles = [title for title, _ in _HELP_SECTIONS]
-        self.assertEqual(titles, ["交办", "审批", "记忆", "团队与自驱", "例行任务", "日常"])
+        self.assertEqual(titles, ["交办", "审批", "记忆", "团队与自驱", "例行任务", "日记", "日常"])
 
     def test_each_section_has_three_to_five_rows(self):
         for title, rows in _HELP_SECTIONS:
