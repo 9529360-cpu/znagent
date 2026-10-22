@@ -8,7 +8,7 @@ call per command to the already-existing Daemon RPC methods
 (``work_list`` / ``work_get`` / ``work_create`` / ``work_submit`` /
 ``approval_list`` / ``approval_decide`` / ``memory_list`` / ``team_list`` /
 ``routine_list`` / ``routine_get`` / ``routine_runs`` / ``routine_pause`` /
-``routine_resume``). All policy, execution, approval and
+``routine_resume`` / ``diary_list`` / ``diary_get``). All policy, execution, approval and
 persistence decisions stay server-side.
 
 Running ``zn`` with no subcommand (or ``zn chat``) opens the interactive
@@ -50,12 +50,13 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import sys
 import threading
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -450,6 +451,31 @@ def _require_non_empty(value: str, *, name: str) -> str:
     return text
 
 
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _require_date(value: str, *, name: str) -> str:
+    """Validate a ``YYYY-MM-DD`` date argument (e.g. for ``diary get``).
+
+    argparse surfaces an :class:`argparse.ArgumentTypeError` as a usage
+    error (exit 2) with the offending value, matching the other
+    ``_require_*`` validators. The strict shape check comes first so
+    values like ``20261022`` or ``2026-1-1`` are rejected even though
+    ``date.fromisoformat`` would accept some of them on newer Pythons;
+    the real calendar check (no Feb 30) comes second.
+    """
+    text = str(value or "").strip()
+    try:
+        valid = bool(_DATE_RE.match(text)) and date.fromisoformat(text)
+    except ValueError:
+        valid = False
+    if not valid:
+        raise argparse.ArgumentTypeError(
+            f"{name} must be YYYY-MM-DD (e.g. 2026-10-22), got {text!r}"
+        )
+    return text
+
+
 def _client(args: argparse.Namespace) -> ResidentClient:
     endpoint = load_endpoint(getattr(args, "endpoint", None))
     return ResidentClient(endpoint, timeout=args.timeout)
@@ -475,6 +501,7 @@ _EMPTY_RESULT_HINTS: dict[str, str] = {
     "team_list": "下一步：交办一件事，团队会在任务里自动组建，运行 `zn work submit --task \"…\"`",
     "suggestions_list": "下一步：看看 ZN 都会什么，运行 `zn help`",
     "routine_list": "下一步：跟 ZN 说一句话就能创建例行任务，比如「每天早上 8 点提醒我看今天的日程」",
+    "diary_list": "下一步：日记是 ZN 在聊天里每天自动写的，跟它说「今天写了日记吗」就能看到",
 }
 
 
@@ -1829,6 +1856,166 @@ def _cmd_routine_resume(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- T10: `zn diary ...` ---------------------------------------------------
+# Terminal face for the daemon's diary_* read-only RPCs (already dispatched
+# in daemon.py: ``diary_list`` -- inventory newest first, ``diary_get`` --
+# one entry by date, null result when the date has no entry). No new daemon
+# RPC, no daemon.py changes.
+#
+# Offline contract (T2-6 style, same as the T9 read-only commands): both
+# commands exit 0 when the resident is unreachable and print an honest note
+# naming what is unavailable + the start hint. A missing entry (the daemon
+# answers null, not a rejection) is NOT an offline case: it surfaces as a
+# humanized "not found" error on stderr, exit 1. diary_write stays on the
+# chat path and is deliberately NOT exposed here.
+
+_DIARY_RPC_REJECTED_PREFIX = _ERROR_COPY["rpc_rejected"][0].split("{method}")[0]
+
+
+def _diary_rpc(
+    args: argparse.Namespace, method: str, params: dict[str, Any]
+) -> tuple[bool, Any]:
+    """Call one ``diary_*`` RPC, classifying failures.
+
+    Returns ``(True, result)`` on success, or ``(False, error_text)`` when
+    the call never got a usable answer from the resident (missing / bad
+    endpoint, connection, auth or transport problems) -- the offline path.
+    A server-side rejection (``ok: false``) re-raises as :class:`CliError`
+    so the humanized ``rpc_rejected`` copy reaches stderr with exit 1.
+    """
+    try:
+        return True, _client(args).call(method, params)
+    except CliError as exc:
+        text = str(exc)
+        if text.startswith(_DIARY_RPC_REJECTED_PREFIX):
+            raise
+        return False, text
+
+
+def _diary_offline(
+    args: argparse.Namespace,
+    error: str,
+    *,
+    unavailable: str,
+    json_payload: dict[str, Any],
+) -> int:
+    """T2-6-style offline rendering for diary commands: exit 0.
+
+    *unavailable* names what could not be done ("看不到日记列表",
+    "看不到某天的日记", ...). Nothing is claimed to have happened.
+    """
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "daemon_reachable": False,
+                    "daemon_error": _one_line(error, limit=200),
+                    **json_payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        )
+        return 0
+    print(f"常驻服务未运行（unreachable）：{unavailable}")
+    print("下一步：检查 ZN_HOME 是否正确，或启动常驻服务（zn-resident）")
+    return 0
+
+
+def _format_diary_line(item: dict[str, Any]) -> str:
+    """One-line list row: date + item count + one-line text excerpt."""
+    entry_date = _one_line(item.get("date"), limit=12) or "?"
+    line = entry_date
+    count = item.get("item_count")
+    if isinstance(count, int):
+        line += f"  （{count} 条素材）"
+    text = _one_line(item.get("text"), limit=72)
+    if text:
+        line += f"  {text}"
+    return line
+
+
+def _format_diary_detail(item: dict[str, Any]) -> str:
+    """Full detail view of one diary entry (``zn diary get``).
+
+    Headline row (date), then indented label rows for the fields the
+    ``diary_get`` RPC already returns, then the body rendered with
+    :func:`_long_text` so line structure survives (T2-4 rule).
+    """
+    entry_date = _one_line(item.get("date"), limit=12) or "?"
+    lines = [f"日记 {entry_date}"]
+    count = item.get("item_count")
+    if isinstance(count, int):
+        lines.append(f"  素材数：{count}")
+    created = _one_line(item.get("created_at"), limit=40)
+    if created:
+        lines.append(f"  写于：{created}")
+    text = str(item.get("text") or "")
+    if text.strip():
+        lines.append("  正文：")
+        body = _long_text(
+            text,
+            overflow_suffix=f"，运行 `zn diary get --date {entry_date} --json` 看全文",
+        )
+        for body_line in body.split("\n"):
+            lines.append(f"  {body_line}")
+    return "\n".join(lines)
+
+
+def _cmd_diary_list(args: argparse.Namespace) -> int:
+    ok, payload = _diary_rpc(args, "diary_list", {"limit": args.limit})
+    if not ok:
+        return _diary_offline(
+            args,
+            payload,
+            unavailable="看不到日记列表",
+            json_payload={"entries": []},
+        )
+    entries = payload
+    if not isinstance(entries, list):
+        raise _unexpected_result("diary_list", entries)
+    if args.json:
+        print(json.dumps(entries, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if not entries:
+        print("no diary entries")
+        _print_empty_hint("diary_list")
+        return 0
+    print(section("diary entries", len(entries)))
+    for item in entries:
+        if isinstance(item, dict):
+            print(_format_diary_line(item))
+    return 0
+
+
+def _cmd_diary_get(args: argparse.Namespace) -> int:
+    ok, payload = _diary_rpc(args, "diary_get", {"date": args.date})
+    if not ok:
+        return _diary_offline(
+            args,
+            payload,
+            unavailable=f"看不到 {args.date} 的日记",
+            json_payload={"date": args.date, "entry": None},
+        )
+    if payload is None:
+        # The daemon answers null (not a rejection) when the date has no
+        # entry: humanized "not found", exit 1. The English fragment keeps
+        # the server contract greppable; the next line points at the list.
+        raise CliError(
+            f"找不到 {args.date} 的日记（no diary entry for that date）。"
+            "用 'zn diary list' 看看 ZN 写过哪些日记。"
+        )
+    result = payload
+    if not isinstance(result, dict) or not result:
+        raise _unexpected_result("diary_get", result)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(_format_diary_detail(result))
+    return 0
+
+
 # --- T2-6: `zn status` aggregate -----------------------------------------
 # One-screen ZN health: resident liveness, status summary, model channel,
 # connector mounts, pending approvals, autonomy envelope. Read-only: only
@@ -2442,6 +2629,26 @@ _HELP_SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
                 "routine resume",
                 "恢复一条被暂停的例行任务",
                 "zn routine resume <id>",
+            ),
+        ),
+    ),
+    (
+        "日记",
+        (
+            (
+                "diary list",
+                "看 ZN 写过哪些日记（最新在前）",
+                "zn diary list",
+            ),
+            (
+                "diary get",
+                "看某天的日记正文",
+                "zn diary get --date 2026-10-22",
+            ),
+            (
+                "diary get",
+                "看某天日记的原始内容（脚本用）",
+                "zn diary get --date 2026-10-22 --json",
             ),
         ),
     ),
@@ -3135,6 +3342,49 @@ def build_parser() -> argparse.ArgumentParser:
     )
     routine_resume.add_argument("--json", action="store_true", help="print raw JSON")
     routine_resume.set_defaults(func=_cmd_routine_resume)
+
+    # T10: diary -- read-only terminal face for the resident's daily diary.
+    # diary_write stays on the chat path. T3-2: epilog examples live on
+    # each leaf parser like every other command.
+    diary = sub.add_parser(
+        "diary", help="read the resident's daily diary entries"
+    )
+    diary_sub = diary.add_subparsers(
+        dest="diary_command", metavar="subcommand", required=True
+    )
+
+    diary_list = diary_sub.add_parser(
+        "list",
+        help="list diary entries, newest first (read-only)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn diary list\n"
+        "  zn diary list --limit 20",
+    )
+    diary_list.add_argument(
+        "--limit",
+        type=lambda v: _require_positive_int(v, name="--limit", maximum=100),
+        default=20,
+        help="max entries to show (default 20)",
+    )
+    diary_list.add_argument("--json", action="store_true", help="print raw JSON")
+    diary_list.set_defaults(func=_cmd_diary_list)
+
+    diary_get = diary_sub.add_parser(
+        "get",
+        help="show one diary entry by date (read-only)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn diary get --date 2026-10-22",
+    )
+    diary_get.add_argument(
+        "--date",
+        required=True,
+        type=lambda v: _require_date(v, name="--date"),
+        help="entry date in YYYY-MM-DD, e.g. 2026-10-22",
+    )
+    diary_get.add_argument("--json", action="store_true", help="print raw JSON")
+    diary_get.set_defaults(func=_cmd_diary_get)
 
     # T2-6: one-screen aggregate; read-only, reuses existing daemon RPCs.
     # T3-2: epilog examples live on this leaf parser like every other command.
