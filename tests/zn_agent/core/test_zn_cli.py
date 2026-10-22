@@ -4155,3 +4155,397 @@ class ZnCliWorkResolveUncertainT14Tests(_CliHarness):
         self.assertEqual(code, 0, err)
         self.assertNotIn("说明：", out)
         self.assertNotIn("\x1b[", out + err)
+
+
+class ZnCliWorkRenameT16Tests(_CliHarness):
+    """T16: ``zn work rename`` -- terminal entry for renaming a work thread.
+
+    New test class (Floor Guard: existing tests and assertions untouched).
+    """
+
+    def _run_on_tty(self, argv, handler, no_color=False):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        if no_color:
+            env["NO_COLOR"] = "1"
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def _argv(self, title="新标题", extra=()):
+        return ["work", "rename", "--thread-id", "t1", "--title", title, *extra]
+
+    def _result(self, **overrides):
+        result = {
+            "id": "t1",
+            "title": "新标题",
+            "created_at": "2026-10-22T01:00:00Z",
+            "updated_at": "2026-10-22T02:00:00Z",
+            "active_run": None,
+            "messages": [],
+            "artifacts": [],
+            "metadata": {},
+        }
+        result.update(overrides)
+        return result
+
+    # -- happy paths ---------------------------------------------------------
+
+    def test_rename_success_prints_new_title(self):
+        code, out, err = self._run(
+            self._argv(), self._handler({"work_rename": self._result()})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("renamed thread=t1", out)
+        self.assertIn("新标题：新标题", out)
+        self.assertEqual(
+            self.calls, [("work_rename", {"thread_id": "t1", "title": "新标题"})]
+        )
+
+    def test_rename_sends_exact_rpc_schema(self):
+        # the daemon rejects work_rename params that are not exactly
+        # {"thread_id", "title"} -- the client must send nothing else.
+        self._run(self._argv(), self._handler({"work_rename": self._result()}))
+        method, params = self.calls[0]
+        self.assertEqual(method, "work_rename")
+        self.assertEqual(set(params), {"thread_id", "title"})
+
+    def test_rename_prints_server_returned_title(self):
+        # the resident normalizes titles; what the resident stored wins.
+        code, out, err = self._run(
+            self._argv(),
+            self._handler({"work_rename": self._result(title="归一化后")}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("新标题：归一化后", out)
+
+    def test_rename_json_passes_rpc_result_through(self):
+        payload = self._result()
+        code, out, err = self._run(
+            self._argv(extra=["--json"]),
+            self._handler({"work_rename": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), payload)
+        self.assertIn('"title"', out)
+
+    def test_rename_malformed_result_humanized(self):
+        code, out, err = self._run(
+            self._argv(), self._handler({"work_rename": {"id": "t1"}})
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "zn: error: 服务返回了无法识别的结果（unexpected work_rename result", err
+        )
+
+    # -- argparse: illegal / missing values exit 2 ----------------------------
+
+    def test_missing_thread_id_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["work", "rename", "--title", "新标题"], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_missing_title_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["work", "rename", "--thread-id", "t1"], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_blank_title_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(self._argv(title="   "), handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    # -- T2-6: unreachable resident -> exit 0, nothing claimed ------------------
+
+    def test_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._argv(), refused)
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有给线程改名", out)
+        self.assertIn("未生效", out)
+        self.assertNotIn("renamed thread=t1", out)
+
+    def test_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._argv(extra=["--json"]), refused)
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["renamed"])
+        self.assertEqual(data["thread_id"], "t1")
+        self.assertEqual(data["title"], "新标题")
+
+    # -- T2-5: server rejections humanized, exit 1 -------------------------------
+
+    def test_unknown_thread_humanized(self):
+        handler = self._handler(
+            {"work_rename": (False, None, "ValueError: unknown work thread")}
+        )
+        code, out, err = self._run(self._argv(), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "zn: error: 找不到这个工作线程（unknown work thread）", err
+        )
+        self.assertIn("zn work list", err)
+        self.assertNotIn("服务端返回错误", err)
+
+    def test_other_server_error_unchanged(self):
+        handler = self._handler(
+            {"work_rename": (False, None, "RuntimeError: something else broke")}
+        )
+        code, out, err = self._run(self._argv(), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "服务端返回错误（work_rename）：RuntimeError: something else broke", err
+        )
+
+    # -- TTY niceties -----------------------------------------------------------
+
+    def test_tty_prints_confirm_hint(self):
+        code, out, err = self._run_on_tty(
+            self._argv(), self._handler({"work_rename": self._result()})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("用 `zn work list` 确认新标题", out)
+        self.assertIn("\x1b[2m", out)
+
+    def test_pipe_output_has_no_hint(self):
+        code, out, err = self._run(
+            self._argv(), self._handler({"work_rename": self._result()})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("用 `zn work list`", out)
+        self.assertNotIn("\x1b[", out + err)
+
+
+class ZnCliWorkAttachT16Tests(_CliHarness):
+    """T16: ``zn work attach`` -- terminal entry for attaching a workspace.
+
+    New test class (Floor Guard: existing tests and assertions untouched).
+    """
+
+    def _run_on_tty(self, argv, handler, no_color=False):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        if no_color:
+            env["NO_COLOR"] = "1"
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def _argv(self, path, extra=()):
+        return ["work", "attach", "--thread-id", "t1", "--path", path, *extra]
+
+    def _result(self, **overrides):
+        result = {
+            "id": "t1",
+            "title": "Thread",
+            "created_at": "2026-10-22T01:00:00Z",
+            "updated_at": "2026-10-22T02:00:00Z",
+            "active_run": None,
+            "messages": [],
+            "artifacts": [],
+            "metadata": {
+                "workspace": {
+                    "path": str(self.tmp.name),
+                    "name": os.path.basename(self.tmp.name),
+                    "attached_at": "2026-10-22T02:00:00Z",
+                }
+            },
+        }
+        result.update(overrides)
+        return result
+
+    # -- happy paths ---------------------------------------------------------
+
+    def test_attach_success_prints_workspace(self):
+        code, out, err = self._run(
+            self._argv(self.tmp.name),
+            self._handler({"work_attach_workspace": self._result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("attached workspace to thread=t1", out)
+        self.assertIn(f"目录：{self.tmp.name}", out)
+        self.assertEqual(
+            self.calls,
+            [
+                (
+                    "work_attach_workspace",
+                    {"thread_id": "t1", "workspace_path": self.tmp.name},
+                )
+            ],
+        )
+
+    def test_attach_json_passes_rpc_result_through(self):
+        payload = self._result()
+        code, out, err = self._run(
+            self._argv(self.tmp.name, extra=["--json"]),
+            self._handler({"work_attach_workspace": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), payload)
+        self.assertIn('"workspace"', out)
+
+    def test_attach_malformed_result_humanized(self):
+        code, out, err = self._run(
+            self._argv(self.tmp.name),
+            self._handler({"work_attach_workspace": {"id": "t1", "metadata": {}}}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "zn: error: 服务返回了无法识别的结果（unexpected work_attach_workspace result",
+            err,
+        )
+
+    # -- client-side path validation: no RPC leaves the terminal ---------------
+
+    def test_missing_directory_path_humanized(self):
+        missing = os.path.join(self.tmp.name, "no-such-dir")
+        handler = self._handler({})
+        code, out, err = self._run(self._argv(missing), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error: 找不到这个目录（path does not exist", err)
+        self.assertIn(missing, err)
+        self.assertEqual(self.calls, [])
+
+    def test_file_instead_of_directory_humanized(self):
+        file_path = os.path.join(self.tmp.name, "a-file.txt")
+        Path(file_path).write_text("x", encoding="utf-8")
+        handler = self._handler({})
+        code, out, err = self._run(self._argv(file_path), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error: 这不是一个目录（not a directory", err)
+        self.assertEqual(self.calls, [])
+
+    # -- argparse: illegal / missing values exit 2 ----------------------------
+
+    def test_missing_thread_id_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["work", "attach", "--path", self.tmp.name], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_missing_path_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["work", "attach", "--thread-id", "t1"], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    # -- T2-6: unreachable resident -> exit 0, nothing claimed ------------------
+
+    def test_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._argv(self.tmp.name), refused)
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有给线程绑定工作区", out)
+        self.assertIn("未生效", out)
+        self.assertNotIn("attached workspace to thread=t1", out)
+
+    def test_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            self._argv(self.tmp.name, extra=["--json"]), refused
+        )
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["attached"])
+        self.assertEqual(data["thread_id"], "t1")
+        self.assertEqual(data["workspace_path"], self.tmp.name)
+
+    # -- T2-5: server rejections humanized, exit 1 -------------------------------
+
+    def test_server_path_unavailable_humanized(self):
+        # the local pre-check makes this a race-only path; it still has to
+        # be human copy if the resident rejects after the check passed.
+        handler = self._handler(
+            {
+                "work_attach_workspace": (
+                    False,
+                    None,
+                    f"ValueError: workspace path is unavailable: {self.tmp.name}",
+                )
+            }
+        )
+        code, out, err = self._run(self._argv(self.tmp.name), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error: 这个目录常驻服务够不着（workspace path is unavailable）", err)
+        self.assertNotIn("服务端返回错误", err)
+
+    def test_other_server_error_unchanged(self):
+        handler = self._handler(
+            {
+                "work_attach_workspace": (
+                    False,
+                    None,
+                    "RuntimeError: something else broke",
+                )
+            }
+        )
+        code, out, err = self._run(self._argv(self.tmp.name), handler)
+        self.assertEqual(code, 1, err)
+        self.assertIn(
+            "服务端返回错误（work_attach_workspace）：RuntimeError: something else broke",
+            err,
+        )
+
+    # -- TTY niceties -----------------------------------------------------------
+
+    def test_tty_prints_get_hint(self):
+        code, out, err = self._run_on_tty(
+            self._argv(self.tmp.name),
+            self._handler({"work_attach_workspace": self._result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("用 `zn work get --thread-id t1` 查看绑定的工作区", out)
+        self.assertIn("\x1b[2m", out)
+
+    def test_pipe_output_has_no_hint(self):
+        code, out, err = self._run(
+            self._argv(self.tmp.name),
+            self._handler({"work_attach_workspace": self._result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("zn work get --thread-id", out)
+        self.assertNotIn("\x1b[", out + err)
