@@ -1960,6 +1960,175 @@ def _cmd_model_check(args: argparse.Namespace) -> int:
     return 0 if report.any_reachable else 1
 
 
+def _cmd_help(args: argparse.Namespace) -> int:
+    """Print the scenario-organized help overview. Pure local, works offline."""
+    print(render_help_text())
+    return 0
+
+
+# T3-1: scenario-organized `zn help`. Static copy only; never touches the
+# resident. Each row is (command path, one-line human blurb, copy-pasteable
+# example). Every command path is validated against build_parser() by
+# tests/zn_agent/core/test_zn_help.py so copy drift fails loudly instead of
+# going stale.
+_HELP_SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
+    (
+        "交办",
+        (
+            (
+                "work submit",
+                "交办一件事给 ZN，常驻服务去执行",
+                'zn work submit --task "把 downloads 里昨天的发票整理成一张表"',
+            ),
+            (
+                "work list",
+                "看看 ZN 手上正在干的活",
+                "zn work list",
+            ),
+            (
+                "work get",
+                "看某件事的进展和结果",
+                "zn work get --thread-id <id>",
+            ),
+            (
+                "work cancel",
+                "停掉一件正在干的活",
+                "zn work cancel --thread-id <id> --event-id <id>",
+            ),
+            (
+                "chat",
+                "直接跟 ZN 对话交办（交互模式）",
+                "zn chat",
+            ),
+        ),
+    ),
+    (
+        "审批",
+        (
+            (
+                "approval list",
+                "看等你拍板的申请卡",
+                "zn approval list",
+            ),
+            (
+                "approval show",
+                "先看清一张卡的内容再拍板",
+                "zn approval show <id>",
+            ),
+            (
+                "approval decide",
+                "批准或拒绝一张卡",
+                "zn approval decide --request-id <id> --allow",
+            ),
+        ),
+    ),
+    (
+        "记忆",
+        (
+            (
+                "memory list",
+                "看看 ZN 都记着哪些事",
+                "zn memory list",
+            ),
+            (
+                "memory remember",
+                "让 ZN 记住一件事",
+                'zn memory remember --key "公司 wifi 密码" --value "xxxx"',
+            ),
+            (
+                "memory forget",
+                "让 ZN 忘掉一件事（默认要手动确认）",
+                'zn memory forget --key "公司 wifi 密码" --yes',
+            ),
+            (
+                "memory export",
+                "把记忆备份成文件",
+                "zn memory export --out ~/memory-backup.json",
+            ),
+            (
+                "memory import",
+                "从备份文件恢复记忆",
+                "zn memory import --in ~/memory-backup.json",
+            ),
+        ),
+    ),
+    (
+        "团队与自驱",
+        (
+            (
+                "team list",
+                "看有哪些项目团队在干活",
+                "zn team list",
+            ),
+            (
+                "team timeline",
+                "看某件事的团队进展时间线",
+                "zn team timeline --thread-id <id>",
+            ),
+            (
+                "goal list",
+                "看 ZN 的自驱目标清单",
+                "zn goal list",
+            ),
+            (
+                "goal status",
+                "看 ZN 自驱的当前状态",
+                "zn goal status",
+            ),
+        ),
+    ),
+    (
+        "日常",
+        (
+            (
+                "suggestions list",
+                "看 ZN 给你的建议",
+                "zn suggestions list",
+            ),
+            (
+                "autonomy list",
+                "看 ZN 在各领域的自主权设置",
+                "zn autonomy list",
+            ),
+            (
+                "connector status",
+                "看连接器挂载得正不正常",
+                "zn connector status",
+            ),
+            (
+                "model check",
+                "检查模型通道通不通",
+                "zn model check",
+            ),
+            (
+                "status",
+                "一屏看 ZN 的整体状态（服务/模型/审批/连接器）",
+                "zn status",
+            ),
+        ),
+    ),
+)
+
+
+def render_help_text(*, stream=None, environ=None) -> str:
+    """Render the scenario help overview as plain text.
+
+    Local only: no daemon connection. Section headers reuse the
+    ``cli_format.section`` style (``--- title (n) ---``), so TTY coloring
+    follows the same NO_COLOR / non-TTY rules as the rest of the CLI.
+    """
+    lines: list[str] = ["ZN 能帮你干的事（按场景）", ""]
+    for title, rows in _HELP_SECTIONS:
+        lines.append(section(title, len(rows), stream=stream, environ=environ))
+        for command, blurb, example in rows:
+            lines.append(f"  {command}")
+            lines.append(f"    {blurb}")
+            lines.append(f"    例：{example}")
+        lines.append("")
+    lines.append("细看某条命令：zn <命令> --help，例如 zn work submit --help")
+    return "\n".join(lines)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="zn",
@@ -1985,6 +2154,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="show raw server details in error output (same as ZN_DEBUG=1)",
     )
     sub = parser.add_subparsers(dest="command", metavar="command")
+
+    # T3-1: scenario-organized help overview; pure local, no daemon.
+    help_cmd = sub.add_parser(
+        "help",
+        help="按场景看 ZN 能帮你干的事（离线可用）",
+    )
+    help_cmd.set_defaults(func=_cmd_help)
 
     chat = sub.add_parser(
         "chat",
