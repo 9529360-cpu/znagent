@@ -83,6 +83,17 @@ _EXPECTED_SNAPSHOT = """ZN 能帮你干的事（按场景）
     批准或拒绝一张卡
     例：zn approval decide --request-id <id> --allow
 
+--- 审批规则与撤销 (3) ---
+  approval rules list
+    看有哪些自动放行规则
+    例：zn approval rules list
+  approval rules delete
+    收回一条自动放行规则
+    例：zn approval rules delete <rule-id>
+  approval undo
+    撤销一次已执行的批准变更（文件回滚）
+    例：zn approval undo <request-id>
+
 --- 记忆 (5) ---
   memory list
     看看 ZN 都记着哪些事
@@ -169,9 +180,9 @@ class TestHelpSnapshot(unittest.TestCase):
             _EXPECTED_SNAPSHOT,
         )
 
-    def test_snapshot_has_exactly_seven_sections(self):
+    def test_snapshot_has_exactly_eight_sections(self):
         titles = [title for title, _ in _HELP_SECTIONS]
-        self.assertEqual(titles, ["交办", "审批", "记忆", "团队与自驱", "例行任务", "日记", "日常"])
+        self.assertEqual(titles, ["交办", "审批", "审批规则与撤销", "记忆", "团队与自驱", "例行任务", "日记", "日常"])
 
     def test_each_section_has_three_to_five_rows(self):
         for title, rows in _HELP_SECTIONS:

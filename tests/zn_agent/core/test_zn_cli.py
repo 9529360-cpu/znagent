@@ -2627,3 +2627,271 @@ class ZnCliNextHintT34Tests(_CliHarness):
         self.assertEqual(code, 0, err)
         self.assertIn("t-1", out)
         self.assertNotIn("下一步", out)
+
+
+class ZnCliApprovalRulesUndoT11Tests(_CliHarness):
+    """T11: ``zn approval rules list|delete`` + ``zn approval undo``."""
+
+    def _rules_result(self):
+        return {
+            "pending": [],
+            "denied": [],
+            "expired": [],
+            "applied": [],
+            "rules": [
+                {
+                    "rule_id": "rule-abc123",
+                    "action_kind": "send",
+                    "scope": "chat",
+                    "effect": "auto_allow",
+                    "created_at": "2026-10-20T08:00:00Z",
+                    "enabled": True,
+                },
+                {
+                    "rule_id": "rule-def456",
+                    "action_kind": "publish",
+                    "scope": "rss",
+                    "effect": "ask_first",
+                    "created_at": "2026-10-21T08:00:00Z",
+                    "enabled": True,
+                },
+            ],
+            "audit": [],
+        }
+
+    # -- rules list -----------------------------------------------------
+
+    def test_rules_list_prints_rules(self):
+        code, out, err = self._run(
+            ["approval", "rules", "list"],
+            self._handler({"approval_list": self._rules_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("--- approval rules (2) ---", out)
+        self.assertIn("rule-abc123", out)
+        self.assertIn("rule-def456", out)
+        self.assertIn("always allow", out)  # auto_allow -> T2-7 word
+        self.assertIn("ask_first", out)  # unknown effect passes through
+        self.assertIn("scope=chat", out)
+        self.assertEqual(self.calls, [("approval_list", {})])
+
+    def test_rules_list_empty(self):
+        result = self._rules_result()
+        result["rules"] = []
+        code, out, err = self._run(
+            ["approval", "rules", "list"], self._handler({"approval_list": result})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("no approval rules", out)
+
+    def test_rules_list_json(self):
+        code, out, err = self._run(
+            ["approval", "rules", "list", "--json"],
+            self._handler({"approval_list": self._rules_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertIsInstance(data, list)
+        self.assertEqual(len(data), 2)
+        self.assertEqual(data[0]["rule_id"], "rule-abc123")
+
+    def test_rules_list_malformed_payload(self):
+        result = self._rules_result()
+        result["rules"] = "not-a-list"
+        code, _, err = self._run(
+            ["approval", "rules", "list"], self._handler({"approval_list": result})
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("无法识别", err)
+
+    def test_rules_list_offline(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(["approval", "rules", "list"], refused)
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("看不到审批规则列表", out)
+        self.assertIn("下一步", out)
+
+    def test_rules_list_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(["approval", "rules", "list", "--json"], refused)
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertEqual(data["rules"], [])
+
+    # -- rules delete ---------------------------------------------------
+
+    def test_rules_delete_success(self):
+        code, out, err = self._run(
+            ["approval", "rules", "delete", "rule-abc123"],
+            self._handler({"approval_rule_delete": {"deleted": True}}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("已删除审批规则 rule-abc123", out)
+        self.assertIn("不再生效", out)
+        self.assertEqual(
+            self.calls, [("approval_rule_delete", {"rule_id": "rule-abc123"})]
+        )
+
+    def test_rules_delete_json(self):
+        code, out, err = self._run(
+            ["approval", "rules", "delete", "rule-abc123", "--json"],
+            self._handler({"approval_rule_delete": {"deleted": True}}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            json.loads(out), {"deleted": True, "rule_id": "rule-abc123"}
+        )
+
+    def test_rules_delete_unknown_rule_humanized(self):
+        code, out, err = self._run(
+            ["approval", "rules", "delete", "rule-nope"],
+            self._handler(
+                {
+                    "approval_rule_delete": (
+                        False,
+                        None,
+                        "ValueError: unknown approval rule",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("找不到审批规则 'rule-nope'", err)
+        self.assertIn("unknown approval rule", err)  # english kept in parens
+        self.assertIn("zn approval rules list", err)
+
+    def test_rules_delete_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            ["approval", "rules", "delete", "rule-abc123"], refused
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有删除任何审批规则", out)
+        self.assertNotIn("已删除", out)
+
+    # -- undo -----------------------------------------------------------
+
+    def _undo_result(self, **overrides):
+        result = {
+            "request_id": "req-1",
+            "path": "/home/user/workspace/report.md",
+            "restored": True,
+            "note": "file restored to pre-change snapshot",
+            "pre_undo_checkpoint_id": "ckpt-9",
+        }
+        result.update(overrides)
+        return result
+
+    def test_undo_success_restored(self):
+        code, out, err = self._run(
+            ["approval", "undo", "req-1"],
+            self._handler({"approval_undo": self._undo_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("req-1", out)
+        self.assertIn("已撤销", out)
+        self.assertIn("恢复到变更前", out)
+        self.assertIn("/home/user/workspace/report.md", out)
+        self.assertIn("ckpt-9", out)
+        self.assertEqual(self.calls, [("approval_undo", {"request_id": "req-1"})])
+
+    def test_undo_already_at_pre_change_state(self):
+        code, out, err = self._run(
+            ["approval", "undo", "req-1"],
+            self._handler(
+                {
+                    "approval_undo": self._undo_result(
+                        restored=False,
+                        note="file was already at its pre-change state",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("无需改动", out)
+        self.assertIn("already at pre-change state", out)
+
+    def test_undo_json(self):
+        code, out, err = self._run(
+            ["approval", "undo", "req-1", "--json"],
+            self._handler({"approval_undo": self._undo_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertEqual(data["request_id"], "req-1")
+        self.assertTrue(data["restored"])
+        self.assertEqual(data["pre_undo_checkpoint_id"], "ckpt-9")
+
+    def test_undo_unknown_request_humanized(self):
+        code, out, err = self._run(
+            ["approval", "undo", "req-nope"],
+            self._handler(
+                {
+                    "approval_undo": (
+                        False,
+                        None,
+                        "ValueError: unknown approval request: req-nope",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("找不到审批卡 'req-nope'", err)
+        self.assertIn("unknown approval request", err)
+        self.assertIn("zn approval list --status applied", err)
+
+    def test_undo_not_consumed_humanized(self):
+        code, out, err = self._run(
+            ["approval", "undo", "req-1"],
+            self._handler(
+                {
+                    "approval_undo": (
+                        False,
+                        None,
+                        "ValueError: only an applied (consumed) approval can be "
+                        "undone; request req-1 is pending",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("还不能撤销", err)
+        self.assertIn("only consumed approvals can be undone", err)
+
+    def test_undo_already_undone_humanized(self):
+        code, out, err = self._run(
+            ["approval", "undo", "req-1"],
+            self._handler(
+                {
+                    "approval_undo": (
+                        False,
+                        None,
+                        "ValueError: this approved change was already undone",
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("已经撤销过了", err)
+        self.assertIn("already undone", err)
+
+    def test_undo_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(["approval", "undo", "req-1"], refused)
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有撤销任何变更", out)
+        self.assertNotIn("已撤销", out)
