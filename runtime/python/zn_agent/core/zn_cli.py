@@ -3775,8 +3775,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="resolve an uncertain side effect of an active work event",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例：\n"
-        "  zn work resolve-uncertain --thread-id <thread-id> --event-id <event-id>\n"
-        "      --attempt-id <attempt-id> --decision effect_happened",
+        "  zn work resolve-uncertain --thread-id <thread-id> --event-id <event-id> --attempt-id <attempt-id> --decision effect_happened",
     )
     work_resolve_uncertain.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
     work_resolve_uncertain.add_argument("--event-id", type=lambda v: _require_non_empty(v, name="--event-id"), required=True)
