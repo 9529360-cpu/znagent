@@ -583,6 +583,7 @@ _EMPTY_RESULT_HINTS: dict[str, str] = {
     "routine_list": "下一步：跟 ZN 说一句话就能创建例行任务，比如「每天早上 8 点提醒我看今天的日程」",
     "diary_list": "下一步：日记是 ZN 在聊天里每天自动写的，跟它说「今天写了日记吗」就能看到",
     "approval_rules_list": "下一步：对一张卡用 `zn approval decide --request-id <id> --always-allow` 就会自动建一条规则",
+    "approval_list": "下一步：审批卡由 ZN 在需要你确认时自动发出，先看看自动批准规则，运行 `zn approval rules list`",
 }
 
 
@@ -1116,6 +1117,7 @@ def _cmd_approval_list(args: argparse.Namespace) -> int:
         ("applied", "applied"),
     )
     shown = False
+    any_items = False
     for key, label in sections:
         if wanted != "all" and wanted != key:
             continue
@@ -1127,11 +1129,17 @@ def _cmd_approval_list(args: argparse.Namespace) -> int:
         if not items:
             print("(none)")
             continue
+        any_items = True
         for item in items:
             if isinstance(item, dict):
                 print(_format_approval_card(item))
     if not shown:  # pragma: no cover - argparse restricts --status choices
         raise CliError(f"unknown approval status filter: {wanted!r}")
+    if not any_items:
+        # D1: empty approval list names the most useful next step, like the
+        # other T3-4 lists. TTY-only (use_color), so piped/JSON output is
+        # byte-stable for scripts.
+        _print_empty_hint("approval_list")
     return 0
 
 
