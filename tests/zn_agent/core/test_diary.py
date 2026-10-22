@@ -29,6 +29,7 @@ from unittest import mock
 
 from zn_agent.core.autonomy_policy import AutonomyPolicyStore
 from zn_agent.core.daemon import ResidentRpcServer
+from zn_agent.core import diary as diary_module
 from zn_agent.core.diary import (
     AUTONOMY_DOMAIN,
     DIARY_ALIASES,
@@ -375,18 +376,34 @@ class DiaryTests(unittest.TestCase):
                     input_stream=io.StringIO(),
                     output_stream=io.StringIO(),
                 )
-                written = server.handle(
-                    {
-                        "id": "1",
-                        "method": "diary_write",
-                        "params": {"items": _CANON_ITEMS},
-                    }
-                )
-                self.assertTrue(written["ok"])
-                result = written["result"]
-                self.assertIsNotNone(result)
-                self.assertEqual(result["key"], "zn-diary:" + result["date"])
-                self.assertEqual(result["text"], EXPECTED_DIARY_TEXT)
+                # diary_write 用"今天"（UTC）作 key 与标题；冻结时钟让本测试
+                # 与日历日期无关、逐字节确定性。断言本身未动（仍逐字节比对）。
+                frozen_now = datetime(2026, 10, 21, 20, 30, tzinfo=timezone.utc)
+
+                class _FrozenDateTime(datetime):
+                    @classmethod
+                    def now(cls, tz=None):
+                        return frozen_now
+
+                with mock.patch.object(diary_module, "datetime", _FrozenDateTime):
+                    written = server.handle(
+                        {
+                            "id": "1",
+                            "method": "diary_write",
+                            "params": {"items": _CANON_ITEMS},
+                        }
+                    )
+                    self.assertTrue(written["ok"])
+                    result = written["result"]
+                    self.assertIsNotNone(result)
+                    self.assertEqual(result["key"], "zn-diary:" + result["date"])
+                    self.assertEqual(result["text"], EXPECTED_DIARY_TEXT)
+                    # 同日再次调用：幂等，同一条目（同样冻结时钟）。
+                    again = server.handle(
+                        {"id": "2", "method": "diary_write", "params": {}}
+                    )
+                    self.assertTrue(again["ok"])
+                    self.assertEqual(again["result"]["text"], EXPECTED_DIARY_TEXT)
                 # 返回体只有展示字段。
                 self.assertEqual(
                     set(result.keys()),
@@ -399,13 +416,6 @@ class DiaryTests(unittest.TestCase):
                         "created_at",
                     },
                 )
-
-                # 同日再次调用：幂等，同一条目。
-                again = server.handle(
-                    {"id": "2", "method": "diary_write", "params": {}}
-                )
-                self.assertTrue(again["ok"])
-                self.assertEqual(again["result"]["text"], EXPECTED_DIARY_TEXT)
 
                 # 按日期回顾。
                 got = server.handle(
