@@ -1622,11 +1622,67 @@ def _cmd_team_timeline(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- D4: humanized error + next-step hint when cancelling a finished run ----
+# `zn work cancel` on a run that already ended dies with the server's raw
+# ``RuntimeError: work cancellation requires an active Work run`` and names
+# no next step. Humanize that one known rejection (Chinese body + the
+# English technical snippet in parentheses, T2-5 convention) and print the
+# dim next-step hint: the run is over, inspect it with
+# `zn work get --thread-id <thread_id>`. The whole special case is TTY-only
+# via the same ``use_color()`` gate as the T3-4/D2/D3 hints (``--json`` is
+# excluded even on a real terminal): pipes, NO_COLOR and ``--json`` keep
+# the historic generic ``rpc_rejected`` error byte-stable. Only the exact
+# finished-run signature matches; every other server error travels the
+# untouched generic path. Exit 1 still comes from the central ``run()``
+# CliError handling, so the exit-code contract is unchanged.
+_WORK_CANCEL_FINISHED_SIGNATURE = "RuntimeError: work cancellation requires an active"
+_WORK_CANCEL_FINISHED_LEAD = (
+    "这个任务已经结束了，取消不了（work cancellation requires an active Work run）"
+)
+_WORK_CANCEL_FINISHED_HINT = (
+    "下一步：活已经结束了，用 `zn work get --thread-id {thread_id}` 看结果"
+)
+_WORK_CANCEL_REJECTED_PREFIX = _ERROR_COPY["rpc_rejected"][0].format(
+    method="work_cancel", detail=""
+)
+
+
+def _work_cancel_finished_run(exc: CliError) -> bool:
+    """True when *exc* is the known finished-run ``work_cancel`` rejection.
+
+    Only the generic ``rpc_rejected`` error for ``work_cancel`` whose detail
+    starts with ``RuntimeError: work cancellation requires an active``
+    (raised by ``work_control`` for a run that already ended) counts;
+    anything else keeps the historic generic path.
+    """
+    text = str(exc)
+    if not text.startswith(_WORK_CANCEL_REJECTED_PREFIX):
+        return False
+    detail = text[len(_WORK_CANCEL_REJECTED_PREFIX):]
+    return detail.startswith(_WORK_CANCEL_FINISHED_SIGNATURE)
+
+
+def _print_cancel_finished_hint(thread_id: str) -> None:
+    """Print the one-line D4 next-step hint for cancelling a finished run."""
+    if use_color():
+        print(colorize(f"  {_WORK_CANCEL_FINISHED_HINT.format(thread_id=thread_id)}", "dim"))
+
+
 def _cmd_work_cancel(args: argparse.Namespace) -> int:
-    result = _client(args).call(
-        "work_cancel",
-        {"thread_id": args.thread_id, "event_id": args.event_id},
-    )
+    try:
+        result = _client(args).call(
+            "work_cancel",
+            {"thread_id": args.thread_id, "event_id": args.event_id},
+        )
+    except CliError as exc:
+        # D4: cancelling a finished run is a known dead end -- humanize it
+        # and name the next step on a real human terminal only; pipes /
+        # NO_COLOR / --json keep the historic generic error byte-stable,
+        # and any other rejection travels the untouched generic path.
+        if _work_cancel_finished_run(exc) and use_color() and not args.json:
+            _print_cancel_finished_hint(args.thread_id)
+            raise CliError(_WORK_CANCEL_FINISHED_LEAD) from None
+        raise
     if not isinstance(result, dict) or not isinstance(result.get("progress"), dict):
         raise _unexpected_result("work_cancel", result)
     if args.json:
