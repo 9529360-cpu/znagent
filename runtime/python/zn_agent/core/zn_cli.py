@@ -1698,6 +1698,226 @@ def _cmd_team_timeline(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- T13: `zn team assign ...` / `zn team handover-done` ----------------------
+# Team driving terminal entries. The workbench "做完了" button used to call
+# `team_handover_done`; the workbench is gone (desktop removed in #623), so
+# the terminal owns these steering actions now. The offline contract is
+# T2-6 style (T11/T12): exit 0 + human note when the resident is
+# unreachable, never claiming a mutation happened; server-side rejections
+# surface humanized (T2-5), exit 1. daemon.py is untouched.
+
+_TEAM_T13_RPC_REJECTED_PREFIX = _ERROR_COPY["rpc_rejected"][0].split("{method}")[0]
+
+
+def _team_t13_rpc(
+    args: argparse.Namespace, method: str, params: dict[str, Any]
+) -> tuple[bool, Any]:
+    """Call one team-driving RPC, classifying failures.
+
+    Returns ``(True, result)`` on success, or ``(False, error_text)`` when
+    the call never got a usable answer from the resident (missing / bad
+    endpoint, connection, auth or transport problems) -- the offline path.
+    A server-side rejection (``ok: false``) re-raises as :class:`CliError`
+    so the humanized ``rpc_rejected`` copy reaches stderr with exit 1.
+    """
+    try:
+        return True, _client(args).call(method, params)
+    except CliError as exc:
+        text = str(exc)
+        if text.startswith(_TEAM_T13_RPC_REJECTED_PREFIX):
+            raise
+        return False, text
+
+
+def _team_t13_offline(
+    args: argparse.Namespace,
+    error: str,
+    *,
+    unavailable: str,
+    json_payload: dict[str, Any],
+) -> int:
+    """T2-6-style offline rendering for the T13 commands: exit 0.
+
+    *unavailable* names what could not be done ("没有为团队指派新的专员",
+    "没有放行任何敏感步骤", ...). Never claims a mutation happened.
+    """
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "daemon_reachable": False,
+                    "daemon_error": _one_line(error, limit=200),
+                    **json_payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        )
+        return 0
+    print(f"常驻服务未运行（unreachable）：{unavailable}")
+    print("下一步：检查 ZN_HOME 是否正确，或启动常驻服务（zn-resident）")
+    return 0
+
+
+def _humanize_team_thread_error(exc: CliError, thread_id: str) -> CliError:
+    """Swap the raw ``unknown work thread`` rejection for human copy.
+
+    Shared by both T13 commands: the daemon answers ``ok: false`` with
+    ``ValueError: unknown work thread: '<id>'`` (see the team RPC dispatch
+    in daemon.py). Any other error is returned unchanged.
+    """
+    if "unknown work thread" in str(exc):
+        return CliError(
+            f"找不到工作线程 '{thread_id}'（unknown work thread）。"
+            "用 'zn work list' 看看现有的线程。"
+        )
+    return exc
+
+
+def _humanize_assign_error(exc: CliError, thread_id: str) -> CliError:
+    """Turn ``team_assign`` server rejections into human copy (T2-5).
+
+    The daemon raises ValueError with one reason per failure mode (see
+    ``_team_assign`` in daemon.py): reasons already written in Chinese pass
+    through unchanged; English ones get a Chinese lead line with the
+    English fragment kept in parentheses. Unknown errors pass through.
+    """
+    text = str(exc)
+    if "unknown work thread" in text:
+        return _humanize_team_thread_error(exc, thread_id)
+    if "resident has no work ledger" in text:
+        return CliError(
+            "常驻服务内部缺少工作账本（resident has no work ledger）："
+            "暂时无法读取团队计划，稍后重试；若持续出现请重启常驻服务。"
+        )
+    return exc
+
+
+def _normalize_specialist(raw: Any) -> str:
+    """Strip the optional leading ``@`` from the specialist argument.
+
+    The CLI spells the command ``zn team assign @designer ...``; the
+    ``team_assign`` RPC takes the bare member name (the daemon renders the
+    ``@`` itself when journaling the assignment).
+    """
+    name = str(raw or "").strip()
+    return name[1:] if name.startswith("@") else name
+
+
+def _cmd_team_assign(args: argparse.Namespace) -> int:
+    thread_id = str(args.thread_id)
+    specialist = _normalize_specialist(args.specialist)
+    instruction = str(args.instruction or "")
+    if not specialist:
+        # Only reachable with a bare "@": _require_non_empty already
+        # rejected the empty string, so this is an argparse-grade error.
+        raise CliError(
+            "专员名字不能为空：用法如 zn team assign @设计 "
+            "--thread-id <thread-id> \"把首页排版重做一遍\""
+        )
+    try:
+        ok, payload = _team_t13_rpc(
+            args,
+            "team_assign",
+            {
+                "thread_id": thread_id,
+                "specialist": specialist,
+                "instruction": instruction,
+            },
+        )
+    except CliError as exc:
+        raise _humanize_assign_error(exc, thread_id)
+    if not ok:
+        return _team_t13_offline(
+            args,
+            payload,
+            unavailable=f"没有为团队指派新的专员（@{specialist} 的指派未生效）",
+            json_payload={
+                "assigned": False,
+                "thread_id": thread_id,
+                "specialist": specialist,
+            },
+        )
+    if not isinstance(payload, dict) or not payload.get("item_id"):
+        raise _unexpected_result("team_assign", payload)
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+    item_title = _one_line(payload.get("item_title"), limit=80) or "?"
+    team_id = _one_line(payload.get("team_id"), limit=40) or "-"
+    lines = [
+        f"已把团队下一项任务指派给 @{specialist}（assigned）",
+        f"  任务：{item_title}",
+        f"  团队：{team_id}",
+    ]
+    if instruction.strip():
+        lines.append(f"  说明：{_one_line(instruction.strip(), limit=120)}")
+    lines.append(
+        "  下一步：用 "
+        f"'zn team timeline --thread-id {thread_id}' 看指派是否已记入时间线"
+    )
+    print("\n".join(lines))
+    return 0
+
+
+def _humanize_handover_done_error(exc: CliError, thread_id: str) -> CliError:
+    """Turn ``team_handover_done`` server rejections into human copy (T2-5).
+
+    The daemon raises ValueError for an unknown thread and for "no pending
+    sensitive step" (see ``_team_handover_done`` in daemon.py); the latter
+    is the spec's "no pending -> human refusal, non-zero exit" branch.
+    """
+    text = str(exc)
+    if "unknown work thread" in text:
+        return _humanize_team_thread_error(exc, thread_id)
+    if "没有待主人完成的敏感步骤" in text:
+        return CliError(
+            "该团队当前没有待主人完成的敏感步骤（no pending handover）："
+            f"线程 '{thread_id}' 无需放行。"
+        )
+    return exc
+
+
+def _cmd_team_handover_done(args: argparse.Namespace) -> int:
+    thread_id = str(args.thread_id)
+    try:
+        ok, payload = _team_t13_rpc(
+            args, "team_handover_done", {"thread_id": thread_id}
+        )
+    except CliError as exc:
+        raise _humanize_handover_done_error(exc, thread_id)
+    if not ok:
+        return _team_t13_offline(
+            args,
+            payload,
+            unavailable="没有放行任何敏感步骤",
+            json_payload={"resolved": False, "thread_id": thread_id},
+        )
+    if (
+        not isinstance(payload, dict)
+        or not payload.get("handover_id")
+        or payload.get("status") != "resolved"
+    ):
+        raise _unexpected_result("team_handover_done", payload)
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+    handover_id = _one_line(payload.get("handover_id"), limit=40) or "?"
+    kind = _one_line(payload.get("kind"), limit=32)
+    team_id = _one_line(payload.get("team_id"), limit=40) or "-"
+    detail = f"  交接：{handover_id}"
+    if kind:
+        detail += f"（{kind}）"
+    lines = [
+        "敏感步骤已放行，团队继续（resolved）",
+        detail,
+        f"  团队：{team_id}",
+    ]
+    print("\n".join(lines))
+    return 0
+
+
 # --- D4: humanized error + next-step hint when cancelling a finished run ----
 # `zn work cancel` on a run that already ended dies with the server's raw
 # ``RuntimeError: work cancellation requires an active Work run`` and names
@@ -3604,6 +3824,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
     team_timeline.add_argument("--json", action="store_true", help="print raw JSON")
     team_timeline.set_defaults(func=_cmd_team_timeline)
+
+    # T13: steer a running team from the terminal. `team_assign` re-points
+    # the next pending plan item at a specialist (the workbench "做完了"
+    # button used to own the handover half; the workbench is gone since
+    # #623). Both call existing daemon RPCs; daemon.py is untouched.
+    team_assign = team_sub.add_parser(
+        "assign",
+        help="assign the team's next pending plan item to a specialist",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        '  zn team assign @设计 --thread-id <thread-id> "把首页排版重做一遍"\n'
+        "  zn team assign @qa --thread-id <thread-id> 跑一遍回归测试",
+    )
+    team_assign.add_argument(
+        "specialist",
+        type=lambda v: _require_non_empty(v, name="specialist"),
+        help="team specialist to assign to; a leading @ is optional (e.g. @设计)",
+    )
+    team_assign.add_argument(
+        "instruction",
+        type=lambda v: _require_non_empty(v, name="instruction"),
+        help="what the specialist should do with the next pending plan item",
+    )
+    team_assign.add_argument(
+        "--thread-id",
+        type=lambda v: _require_non_empty(v, name="--thread-id"),
+        required=True,
+        help="work thread the team runs in (the team_assign RPC is thread-scoped)",
+    )
+    team_assign.add_argument("--json", action="store_true", help="print raw JSON")
+    team_assign.set_defaults(func=_cmd_team_assign)
+
+    team_handover_done = team_sub.add_parser(
+        "handover-done",
+        help="resolve the team's pending sensitive handover (owner did the step)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn team handover-done --thread-id <thread-id>",
+    )
+    team_handover_done.add_argument(
+        "--thread-id",
+        type=lambda v: _require_non_empty(v, name="--thread-id"),
+        required=True,
+        help="work thread the team runs in (the team_handover_done RPC is thread-scoped)",
+    )
+    team_handover_done.add_argument(
+        "--json", action="store_true", help="print raw JSON"
+    )
+    team_handover_done.set_defaults(func=_cmd_team_handover_done)
 
     skill = sub.add_parser("skill", help="inspect skill usage statistics")
     skill_sub = skill.add_subparsers(
