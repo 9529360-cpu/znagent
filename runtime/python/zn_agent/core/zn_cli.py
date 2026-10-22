@@ -1998,6 +1998,221 @@ def _cmd_work_cancel(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- T14: `zn work resolve-uncertain` ----------------------------------------
+# Terminal entry for the daemon's ``work_resolve_uncertain`` RPC
+# (daemon.py:626 -> work_control.py:425): an active run's attempt whose side
+# effect is uncertain (common after a crash/restart) gets an explicit human
+# decision -- ``effect_happened`` (count it as happened, never re-dispatched)
+# or ``retry_authorized`` (allow the resident to retry that step once).
+# daemon.py is untouched.
+#
+# Contracts, all inherited from the T12/T13/D4 lineage:
+# - T2-5: server rejections surface humanized (Chinese body + the English
+#   technical snippet in parentheses). The known dead end is a run that is
+#   no longer active -- ``RuntimeError: work uncertain-effect resolution
+#   requires an active`` -- which gets a plain-language lead + a TTY-only
+#   next-step hint, the same D4 pattern as ``zn work cancel``; unknown
+#   event / attempt-checkpoint mismatches get their own human copy. Exit 1
+#   still comes from the central ``run()`` CliError handling, so the
+#   exit-code contract is unchanged.
+# - T2-6: unreachable resident -> exit 0 + an honest note naming what was
+#   NOT decided, never claiming a mutation happened.
+# - T2-7: TTY-only niceties stay behind ``use_color()``; pipes, NO_COLOR
+#   and ``--json`` keep historic bytes.
+_WORK_T14_RPC_REJECTED_PREFIX = _ERROR_COPY["rpc_rejected"][0].split("{method}")[0]
+
+
+def _work_t14_rpc(
+    args: argparse.Namespace, method: str, params: dict[str, Any]
+) -> tuple[bool, Any]:
+    """Call one work-driving RPC, classifying failures.
+
+    Returns ``(True, result)`` on success, or ``(False, error_text)`` when
+    the call never got a usable answer from the resident (missing / bad
+    endpoint, connection, auth or transport problems) -- the offline path.
+    A server-side rejection (``ok: false``) re-raises as :class:`CliError`
+    so the humanized ``rpc_rejected`` copy reaches stderr with exit 1.
+    """
+    try:
+        return True, _client(args).call(method, params)
+    except CliError as exc:
+        if str(exc).startswith(_WORK_T14_RPC_REJECTED_PREFIX):
+            raise
+        return False, str(exc)
+
+
+def _work_t14_offline(
+    args: argparse.Namespace,
+    error: str,
+    *,
+    unavailable: str,
+    json_payload: dict[str, Any],
+) -> int:
+    """T2-6-style offline rendering for the T14 command: exit 0.
+
+    *unavailable* names what could not be done ("没有裁决任何不确定的副作用").
+    Never claims a mutation happened.
+    """
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "daemon_reachable": False,
+                    "daemon_error": _one_line(error, limit=200),
+                    **json_payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        )
+        return 0
+    print(f"常驻服务未运行（unreachable）：{unavailable}")
+    print("下一步：检查 ZN_HOME 是否正确，或启动常驻服务（zn-resident）")
+    return 0
+
+
+# D4-style: resolving a finished run's uncertainty is a known dead end --
+# the daemon raises ``RuntimeError`` through ``work_control.resolve_uncertain``
+# for a run that already ended.
+_WORK_RESOLVE_NON_ACTIVE_SIGNATURE = (
+    "RuntimeError: work uncertain-effect resolution requires an active"
+)
+_WORK_RESOLVE_NON_ACTIVE_LEAD = (
+    "这个任务已经结束了，裁决不了"
+    "（work uncertain-effect resolution requires an active Work run）"
+)
+_WORK_RESOLVE_NON_ACTIVE_HINT = (
+    "下一步：活已经结束了，用 `zn work get --thread-id {thread_id}` 看结果"
+)
+_WORK_RESOLVE_REJECTED_PREFIX = _ERROR_COPY["rpc_rejected"][0].format(
+    method="work_resolve_uncertain", detail=""
+)
+
+
+def _work_resolve_non_active_run(exc: CliError) -> bool:
+    """True when *exc* is the known non-active-run rejection.
+
+    Only the generic ``rpc_rejected`` error for ``work_resolve_uncertain``
+    whose detail starts with the non-active signature counts; anything else
+    keeps its own path.
+    """
+    text = str(exc)
+    if not text.startswith(_WORK_RESOLVE_REJECTED_PREFIX):
+        return False
+    detail = text[len(_WORK_RESOLVE_REJECTED_PREFIX):]
+    return detail.startswith(_WORK_RESOLVE_NON_ACTIVE_SIGNATURE)
+
+
+def _print_resolve_non_active_hint(thread_id: str) -> None:
+    """Print the one-line next-step hint for resolving a finished run."""
+    if use_color():
+        print(colorize(f"  {_WORK_RESOLVE_NON_ACTIVE_HINT.format(thread_id=thread_id)}", "dim"))
+
+
+def _humanize_work_resolve_error(
+    exc: CliError, args: argparse.Namespace
+) -> CliError:
+    """Turn ``work_resolve_uncertain`` server rejections into human copy (T2-5).
+
+    The daemon raises ``ValueError("unknown work event for thread")`` when
+    the event id is not on the thread, and ``RuntimeError("uncertain event
+    resolution ...")`` (store.py) when the attempt id does not match the
+    active recovery checkpoint or the event is not waiting on a human
+    decision. Anything else travels the untouched generic path.
+    """
+    text = str(exc)
+    thread_id = str(args.thread_id)
+    event_id = str(args.event_id)
+    if "unknown work event for thread" in text:
+        return CliError(
+            f"找不到这个工作事件（unknown work event for thread）："
+            f"线程 '{thread_id}' 里没有事件 '{event_id}'。"
+            f"用 `zn work get --thread-id {thread_id}` 看看。"
+        )
+    if "uncertain event resolution" in text:
+        tail = text.split("uncertain event resolution", 1)[1].strip()
+        snippet = "uncertain event resolution" + ((" " + tail) if tail else "")
+        return CliError(
+            "这次尝试现在不在等待人工裁决的状态"
+            f"（{snippet}）："
+            f"先用 `zn work get --thread-id {thread_id}` 看事件是否还在等待人工裁决。"
+        )
+    return exc
+
+
+_WORK_RESOLVE_DECISIONS = ("effect_happened", "retry_authorized")
+_WORK_RESOLVE_DECISION_HUMAN = {
+    "effect_happened": "effect_happened（副作用已发生，不再重发）",
+    "retry_authorized": "retry_authorized（允许 ZN 重试这一步）",
+}
+# T14: TTY-only one-liner explaining what an "uncertain side effect" means.
+_WORK_RESOLVE_UNCERTAIN_NOTE = (
+    "说明：「副作用不确定」是 ZN 发出了外部动作（比如付款、下单、发消息）却没收到"
+    "确定的回执（崩溃或重启时常见）——由你来定夺这一步到底算没算发生。"
+)
+
+
+def _cmd_work_resolve_uncertain(args: argparse.Namespace) -> int:
+    try:
+        ok, payload = _work_t14_rpc(
+            args,
+            "work_resolve_uncertain",
+            {
+                "thread_id": args.thread_id,
+                "event_id": args.event_id,
+                "attempt_id": args.attempt_id,
+                "decision": args.decision,
+            },
+        )
+    except CliError as exc:
+        # T14/D4: resolving a finished run is a known dead end -- humanize
+        # it and name the next step on a real human terminal only; pipes /
+        # NO_COLOR / --json keep the historic generic error byte-stable,
+        # and any other rejection travels the humanized (T2-5) or generic
+        # path. Exit 1 still comes from the central run() CliError handling.
+        if _work_resolve_non_active_run(exc) and use_color() and not args.json:
+            _print_resolve_non_active_hint(args.thread_id)
+            raise CliError(_WORK_RESOLVE_NON_ACTIVE_LEAD) from None
+        raise _humanize_work_resolve_error(exc, args)
+    if not ok:
+        # T2-6: unreachable resident -- exit 0, honestly saying nothing was
+        # decided; never claim the decision took effect.
+        return _work_t14_offline(
+            args,
+            payload,
+            unavailable="没有裁决任何不确定的副作用（这次裁决未生效）",
+            json_payload={
+                "resolved": False,
+                "thread_id": args.thread_id,
+                "event_id": args.event_id,
+                "attempt_id": args.attempt_id,
+            },
+        )
+    if not isinstance(payload, dict) or not isinstance(payload.get("progress"), dict):
+        raise _unexpected_result("work_resolve_uncertain", payload)
+    if args.json:
+        # --json passes the RPC result through byte-for-byte (same
+        # serialization convention as every other command).
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if use_color():
+        # TTY-only one-liner explaining what "uncertain" means (T14 spec).
+        print(_WORK_RESOLVE_UNCERTAIN_NOTE)
+    progress = payload["progress"]
+    print(
+        f"resolved event={args.event_id} attempt={args.attempt_id} "
+        f"on thread={args.thread_id}"
+    )
+    print(
+        "  裁决："
+        f"{_WORK_RESOLVE_DECISION_HUMAN.get(args.decision, args.decision)}"
+    )
+    state = _one_line(progress.get("state") or progress.get("status") or "?")
+    print(f"  state={state}")
+    return 0
+
+
 def _cmd_connector_list(args: argparse.Namespace) -> int:
     """List the known R-series connectors. Local only, no resident RPC."""
 
@@ -3554,6 +3769,25 @@ def build_parser() -> argparse.ArgumentParser:
     work_cancel.add_argument("--event-id", type=lambda v: _require_non_empty(v, name="--event-id"), required=True)
     work_cancel.add_argument("--json", action="store_true", help="print raw JSON")
     work_cancel.set_defaults(func=_cmd_work_cancel)
+
+    work_resolve_uncertain = work_sub.add_parser(
+        "resolve-uncertain",
+        help="resolve an uncertain side effect of an active work event",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn work resolve-uncertain --thread-id <thread-id> --event-id <event-id> --attempt-id <attempt-id> --decision effect_happened",
+    )
+    work_resolve_uncertain.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
+    work_resolve_uncertain.add_argument("--event-id", type=lambda v: _require_non_empty(v, name="--event-id"), required=True)
+    work_resolve_uncertain.add_argument("--attempt-id", type=lambda v: _require_non_empty(v, name="--attempt-id"), required=True)
+    work_resolve_uncertain.add_argument(
+        "--decision",
+        choices=list(_WORK_RESOLVE_DECISIONS),
+        required=True,
+        help="人工裁决：effect_happened = 副作用已发生；retry_authorized = 允许重试",
+    )
+    work_resolve_uncertain.add_argument("--json", action="store_true", help="print raw JSON")
+    work_resolve_uncertain.set_defaults(func=_cmd_work_resolve_uncertain)
 
     approval = sub.add_parser(
         "approval",
