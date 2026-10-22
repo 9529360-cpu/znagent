@@ -6,7 +6,8 @@ reads the resident endpoint file published by
 authenticates with the per-process session secret, and forwards one JSON-RPC
 call per command to the already-existing Daemon RPC methods
 (``work_list`` / ``work_get`` / ``work_create`` / ``work_submit`` /
-``approval_list`` / ``approval_decide`` / ``memory_list`` / ``team_list`` /
+``approval_list`` / ``approval_decide`` / ``approval_rule_delete`` /
+``approval_undo`` / ``memory_list`` / ``team_list`` /
 ``routine_list`` / ``routine_get`` / ``routine_runs`` / ``routine_pause`` /
 ``routine_resume`` / ``diary_list`` / ``diary_get``). All policy, execution, approval and
 persistence decisions stay server-side.
@@ -502,6 +503,7 @@ _EMPTY_RESULT_HINTS: dict[str, str] = {
     "suggestions_list": "下一步：看看 ZN 都会什么，运行 `zn help`",
     "routine_list": "下一步：跟 ZN 说一句话就能创建例行任务，比如「每天早上 8 点提醒我看今天的日程」",
     "diary_list": "下一步：日记是 ZN 在聊天里每天自动写的，跟它说「今天写了日记吗」就能看到",
+    "approval_rules_list": "下一步：对一张卡用 `zn approval decide --request-id <id> --always-allow` 就会自动建一条规则",
 }
 
 
@@ -1082,6 +1084,236 @@ def _cmd_approval_decide(args: argparse.Namespace) -> int:
         f"{request.get('request_id') or args.request_id}  "
         f"status={request.get('status') or '?'}  decision={request.get('decision') or decision}"
     )
+    return 0
+
+
+# --- T11: `zn approval rules ...` / `zn approval undo` -----------------------
+# Terminal face for the daemon's approval rule list/delete and the
+# one-click undo of an applied (consumed) approval. Rules list rides the
+# ``"rules"`` payload of the existing ``approval_list`` RPC; rule delete
+# and undo call ``approval_rule_delete`` / ``approval_undo``. No new
+# daemon RPC, no daemon.py changes. Rule *creation* is intentionally not
+# duplicated here: ``zn approval decide --always-allow`` is the existing
+# path that creates an auto-allow rule. ``approval_reconsider_denied``
+# belongs to a different family (denied cards, not consumed changes) and
+# stays on the chat path; it is a follow-up candidate, not this slice.
+#
+# Offline contract (T2-6 style, like diary/routine): every command exits 0
+# when the resident is unreachable and prints a human note; delete/undo
+# never claim a mutation happened offline. Server-side rejections
+# (RPC ok:false) surface as humanized errors (T2-5), exit 1.
+
+_APPROVAL_T11_RPC_REJECTED_PREFIX = _ERROR_COPY["rpc_rejected"][0].split("{method}")[0]
+
+
+def _approval_t11_rpc(
+    args: argparse.Namespace, method: str, params: dict[str, Any]
+) -> tuple[bool, Any]:
+    """Call one approval-sidecar RPC, classifying failures.
+
+    Returns ``(True, result)`` on success, or ``(False, error_text)`` when
+    the call never got a usable answer from the resident (missing / bad
+    endpoint, connection, auth or transport problems) -- the offline path.
+    A server-side rejection (``ok: false``) re-raises as :class:`CliError`
+    so the humanized ``rpc_rejected`` copy reaches stderr with exit 1.
+    """
+    try:
+        return True, _client(args).call(method, params)
+    except CliError as exc:
+        text = str(exc)
+        if text.startswith(_APPROVAL_T11_RPC_REJECTED_PREFIX):
+            raise
+        return False, text
+
+
+def _approval_t11_offline(
+    args: argparse.Namespace,
+    error: str,
+    *,
+    unavailable: str,
+    json_payload: dict[str, Any],
+) -> int:
+    """T2-6-style offline rendering for the T11 commands: exit 0.
+
+    *unavailable* names what could not be done ("看不到审批规则列表",
+    "没有撤销任何变更", ...). Never claims a mutation happened.
+    """
+    if args.json:
+        print(
+            json.dumps(
+                {
+                    "daemon_reachable": False,
+                    "daemon_error": _one_line(error, limit=200),
+                    **json_payload,
+                },
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        )
+        return 0
+    print(f"常驻服务未运行（unreachable）：{unavailable}")
+    print("下一步：检查 ZN_HOME 是否正确，或启动常驻服务（zn-resident）")
+    return 0
+
+
+def _format_approval_rule_line(item: dict[str, Any]) -> str:
+    """One-line list row for an approval rule: id + effect + kind + scope."""
+    rule_id = _one_line(item.get("rule_id"), limit=24) or "?"
+    effect = str(item.get("effect") or "?")
+    # ``auto_allow`` is the always-allow word from the T2-7 vocabulary;
+    # anything else passes through unchanged (fail-closed).
+    effect_word = status_word("always_allow" if effect == "auto_allow" else effect)
+    kind = _one_line(item.get("action_kind"), limit=24) or "?"
+    line = f"{rule_id}  [{effect_word}]  {kind}"
+    scope = _one_line(item.get("scope"), limit=60)
+    if scope:
+        line += f"  scope={scope}"
+    return line
+
+
+def _cmd_approval_rules_list(args: argparse.Namespace) -> int:
+    ok, payload = _approval_t11_rpc(args, "approval_list", {})
+    if not ok:
+        return _approval_t11_offline(
+            args,
+            payload,
+            unavailable="看不到审批规则列表",
+            json_payload={"rules": []},
+        )
+    if not isinstance(payload, dict):
+        raise _unexpected_result("approval_list", payload)
+    rules = payload.get("rules")
+    if not isinstance(rules, list):
+        raise _unexpected_result("approval_list", rules)
+    if args.json:
+        print(json.dumps(rules, ensure_ascii=False, indent=2, default=str))
+        return 0
+    if not rules:
+        print("no approval rules")
+        _print_empty_hint("approval_rules_list")
+        return 0
+    print(section("approval rules", len(rules)))
+    for item in rules:
+        if isinstance(item, dict):
+            print(_format_approval_rule_line(item))
+    return 0
+
+
+def _unknown_approval_rule_error(exc: CliError, rule_id: str) -> CliError:
+    """Swap the raw server ``ValueError: unknown approval rule`` for human copy.
+
+    The daemon answers ``ok: false`` with ``ValueError: unknown approval
+    rule`` (see the ``approval_rule_delete`` dispatch in daemon.py); this
+    turns it into "not found + where to look". Any other error is
+    returned unchanged.
+    """
+    if "unknown approval rule" in str(exc):
+        return CliError(
+            f"找不到审批规则 '{rule_id}'（unknown approval rule）。"
+            "用 'zn approval rules list' 看看现有的规则。"
+        )
+    return exc
+
+
+def _cmd_approval_rules_delete(args: argparse.Namespace) -> int:
+    rule_id = str(args.rule_id)
+    try:
+        ok, payload = _approval_t11_rpc(
+            args, "approval_rule_delete", {"rule_id": rule_id}
+        )
+    except CliError as exc:
+        raise _unknown_approval_rule_error(exc, rule_id)
+    if not ok:
+        return _approval_t11_offline(
+            args,
+            payload,
+            unavailable=f"没有删除任何审批规则（'{rule_id}' 还在）",
+            json_payload={"deleted": False, "rule_id": rule_id},
+        )
+    if not isinstance(payload, dict) or payload.get("deleted") is not True:
+        raise _unexpected_result("approval_rule_delete", payload)
+    if args.json:
+        print(
+            json.dumps(
+                {"deleted": True, "rule_id": rule_id},
+                ensure_ascii=False,
+                indent=2,
+                default=str,
+            )
+        )
+        return 0
+    print(f"已删除审批规则 {rule_id}（deleted）：这条自动放行规则不再生效")
+    return 0
+
+
+def _humanize_undo_error(exc: CliError, request_id: str) -> CliError:
+    """Turn the ``approval_undo`` server rejections into human copy (T2-5).
+
+    The daemon raises ValueError with one English reason per failure mode
+    (see ``undo_approved_change`` in approval_review.py); each becomes a
+    Chinese lead line with the English fragment kept in parentheses so the
+    server contract stays greppable. Unknown errors pass through.
+    """
+    text = str(exc)
+    if "unknown approval request" in text:
+        return CliError(
+            f"找不到审批卡 '{request_id}'（unknown approval request）。"
+            "用 'zn approval list --status applied' 看看可撤销的已执行申请。"
+        )
+    if "only an applied (consumed) approval can be undone" in text:
+        return CliError(
+            f"这张卡还不能撤销（only consumed approvals can be undone）：'{request_id}' "
+            "不是已执行的申请。只有已执行（applied）的变更才能撤销。"
+        )
+    if "already undone" in text:
+        return CliError(f"这条变更已经撤销过了（already undone）：'{request_id}'。")
+    if "no undo snapshot" in text:
+        return CliError(
+            f"这条变更没有可用的撤销快照（no undo snapshot）：'{request_id}'，无法回滚。"
+        )
+    if "only workspace file changes can be undone" in text or "escapes the workspace" in text:
+        return CliError(
+            f"这条变更不在工作区文件范围内，无法撤销（not a workspace file change）：'{request_id}'。"
+        )
+    return exc
+
+
+def _cmd_approval_undo(args: argparse.Namespace) -> int:
+    request_id = str(args.request_id)
+    try:
+        ok, payload = _approval_t11_rpc(
+            args, "approval_undo", {"request_id": request_id}
+        )
+    except CliError as exc:
+        raise _humanize_undo_error(exc, request_id)
+    if not ok:
+        return _approval_t11_offline(
+            args,
+            payload,
+            unavailable=f"没有撤销任何变更（'{request_id}' 保持原样）",
+            json_payload={"undone": False, "request_id": request_id},
+        )
+    if not isinstance(payload, dict):
+        raise _unexpected_result("approval_undo", payload)
+    if args.json:
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+    path = _one_line(payload.get("path"), limit=80)
+    note = _one_line(payload.get("note"), limit=120)
+    checkpoint = _one_line(payload.get("pre_undo_checkpoint_id"), limit=40)
+    if payload.get("restored"):
+        head = f"{request_id}  已撤销（undone）：文件已恢复到变更前状态"
+    else:
+        head = f"{request_id}  无需改动（already at pre-change state）：文件本来就是变更前的样子"
+    lines = [head]
+    if path:
+        lines.append(f"  文件：{path}")
+    if note:
+        lines.append(f"  说明：{note}")
+    if checkpoint:
+        lines.append(f"  兜底检查点：{checkpoint}（撤销前已自动备份）")
+    print("\n".join(lines))
     return 0
 
 
@@ -2548,6 +2780,26 @@ _HELP_SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
         ),
     ),
     (
+        "审批规则与撤销",
+        (
+            (
+                "approval rules list",
+                "看有哪些自动放行规则",
+                "zn approval rules list",
+            ),
+            (
+                "approval rules delete",
+                "收回一条自动放行规则",
+                "zn approval rules delete <rule-id>",
+            ),
+            (
+                "approval undo",
+                "撤销一次已执行的批准变更（文件回滚）",
+                "zn approval undo <request-id>",
+            ),
+        ),
+    ),
+    (
         "记忆",
         (
             (
@@ -2813,7 +3065,10 @@ def build_parser() -> argparse.ArgumentParser:
     work_cancel.add_argument("--json", action="store_true", help="print raw JSON")
     work_cancel.set_defaults(func=_cmd_work_cancel)
 
-    approval = sub.add_parser("approval", help="list, show or decide approval cards")
+    approval = sub.add_parser(
+        "approval",
+        help="list, show, decide or undo approval cards; manage auto-allow rules",
+    )
     approval_sub = approval.add_subparsers(
         dest="approval_command", metavar="subcommand", required=True
     )
@@ -2873,6 +3128,57 @@ def build_parser() -> argparse.ArgumentParser:
     )
     approval_show.add_argument("--json", action="store_true", help="print raw JSON")
     approval_show.set_defaults(func=_cmd_approval_show)
+
+    # T11: approval rules + undo. Rule creation is not exposed here: it rides
+    # the existing `zn approval decide --always-allow` path.
+    approval_rules = approval_sub.add_parser(
+        "rules",
+        help="manage auto-allow approval rules",
+    )
+    approval_rules_sub = approval_rules.add_subparsers(
+        dest="approval_rules_command", metavar="subcommand", required=True
+    )
+
+    approval_rules_list = approval_rules_sub.add_parser(
+        "list",
+        help="list approval rules",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn approval rules list\n"
+        "  zn approval rules list --json",
+    )
+    approval_rules_list.add_argument("--json", action="store_true", help="print raw JSON")
+    approval_rules_list.set_defaults(func=_cmd_approval_rules_list)
+
+    approval_rules_delete = approval_rules_sub.add_parser(
+        "delete",
+        help="delete an approval rule",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn approval rules delete <rule-id>",
+    )
+    approval_rules_delete.add_argument(
+        "rule_id",
+        type=lambda v: _require_non_empty(v, name="rule_id"),
+        help="the rule id, as printed by 'zn approval rules list'",
+    )
+    approval_rules_delete.add_argument("--json", action="store_true", help="print raw JSON")
+    approval_rules_delete.set_defaults(func=_cmd_approval_rules_delete)
+
+    approval_undo = approval_sub.add_parser(
+        "undo",
+        help="undo an applied (consumed) approval",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn approval undo <request-id>",
+    )
+    approval_undo.add_argument(
+        "request_id",
+        type=lambda v: _require_non_empty(v, name="request_id"),
+        help="the approval card id, as printed by 'zn approval list --status applied'",
+    )
+    approval_undo.add_argument("--json", action="store_true", help="print raw JSON")
+    approval_undo.set_defaults(func=_cmd_approval_undo)
 
     memory = sub.add_parser("memory", help="inspect durable memory")
     memory_sub = memory.add_subparsers(
