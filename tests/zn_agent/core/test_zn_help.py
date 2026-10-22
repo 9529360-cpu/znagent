@@ -83,6 +83,17 @@ _EXPECTED_SNAPSHOT = """ZN 能帮你干的事（按场景）
     批准或拒绝一张卡
     例：zn approval decide --request-id <id> --allow
 
+--- 审批规则与撤销 (3) ---
+  approval rules list
+    看有哪些自动放行规则
+    例：zn approval rules list
+  approval rules delete
+    收回一条自动放行规则
+    例：zn approval rules delete <rule-id>
+  approval undo
+    撤销一次已执行的批准变更（文件回滚）
+    例：zn approval undo <request-id>
+
 --- 记忆 (5) ---
   memory list
     看看 ZN 都记着哪些事
@@ -114,6 +125,34 @@ _EXPECTED_SNAPSHOT = """ZN 能帮你干的事（按场景）
     看 ZN 自驱的当前状态
     例：zn goal status
 
+--- 例行任务 (5) ---
+  routine list
+    看有哪些例行任务在跑
+    例：zn routine list
+  routine get
+    看某条例行任务的详情
+    例：zn routine get <id>
+  routine runs
+    看某条例行任务的运行历史
+    例：zn routine runs <id>
+  routine pause
+    暂停一条例行任务
+    例：zn routine pause <id>
+  routine resume
+    恢复一条被暂停的例行任务
+    例：zn routine resume <id>
+
+--- 日记 (3) ---
+  diary list
+    看 ZN 写过哪些日记（最新在前）
+    例：zn diary list
+  diary get
+    看某天的日记正文
+    例：zn diary get --date 2026-10-22
+  diary get
+    看某天日记的原始内容（脚本用）
+    例：zn diary get --date 2026-10-22 --json
+
 --- 日常 (5) ---
   suggestions list
     看 ZN 给你的建议
@@ -141,9 +180,9 @@ class TestHelpSnapshot(unittest.TestCase):
             _EXPECTED_SNAPSHOT,
         )
 
-    def test_snapshot_has_exactly_five_sections(self):
+    def test_snapshot_has_exactly_eight_sections(self):
         titles = [title for title, _ in _HELP_SECTIONS]
-        self.assertEqual(titles, ["交办", "审批", "记忆", "团队与自驱", "日常"])
+        self.assertEqual(titles, ["交办", "审批", "审批规则与撤销", "记忆", "团队与自驱", "例行任务", "日记", "日常"])
 
     def test_each_section_has_three_to_five_rows(self):
         for title, rows in _HELP_SECTIONS:
