@@ -6011,3 +6011,198 @@ class ZnCliWorkRestoreT21Tests(_CliHarness):
             "zn work restore-application --application-id <application-id>",
             self._epilog_choices()["restore-application"].epilog,
         )
+
+
+class ZnCliWorkSubmitLastTests(_CliHarness):
+    """WK-LAST: ``zn work submit --last`` ("续最近会话").
+
+    A read-only ``work_list`` probe (``limit=1``) resolves the newest thread
+    -- the same pattern the REPL ``/resume`` uses (``_resume_latest`` in
+    ``cli_repl.py``) -- then the existing submit path runs unchanged.
+    New test class (Floor Guard: existing tests and assertions untouched).
+    """
+
+    def _threads(self):
+        return [
+            {
+                "id": "thread-9",
+                "title": "最近的活",
+                "updated_at": "2026-10-23T06:00:00Z",
+            },
+            {
+                "id": "thread-1",
+                "title": "旧的活",
+                "updated_at": "2026-10-22T06:00:00Z",
+            },
+        ]
+
+    def _submit_result(self, thread_id="thread-9", title="最近的活"):
+        return {
+            "thread": {"id": thread_id, "title": title},
+            "run": {
+                "event_id": "ev-1",
+                "success": True,
+                "cancelled": False,
+                "execution_path": "direct",
+                "model_invocations": 2,
+                "response": "finished",
+            },
+            "recovery_required": False,
+        }
+
+    def _run_on_tty(self, argv, handler):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def test_last_resolves_newest_thread_and_submits(self):
+        result = self._submit_result()
+        code, out, err = self._run(
+            ["work", "submit", "--last", "--task", "继续干"],
+            self._handler({"work_list": self._threads(), "work_submit": result}),
+        )
+        self.assertEqual(code, 0, err)
+        # The probe is read-only and cheap: limit=1, then the normal submit.
+        self.assertEqual(
+            self.calls,
+            [
+                ("work_list", {"limit": 1}),
+                ("work_submit", {"thread_id": "thread-9", "task": "继续干"}),
+            ],
+        )
+        self.assertIn("submitted to thread thread-9", out)
+        # The older second entry must not win.
+        self.assertNotIn("thread-1", out)
+        # Piped: no TTY-only "续上会话" line.
+        self.assertNotIn("续上会话", out)
+
+    def test_last_prints_resume_line_on_tty(self):
+        result = self._submit_result()
+        code, out, err = self._run_on_tty(
+            ["work", "submit", "--last", "--task", "继续干"],
+            self._handler({"work_list": self._threads(), "work_submit": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("续上会话「最近的活」(thread-9)", out)
+        self.assertEqual(
+            [method for method, _ in self.calls], ["work_list", "work_submit"]
+        )
+
+    def test_last_without_title_prints_plain_resume_line(self):
+        threads = [
+            {"id": "thread-9", "title": "", "updated_at": "2026-10-23T06:00:00Z"}
+        ]
+        result = self._submit_result(thread_id="thread-9", title="")
+        code, out, err = self._run_on_tty(
+            ["work", "submit", "--last", "--task", "继续干"],
+            self._handler({"work_list": threads, "work_submit": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("续上会话(thread-9)", out)
+
+    # -- argparse: --last and --thread-id are mutually exclusive (exit 2) -----
+
+    def test_last_with_thread_id_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(
+                ["work", "submit", "--thread-id", "t1", "--last", "--task", "x"],
+                handler,
+            )
+        self.assertEqual(caught.exception.code, 2)
+        # No RPC was attempted.
+        self.assertEqual(self.calls, [])
+
+    # -- empty history: humanized error, exit 1 (T2-5) -------------------------
+
+    def test_last_empty_history_is_human_error(self):
+        code, out, err = self._run(
+            ["work", "submit", "--last", "--task", "x"],
+            self._handler({"work_list": []}),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error:", err)
+        self.assertIn("还没有历史会话", err)
+        # T2-5: the English fragment is kept verbatim in parentheses.
+        self.assertIn("（no work history）", err)
+        self.assertIn("下一步", err)
+        self.assertEqual(self.calls, [("work_list", {"limit": 1})])
+
+    def test_last_malformed_list_is_unexpected_result(self):
+        code, out, err = self._run(
+            ["work", "submit", "--last", "--task", "x"],
+            self._handler({"work_list": {"not": "a list"}}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("无法识别的结果", err)
+
+    def test_last_list_rejected_surfaces_humanized(self):
+        handler = self._handler({"work_list": (False, None, "boom")})
+        code, out, err = self._run(
+            ["work", "submit", "--last", "--task", "x"], handler
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("zn: error:", err)
+        self.assertIn("服务端返回错误", err)
+
+    # -- --json stays byte-for-byte the work_submit result --------------------
+
+    def test_last_json_passthrough_is_byte_stable(self):
+        result = self._submit_result()
+        expected = json.dumps(result, ensure_ascii=False, indent=2, default=str) + "\n"
+        code, out, err = self._run(
+            ["work", "submit", "--last", "--task", "继续干", "--json"],
+            self._handler({"work_list": self._threads(), "work_submit": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, expected)
+        self.assertNotIn("续上会话", out)
+
+    # -- T2-6: unreachable resident -> exit 0, nothing claimed -----------------
+
+    def test_last_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            ["work", "submit", "--last", "--task", "x"], refused
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有续上任何会话", out)
+        self.assertIn("未交办", out)
+        self.assertNotIn("submitted to thread", out)
+
+    def test_last_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            ["work", "submit", "--last", "--task", "x", "--json"], refused
+        )
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["resumed"])
+        self.assertFalse(data["submitted"])
+
+    # -- epilog carries a real runnable example (no drift) ---------------------
+
+    def test_submit_epilog_example_is_real_command(self):
+        parser = build_parser()
+        work = parser._subparsers._group_actions[0].choices["work"]
+        submit = work._subparsers._group_actions[0].choices["submit"]
+        self.assertIn(
+            'zn work submit --last --task "继续，把明细也加上"', submit.epilog
+        )
