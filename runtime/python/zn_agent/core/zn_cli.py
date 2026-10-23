@@ -2890,16 +2890,56 @@ def _cmd_suggestions_list(args: argparse.Namespace) -> int:
     if not result:
         print("no suggestions")
         _print_empty_hint("suggestions_list")
-        return 0
-    for item in result:
-        if not isinstance(item, dict):
+    else:
+        for item in result:
+            if not isinstance(item, dict):
+                continue
+            print(
+                f"{_one_line(item.get('key'), limit=64):64} "
+                f"[{_one_line(item.get('kind'), limit=20)}] "
+                f"{_one_line(item.get('title'), limit=80)}"
+            )
+    # PC-1: 建议栏尾部顺带呈现最近的主动联系（N-6：不单独立项）。
+    # 有记录才显示；无记录时上面输出与原来逐字节一致。
+    _print_proactive_contact_recent(args)
+    return 0
+
+
+# --- PC-1: 最近主动联系（建议栏尾部顺带呈现） -------------------------------
+# T2-1: 纯数据行，无 TTY-only 修饰——管道与 TTY 看到相同的行；
+# T2-7: 不引入任何符号字形，逐行可逐字节断言。
+_PROACTIVE_CONTACT_RECENT_LIMIT = 5
+
+
+def _print_proactive_contact_recent(args: argparse.Namespace) -> None:
+    """Append the recent proactive-contact history to the suggestions view.
+
+    The section prints only when records exist; an empty history (or a
+    resident that does not know the RPC) leaves the caller output
+    byte-identical to before PC-1. The RPC is read-only and never goes
+    through maybe_contact, so reading the history consumes no greeting
+    opportunity. Failures are skipped deliberately: this is a piggyback
+    nicety and must never break the primary suggestions listing
+    (e.g. against an older resident).
+    """
+    try:
+        result = _client(args).call(
+            "proactive_contact_recent",
+            {"limit": _PROACTIVE_CONTACT_RECENT_LIMIT},
+        )
+    except Exception:
+        return
+    if not isinstance(result, list) or not result:
+        return
+    print("最近主动联系：")
+    for row in result:
+        if not isinstance(row, dict):
             continue
         print(
-            f"{_one_line(item.get('key'), limit=64):64} "
-            f"[{_one_line(item.get('kind'), limit=20)}] "
-            f"{_one_line(item.get('title'), limit=80)}"
+            f"  {_one_line(row.get('day') or row.get('sent_at'), limit=32)} "
+            f"[{_one_line(row.get('kind'), limit=20)}] "
+            f"{_one_line(row.get('suggestion_key'), limit=64)}"
         )
-    return 0
 
 
 def _cmd_suggestions_dismiss(args: argparse.Namespace) -> int:

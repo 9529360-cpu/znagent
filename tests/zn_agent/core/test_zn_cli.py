@@ -1972,13 +1972,22 @@ class ZnCliAutonomySuggestionsTests(_CliHarness):
             {"key": "sug-2", "kind": "recurring", "title": "Check the garden"},
         ]
         code, out, err = self._run(
-            ["suggestions", "list"], self._handler({"suggestions_list": items})
+            ["suggestions", "list"],
+            self._handler(
+                {"suggestions_list": items, "proactive_contact_recent": []}
+            ),
         )
         self.assertEqual(code, 0, err)
         self.assertIn("sug-1", out)
         self.assertIn("Finish the report", out)
         self.assertIn("sug-2", out)
-        self.assertEqual(self.calls, [("suggestions_list", {"limit": 8})])
+        self.assertEqual(
+            self.calls,
+            [
+                ("suggestions_list", {"limit": 8}),
+                ("proactive_contact_recent", {"limit": 5}),
+            ],
+        )
 
     def test_suggestions_list_limit_flag_and_json(self):
         items = [{"key": "sug-1", "kind": "work", "title": "Finish the report"}]
@@ -1992,7 +2001,10 @@ class ZnCliAutonomySuggestionsTests(_CliHarness):
 
     def test_suggestions_list_empty(self):
         code, out, err = self._run(
-            ["suggestions", "list"], self._handler({"suggestions_list": []})
+            ["suggestions", "list"],
+            self._handler(
+                {"suggestions_list": [], "proactive_contact_recent": []}
+            ),
         )
         self.assertEqual(code, 0, err)
         self.assertIn("no suggestions", out)
@@ -2017,6 +2029,100 @@ class ZnCliAutonomySuggestionsTests(_CliHarness):
             run(["--endpoint", str(self.endpoint_path), "suggestions", "dismiss"])
         self.assertEqual(caught.exception.code, 2)
         self.assertEqual(self.connect_calls, [])
+
+    # -- PC-1: 最近主动联系（建议栏尾部顺带呈现） ----------------------------
+
+    def test_suggestions_list_appends_recent_contacts(self):
+        items = [
+            {"key": "sug-1", "kind": "work", "title": "Finish the report"},
+        ]
+        records = [
+            {
+                "suggestion_key": "recurring:daily check",
+                "kind": "recurring_due",
+                "sent_at": "2026-10-23T06:10:00+00:00",
+                "day": "2026-10-23",
+            },
+            {
+                "suggestion_key": "recurring:standup",
+                "kind": "recurring_upcoming",
+                "sent_at": "2026-10-22T06:10:00+00:00",
+                "day": "2026-10-22",
+            },
+        ]
+        code, out, err = self._run(
+            ["suggestions", "list"],
+            self._handler(
+                {"suggestions_list": items, "proactive_contact_recent": records}
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("sug-1", out)
+        # 顺带段落在建议行之后。
+        self.assertLess(out.index("sug-1"), out.index("最近主动联系："))
+        self.assertIn("2026-10-23 [recurring_due] recurring:daily check", out)
+        self.assertIn("2026-10-22 [recurring_upcoming] recurring:standup", out)
+        self.assertEqual(
+            self.calls,
+            [
+                ("suggestions_list", {"limit": 8}),
+                ("proactive_contact_recent", {"limit": 5}),
+            ],
+        )
+
+    def test_suggestions_list_no_records_output_byte_identical(self):
+        # PC-1 锁定：无主动联系记录时，human 输出与改动前逐字节一致。
+        items = [
+            {"key": "sug-1", "kind": "work", "title": "Finish the report"},
+            {"key": "sug-2", "kind": "recurring", "title": "Check the garden"},
+        ]
+        code, out, err = self._run(
+            ["suggestions", "list"],
+            self._handler(
+                {"suggestions_list": items, "proactive_contact_recent": []}
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            out,
+            f"{'sug-1':64} [work] Finish the report\n"
+            f"{'sug-2':64} [recurring] Check the garden\n",
+        )
+        self.assertNotIn("最近主动联系", out)
+
+    def test_suggestions_list_empty_no_records_output_byte_identical(self):
+        code, out, err = self._run(
+            ["suggestions", "list"],
+            self._handler(
+                {"suggestions_list": [], "proactive_contact_recent": []}
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "no suggestions\n")
+
+    def test_suggestions_list_tolerates_unknown_recent_rpc(self):
+        # 旧 resident 不认识 proactive_contact_recent：顺带段落静默
+        # 跳过，主干建议栏不受影响。
+        items = [
+            {"key": "sug-1", "kind": "work", "title": "Finish the report"},
+        ]
+        code, out, err = self._run(
+            ["suggestions", "list"], self._handler({"suggestions_list": items})
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("sug-1", out)
+        self.assertNotIn("最近主动联系", out)
+
+    def test_suggestions_list_json_unchanged_with_records(self):
+        # --json 输出不变：不调新 RPC，只返回建议栏本身。
+        items = [{"key": "sug-1", "kind": "work", "title": "Finish the report"}]
+        code, out, err = self._run(
+            ["suggestions", "list", "--json"],
+            self._handler({"suggestions_list": items}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.calls, [("suggestions_list", {"limit": 8})])
+        self.assertEqual(json.loads(out), items)
 
 
 class ZnCliHumanizedErrorsT25Tests(_CliHarness):

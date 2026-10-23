@@ -424,6 +424,106 @@ class ProactiveContactTests(unittest.TestCase):
             finally:
                 resident.store.close()
 
+    # -- PC-1: 只读历史 ----------------------------------------------------
+
+    @staticmethod
+    def _log_row_count(db: Path) -> int:
+        import sqlite3
+
+        conn = sqlite3.connect(db)
+        try:
+            return int(
+                conn.execute(
+                    "SELECT COUNT(*) FROM resident_proactive_contact_log"
+                ).fetchone()[0]
+            )
+        finally:
+            conn.close()
+
+    def test_recent_contacts_returns_log_newest_first(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            resident, _ledger, _sug, engine = self._stack(tmp, max_per_day=5)
+            try:
+                self._due_recurring(resident)
+                first = engine.maybe_contact(now=_at(9, 0))
+                self.assertIsNotNone(first)
+                second = engine.maybe_contact(now=_at(10, 0))
+                self.assertIsNotNone(second)
+                assert first is not None and second is not None
+                recent = engine.recent_contacts(limit=10)
+                self.assertEqual(len(recent), 2)
+                # newest first
+                self.assertEqual(recent[0]["sent_at"], second.sent_at)
+                self.assertEqual(recent[1]["sent_at"], first.sent_at)
+                self.assertEqual(recent[0]["suggestion_key"], second.key)
+                for row in recent:
+                    self.assertEqual(row["kind"], "recurring_due")
+                    self.assertEqual(row["day"], "2026-10-21")
+            finally:
+                resident.store.close()
+
+    def test_recent_contacts_limit_clamped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            resident, _ledger, _sug, engine = self._stack(tmp, max_per_day=5)
+            try:
+                self._due_recurring(resident)
+                self.assertIsNotNone(engine.maybe_contact(now=_at(9, 0)))
+                self.assertIsNotNone(engine.maybe_contact(now=_at(10, 0)))
+                self.assertEqual(len(engine.recent_contacts(limit=1)), 1)
+                # limit=0 按 daemon._limit 惯例视为未给 → 走默认值。
+                self.assertEqual(len(engine.recent_contacts(limit=0)), 2)
+                self.assertEqual(len(engine.recent_contacts(limit=500)), 2)
+            finally:
+                resident.store.close()
+
+    def test_recent_contacts_rpc_writes_no_bookkeeping(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "kernel.db"
+            resident = self._resident(db)
+            try:
+                server = ResidentRpcServer(
+                    resident=resident,
+                    input_stream=io.StringIO(),
+                    output_stream=io.StringIO(),
+                )
+                server.proactive_contact.config = ProactiveContactConfig(
+                    enabled=True, max_per_day=5, quiet_start=0, quiet_end=0
+                )
+                self._due_recurring(resident)
+                seeded = server.handle(
+                    {"id": "0", "method": "proactive_contact_check", "params": {}}
+                )
+                self.assertTrue(seeded["ok"])
+                self.assertIsNotNone(seeded["result"])
+                before = self._log_row_count(db)
+                self.assertEqual(before, 1)
+                with mock.patch.object(
+                    server.proactive_contact,
+                    "maybe_contact",
+                    side_effect=AssertionError("recent must not call maybe_contact"),
+                ):
+                    resp = server.handle(
+                        {
+                            "id": "1",
+                            "method": "proactive_contact_recent",
+                            "params": {"limit": 5},
+                        }
+                    )
+                self.assertTrue(resp["ok"], resp)
+                self.assertIsInstance(resp["result"], list)
+                self.assertEqual(len(resp["result"]), 1)
+                row = resp["result"][0]
+                self.assertEqual(row["suggestion_key"], seeded["result"]["key"])
+                self.assertEqual(row["kind"], seeded["result"]["kind"])
+                self.assertIn("sent_at", row)
+                self.assertIn("day", row)
+                # 只读：log 表行数不变，问候记账未被触碰。
+                self.assertEqual(self._log_row_count(db), before)
+            finally:
+                resident.store.close()
+
 
 if __name__ == "__main__":
     unittest.main()
