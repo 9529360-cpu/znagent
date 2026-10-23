@@ -4947,7 +4947,7 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例：\n"
         "  zn routine propose \"每天早上8点提醒我看日程\"\n"
-        "  zn routine propose \"每30分钟看一次日历\" --json > draft.json",
+        "  zn routine propose \"每30分钟看一次日历\" --json",
     )
     routine_propose.add_argument(
         "text",
