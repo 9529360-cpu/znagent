@@ -6,13 +6,13 @@ External models are optional cognitive resources. They do not own ZN identity, m
 
 ## Run ZN from source
 
-On Windows x64, the normal source-development path is:
+The normal source-development path is:
 
 ```powershell
 npm run dev
 ```
 
-The first run prepares the locked Node workspace, creates/reuses repository-local `.venv`, installs the ZN Python runtime with managed-browser support, installs the version-bound Playwright Chromium payload, bundles the Electron desktop, and launches the existing Desktop -> Resident product path.
+The first run creates/reuses a repository-local `.venv` (via system Python, or via `uv` when no supported Python is present), installs the ZN Python runtime with managed-browser support, installs the version-bound Playwright Chromium payload into `.dev/playwright-browsers`, and launches the Resident engine from source (`python -m zn_agent.resident`).
 
 Prerequisites are Node.js 22.22.0 or newer plus either `uv` (recommended) or Python 3.11-3.13. First setup needs network access for package/runtime downloads.
 
@@ -24,9 +24,15 @@ npm run doctor
 npm run test:dev-bootstrap
 ```
 
-Source development is intentionally isolated from an installed ZN. By default it uses `.dev/zn-home` for Resident state, `.dev/electron-user-data` for Electron profile/session state, `.dev/playwright-browsers` for managed Chromium, and `.venv` for Python. The source instance does not register `zn://` as the OS protocol handler and does not install Resident login autostart.
+Source development is intentionally isolated from an installed ZN. By default it uses `.dev/zn-home` for Resident state, `.dev/playwright-browsers` for managed Chromium, and `.venv` for Python.
 
-Advanced development state can be redirected with `ZN_DEV_AGENT_HOME` and `ZN_DEV_USER_DATA`. Do not point those variables at an installed ZN home/profile merely to reuse state.
+Advanced development state can be redirected with `ZN_DEV_AGENT_HOME`. Do not point that variable at an installed ZN home merely to reuse state.
+
+To prove a clean-checkout startup end to end (spawns `npm run dev`, waits for the Resident's authenticated endpoint, performs an authenticated status RPC, then shuts down and requires the endpoint to retire):
+
+```powershell
+node scripts/verify-zn-source-start.mjs
+```
 
 ## Repository layout
 

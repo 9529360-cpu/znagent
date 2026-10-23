@@ -248,6 +248,9 @@ jobs:
       - name: Test product gate ownership and path matching
         shell: bash
         run: node --test .github/scripts/zn-product-required-gate.test.mjs
+      - name: Test source bootstrap contracts
+        shell: bash
+        run: node --test scripts/zn-dev.test.mjs
       - name: Wait for required product contracts
         shell: bash
         env:
