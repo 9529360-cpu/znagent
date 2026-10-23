@@ -11,8 +11,14 @@ face only, against a scripted fake resident socket:
   unknown id -> human "not found" error
 - pause / resume: success copy / --reason passthrough / --json / unknown id
 - pause while a run is in flight: server rejection surfaces, exit 1
+- edit: --time / --content / both / --json passthrough / unknown id /
+  unparseable --time / neither flag / server rejection / engaged -> exit 1
+  with zero mutation RPCs / missing --routine-id -> exit 2
+- delete: success / --json passthrough / unknown id / server rejection /
+  engaged -> exit 1 with zero mutation RPCs / missing --routine-id -> exit 2
 - offline (resident unreachable): every command exits 0 with an honest
-  "unreachable" note and the start hint -- pause/resume never print success
+  "unreachable" note and the start hint -- pause/resume/edit/delete never
+  print success
 - malformed server payloads fail closed (exit 1, humanized error)
 """
 from __future__ import annotations
@@ -472,6 +478,360 @@ class RoutineResumeTests(_RoutineCliHarness):
         self.assertNotIn("已恢复", out)
 
 
+class RoutineEditTests(_RoutineCliHarness):
+    """T18: ``zn routine edit`` -- change a routine's time and/or content.
+
+    ``--time`` reuses the propose schedule parser; ``--content`` maps to the
+    ``task`` field. Every test asserts the exact RPC methods/params: the
+    read-only ``routine_get`` pre-flight first, then exactly one
+    ``routine_edit`` -- and zero mutation RPCs when the routine is engaged.
+    """
+
+    def test_edit_time(self):
+        snapshot = _routine_snapshot()
+        edited = _routine_snapshot(
+            schedule_description="每天 09:00（Europe/Berlin）",
+        )
+        code, out, err = self._run(
+            [
+                "routine",
+                "edit",
+                "--routine-id",
+                "routine-abc123",
+                "--time",
+                "每天早上9点",
+            ],
+            self._handler({"routine_get": snapshot, "routine_edit": edited}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("已更新", out)
+        self.assertIn("[active]", out)
+        self.assertIn("时间：每天 09:00", out)
+        self.assertEqual(
+            self.calls,
+            [
+                ("routine_get", {"routine_id": "routine-abc123"}),
+                (
+                    "routine_edit",
+                    {
+                        "routine_id": "routine-abc123",
+                        "fields": {
+                            "schedule_kind": "cron",
+                            "cron_expression": "0 9 * * *",
+                        },
+                    },
+                ),
+            ],
+        )
+        self.assertEqual(err, "")
+
+    def test_edit_content(self):
+        snapshot = _routine_snapshot()
+        edited = _routine_snapshot(task="提醒我看今天的日程")
+        code, out, err = self._run(
+            [
+                "routine",
+                "edit",
+                "--routine-id",
+                "routine-abc123",
+                "--content",
+                "提醒我看今天的日程",
+            ],
+            self._handler({"routine_get": snapshot, "routine_edit": edited}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("已更新", out)
+        self.assertIn("内容：提醒我看今天的日程", out)
+        self.assertEqual(
+            self.calls[1],
+            (
+                "routine_edit",
+                {
+                    "routine_id": "routine-abc123",
+                    "fields": {"task": "提醒我看今天的日程"},
+                },
+            ),
+        )
+        self.assertEqual(err, "")
+
+    def test_edit_time_and_content(self):
+        snapshot = _routine_snapshot()
+        edited = _routine_snapshot(
+            task="看一次日历",
+            schedule_description="每 30 分钟",
+        )
+        code, out, err = self._run(
+            [
+                "routine",
+                "edit",
+                "--routine-id",
+                "routine-abc123",
+                "--time",
+                "每30分钟",
+                "--content",
+                "看一次日历",
+            ],
+            self._handler({"routine_get": snapshot, "routine_edit": edited}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("已更新", out)
+        self.assertIn("时间：每 30 分钟", out)
+        self.assertIn("内容：看一次日历", out)
+        self.assertEqual(
+            self.calls[1][1]["fields"],
+            {
+                "schedule_kind": "interval",
+                "interval_seconds": 1800,
+                "task": "看一次日历",
+            },
+        )
+
+    def test_edit_json_passthrough(self):
+        edited = _routine_snapshot(
+            schedule_description="每天 09:00（Europe/Berlin）",
+        )
+        code, out, err = self._run(
+            [
+                "routine",
+                "edit",
+                "--routine-id",
+                "routine-abc123",
+                "--time",
+                "每天早上9点",
+                "--json",
+            ],
+            self._handler(
+                {"routine_get": _routine_snapshot(), "routine_edit": edited}
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), edited)
+        self.assertEqual(err, "")
+
+    def test_edit_engaged_refuses_without_mutation_rpc(self):
+        engaged = _routine_snapshot(
+            recent_runs=[_run_row(status="running", finished_at=None)]
+        )
+        code, out, err = self._run(
+            [
+                "routine",
+                "edit",
+                "--routine-id",
+                "routine-abc123",
+                "--time",
+                "每天早上9点",
+            ],
+            self._handler({"routine_get": engaged}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("正在执行中", err)
+        self.assertIn("run in flight", err)
+        self.assertIn("不能修改", err)
+        self.assertIn("zn routine runs routine-abc123", err)
+        self.assertNotIn("已更新", out)
+        # Only the read-only pre-flight went out; no routine_edit was sent.
+        self.assertEqual(
+            self.calls, [("routine_get", {"routine_id": "routine-abc123"})]
+        )
+
+    def test_edit_unknown_id_is_human_error(self):
+        code, out, err = self._run(
+            [
+                "routine",
+                "edit",
+                "--routine-id",
+                "routine-nope",
+                "--content",
+                "提醒我看日程",
+            ],
+            self._handler(
+                {
+                    "routine_get": _rejected(
+                        "KeyError: unknown routine: routine-nope"
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("找不到例行任务 'routine-nope'", err)
+        self.assertNotIn("已更新", out)
+        self.assertEqual(
+            self.calls, [("routine_get", {"routine_id": "routine-nope"})]
+        )
+
+    def test_edit_unparseable_time_is_human_error(self):
+        code, out, err = self._run(
+            [
+                "routine",
+                "edit",
+                "--routine-id",
+                "routine-abc123",
+                "--time",
+                "下辈子",
+            ],
+            self._handler({"routine_get": _routine_snapshot()}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("没听懂这个时间", err)
+        self.assertIn("could not parse schedule", err)
+        self.assertNotIn("已更新", out)
+        self.assertEqual(self.calls, [])
+
+    def test_edit_without_time_or_content_is_human_error(self):
+        code, out, err = self._run(
+            ["routine", "edit", "--routine-id", "routine-abc123"],
+            self._handler({"routine_get": _routine_snapshot()}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("至少改一项", err)
+        self.assertIn("nothing to change", err)
+        self.assertNotIn("已更新", out)
+        self.assertEqual(self.calls, [])
+
+    def test_edit_server_rejection_surfaces(self):
+        code, out, err = self._run(
+            [
+                "routine",
+                "edit",
+                "--routine-id",
+                "routine-abc123",
+                "--content",
+                "提醒我看日程",
+            ],
+            self._handler(
+                {
+                    "routine_get": _routine_snapshot(),
+                    "routine_edit": _rejected(
+                        "ValueError: routine schedule failed to validate"
+                    ),
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("服务端返回错误（routine_edit）", err)
+        self.assertIn("routine schedule failed to validate", err)
+        self.assertNotIn("已更新", out)
+
+    def test_edit_missing_routine_id_exits_2_without_rpc(self):
+        with self.assertRaises(SystemExit) as caught:
+            run(
+                [
+                    "--endpoint",
+                    str(self.endpoint_path),
+                    "routine",
+                    "edit",
+                    "--time",
+                    "每天早上9点",
+                ]
+            )
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+
+class RoutineDeleteTests(_RoutineCliHarness):
+    """T18: ``zn routine delete`` -- remove one routine."""
+
+    def test_delete(self):
+        code, out, err = self._run(
+            ["routine", "delete", "--routine-id", "routine-abc123"],
+            self._handler(
+                {
+                    "routine_get": _routine_snapshot(),
+                    "routine_delete": {
+                        "routine_id": "routine-abc123",
+                        "deleted": True,
+                    },
+                }
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("例行任务 routine-abc123 已删除", out)
+        self.assertEqual(
+            self.calls,
+            [
+                ("routine_get", {"routine_id": "routine-abc123"}),
+                ("routine_delete", {"routine_id": "routine-abc123"}),
+            ],
+        )
+        self.assertEqual(err, "")
+
+    def test_delete_json_passthrough(self):
+        result = {"routine_id": "routine-abc123", "deleted": True}
+        code, out, err = self._run(
+            ["routine", "delete", "--routine-id", "routine-abc123", "--json"],
+            self._handler(
+                {"routine_get": _routine_snapshot(), "routine_delete": result}
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), result)
+        self.assertEqual(err, "")
+
+    def test_delete_engaged_refuses_without_mutation_rpc(self):
+        engaged = _routine_snapshot(
+            recent_runs=[_run_row(status="running", finished_at=None)]
+        )
+        code, out, err = self._run(
+            ["routine", "delete", "--routine-id", "routine-abc123"],
+            self._handler({"routine_get": engaged}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("正在执行中", err)
+        self.assertIn("run in flight", err)
+        self.assertIn("不能删除", err)
+        self.assertNotIn("已删除", out)
+        # Only the read-only pre-flight went out; no routine_delete was sent.
+        self.assertEqual(
+            self.calls, [("routine_get", {"routine_id": "routine-abc123"})]
+        )
+
+    def test_delete_unknown_id_is_human_error(self):
+        code, out, err = self._run(
+            ["routine", "delete", "--routine-id", "routine-nope"],
+            self._handler(
+                {
+                    "routine_get": _rejected(
+                        "KeyError: unknown routine: routine-nope"
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("找不到例行任务 'routine-nope'", err)
+        self.assertNotIn("已删除", out)
+
+    def test_delete_server_rejection_surfaces(self):
+        code, out, err = self._run(
+            ["routine", "delete", "--routine-id", "routine-abc123"],
+            self._handler(
+                {
+                    "routine_get": _routine_snapshot(),
+                    "routine_delete": _rejected(
+                        "ValueError: routine has a run in flight; "
+                        "wait for it to finish before delete"
+                    ),
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("服务端返回错误（routine_delete）", err)
+        self.assertIn("run in flight", err)
+        self.assertNotIn("已删除", out)
+
+    def test_delete_missing_routine_id_exits_2_without_rpc(self):
+        with self.assertRaises(SystemExit) as caught:
+            run(
+                [
+                    "--endpoint",
+                    str(self.endpoint_path),
+                    "routine",
+                    "delete",
+                ]
+            )
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+
 class RoutineOfflineTests(_RoutineCliHarness):
     """Resident unreachable: exit 0 with an honest note; no false success."""
 
@@ -525,6 +885,52 @@ class RoutineOfflineTests(_RoutineCliHarness):
         parsed = json.loads(out)
         self.assertFalse(parsed["daemon_reachable"])
         self.assertFalse(parsed["changed"])
+        self.assertEqual(err, "")
+
+    def test_edit_offline_reports_no_change(self):
+        code, out, err = self._run_offline(
+            [
+                "routine",
+                "edit",
+                "--routine-id",
+                "routine-abc123",
+                "--time",
+                "每天早上9点",
+            ]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("unreachable", out)
+        self.assertIn("zn-resident", out)
+        self.assertIn("没有修改任何例行任务", out)
+        self.assertNotIn("已更新", out)
+        self.assertEqual(err, "")
+
+    def test_edit_offline_json(self):
+        code, out, err = self._run_offline(
+            [
+                "routine",
+                "edit",
+                "--routine-id",
+                "routine-abc123",
+                "--content",
+                "提醒我看日程",
+                "--json",
+            ]
+        )
+        self.assertEqual(code, 0)
+        parsed = json.loads(out)
+        self.assertFalse(parsed["daemon_reachable"])
+        self.assertFalse(parsed["changed"])
+        self.assertEqual(err, "")
+
+    def test_delete_offline_reports_no_change(self):
+        code, out, err = self._run_offline(
+            ["routine", "delete", "--routine-id", "routine-abc123"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("unreachable", out)
+        self.assertIn("没有删除任何例行任务", out)
+        self.assertNotIn("已删除", out)
         self.assertEqual(err, "")
 
 
