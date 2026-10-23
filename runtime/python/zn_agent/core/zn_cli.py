@@ -3296,7 +3296,7 @@ def _reject_routine_engaged(
     """
     if not _routine_engaged(snapshot):
         return
-    verb = {"edit": "修改", "delete": "删除"}.get(action, "操作")
+    verb = {"edit": "修改", "delete": "删除", "test-run": "试运行"}.get(action, "操作")
     raise CliError(
         f"例行任务 {routine_id} 正在执行中（run in flight），现在不能{verb}。\n"
         f"等这次运行结束后再试：`zn routine runs {routine_id}` 可以看进度。"
@@ -3430,6 +3430,115 @@ def _cmd_routine_delete(args: argparse.Namespace) -> int:
         return 0
     routine_id = _one_line(result.get("routine_id") or args.routine_id, limit=24)
     print(f"例行任务 {routine_id} 已删除")
+    return 0
+
+
+# --- T19: `zn routine test-run` + `zn routine acknowledge` ------------------
+# Terminal face for the daemon's already-wired ``routine_test_run`` /
+# ``routine_acknowledge`` RPCs (daemon.py ``_routine_result``; RoutineManager
+# test_run / acknowledge). No new daemon RPC, no daemon.py changes.
+#
+# test-run is REAL execution, not a dry run: the task is handed to Will
+# exactly like a scheduled occurrence. The TTY copy says so explicitly;
+# the approval boundary is enforced before any execution (awaiting_approval
+# returns a held run without executing; denied/expired raises and is
+# humanized here). Offline contract (T2-6 style): exit 0 with an honest
+# note, never claiming a mutation happened. engaged (a run in flight)
+# refuses with the T18 "wait for the run to finish" wording -- a pre-flight
+# ``routine_get`` guard, zero mutation RPCs on refusal.
+
+_TEST_RUN_BOUNDARY_MARKER = "blocked by its approval boundary"
+
+
+def _humanize_test_run_boundary(exc: CliError) -> CliError:
+    """Turn a boundary-blocked test-run rejection into human copy (T2-5).
+
+    The daemon raises ``ValueError("routine test run blocked by its approval
+    boundary: <reason>")`` when the boundary is denied or expired; this
+    becomes a Chinese lead keeping the English technical fragment in
+    parentheses. Anything else passes through unchanged.
+    """
+    text = str(exc)
+    if _TEST_RUN_BOUNDARY_MARKER not in text:
+        return exc
+    reason = text.split(_TEST_RUN_BOUNDARY_MARKER + ":", 1)[1].strip()
+    lead = (
+        "这次试运行被审批边界拦下了"
+        "（routine test run blocked by its approval boundary）"
+    )
+    return CliError(f"{lead}：{reason}" if reason else lead)
+
+
+def _cmd_routine_test_run(args: argparse.Namespace) -> int:
+    snapshot = _routine_preflight(args, unavailable="没有试运行任何例行任务")
+    if snapshot is None:
+        return 0
+    _reject_routine_engaged("test-run", args.routine_id, snapshot)
+    try:
+        ok, payload = _routine_rpc(
+            args, "routine_test_run", {"routine_id": args.routine_id}
+        )
+    except CliError as exc:
+        raise _humanize_test_run_boundary(
+            _unknown_routine_error(exc, args.routine_id)
+        ) from None
+    if not ok:
+        return _routine_offline(
+            args,
+            payload,
+            unavailable="没有试运行任何例行任务",
+            json_payload={"changed": False, "run": None},
+        )
+    result = payload
+    if not isinstance(result, dict) or not result.get("run_id"):
+        raise _unexpected_result("routine_test_run", result)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    routine_id = _one_line(result.get("routine_id") or args.routine_id, limit=24)
+    run_id = _one_line(result.get("run_id"), limit=20)
+    status = str(result.get("status") or "")
+    if status == "awaiting_approval":
+        print(
+            f"例行任务 {routine_id} 的试运行已进入审批等待"
+            "（awaiting_approval）：审批还没通过，任务暂不执行。\n"
+            "审批通过后，下一个心跳会继续这次试运行。"
+        )
+        return 0
+    mark = status_symbol(status)
+    print(
+        f"{mark + ' ' if mark else ''}例行任务 {routine_id} 的试运行已启动"
+        f"（真执行，不是 dry-run），走和定时触发一样的执行路径；"
+        f"运行 id：{run_id}"
+    )
+    return 0
+
+
+def _cmd_routine_acknowledge(args: argparse.Namespace) -> int:
+    snapshot = _routine_preflight(args, unavailable="没有确认任何例行任务")
+    if snapshot is None:
+        return 0
+    try:
+        ok, payload = _routine_rpc(
+            args, "routine_acknowledge", {"routine_id": args.routine_id}
+        )
+    except CliError as exc:
+        raise _unknown_routine_error(exc, args.routine_id) from None
+    if not ok:
+        return _routine_offline(
+            args,
+            payload,
+            unavailable="没有确认任何例行任务",
+            json_payload={"changed": False, "routine": None},
+        )
+    result = payload
+    if not isinstance(result, dict) or not result.get("routine_id"):
+        raise _unexpected_result("routine_acknowledge", result)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    routine_id = _one_line(result.get("routine_id") or args.routine_id, limit=24)
+    print(f"已确认例行任务 {routine_id}（我看过了）：自动暂停计时器已重置")
     return 0
 
 
@@ -5217,6 +5326,48 @@ def build_parser() -> argparse.ArgumentParser:
     )
     routine_delete.add_argument("--json", action="store_true", help="print raw JSON")
     routine_delete.set_defaults(func=_cmd_routine_delete)
+
+    # T19: test-run / acknowledge against the already-wired routine_test_run /
+    # routine_acknowledge RPCs. T3-2: epilog examples live on each leaf parser
+    # like every other command; every example line starts with "zn " and
+    # parses back to this leaf (test_zn_epilog contract).
+    routine_test_run = routine_sub.add_parser(
+        "test-run",
+        help="execute a routine once, right now (real execution, not a dry run)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn routine test-run --routine-id routine-abc123\n"
+        "  zn routine test-run --routine-id routine-abc123 --json",
+    )
+    routine_test_run.add_argument(
+        "--routine-id",
+        type=lambda v: _require_non_empty(v, name="--routine-id"),
+        required=True,
+        help="routine id, e.g. routine-abc123",
+    )
+    routine_test_run.add_argument(
+        "--json", action="store_true", help="print raw JSON"
+    )
+    routine_test_run.set_defaults(func=_cmd_routine_test_run)
+
+    routine_acknowledge = routine_sub.add_parser(
+        "acknowledge",
+        help="mark a routine as reviewed (resets the auto-pause clock)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn routine acknowledge --routine-id routine-abc123\n"
+        "  zn routine acknowledge --routine-id routine-abc123 --json",
+    )
+    routine_acknowledge.add_argument(
+        "--routine-id",
+        type=lambda v: _require_non_empty(v, name="--routine-id"),
+        required=True,
+        help="routine id, e.g. routine-abc123",
+    )
+    routine_acknowledge.add_argument(
+        "--json", action="store_true", help="print raw JSON"
+    )
+    routine_acknowledge.set_defaults(func=_cmd_routine_acknowledge)
 
     # T10: diary -- read-only terminal face for the resident's daily diary.
     # diary_write stays on the chat path. T3-2: epilog examples live on
