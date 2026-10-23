@@ -5189,3 +5189,599 @@ class ZnCliWorkDetachT20Tests(_CliHarness):
         work = parser._subparsers._group_actions[0].choices["work"]
         detach = work._subparsers._group_actions[0].choices["detach"]
         self.assertIn("zn work detach --thread-id <thread-id>", detach.epilog)
+
+
+class ZnCliWorkRestoreT21Tests(_CliHarness):
+    """T21: ``zn work restore-prepare`` / ``restore-approve`` / ``restore-application``.
+
+    Terminal entries for the daemon's ``work_restore_prepare``,
+    ``work_restore_approve`` and ``work_restore_application`` RPCs -- the
+    three-step missing-file restore flow. New test class (Floor Guard:
+    existing tests and assertions untouched).
+    """
+
+    def _run_on_tty(self, argv, handler, no_color=False):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        if no_color:
+            env["NO_COLOR"] = "1"
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def _application(self, **overrides):
+        # mirrors work_restore_application_resident._application_public
+        result = {
+            "application_id": "restore-app-1",
+            "restore_point_id": "rp-1",
+            "thread_id": "t1",
+            "event_id": "ev-1",
+            "target_path": "C:\\work\\notes.txt",
+            "status": "approval_required",
+            "requires_user_approval": True,
+            "fresh_revalidation_required": True,
+            "automatic_authority": False,
+            "error": None,
+            "created_at": "2026-10-23T05:00:00Z",
+            "updated_at": "2026-10-23T05:00:00Z",
+            "completed_at": None,
+        }
+        result.update(overrides)
+        return result
+
+    def _prepare_argv(self, extra=()):
+        return ["work", "restore-prepare", "--thread-id", "t1",
+                "--restore-point-id", "rp-1", *extra]
+
+    def _approve_argv(self, extra=()):
+        return ["work", "restore-approve", "--thread-id", "t1",
+                "--application-id", "restore-app-1", *extra]
+
+    def _application_argv(self, extra=()):
+        return ["work", "restore-application",
+                "--application-id", "restore-app-1", *extra]
+
+    # -- restore-prepare: happy paths -----------------------------------------
+
+    def test_prepare_success_prints_human_line(self):
+        code, out, err = self._run(
+            self._prepare_argv(),
+            self._handler({"work_restore_prepare": self._application()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("restore prepare: 缺文件恢复申请已创建", out)
+        self.assertIn("application=restore-app-1", out)
+        self.assertIn("目标文件：C:\\work\\notes.txt", out)
+        self.assertIn("状态：等待审批（approval_required）", out)
+        self.assertEqual(
+            self.calls,
+            [
+                (
+                    "work_restore_prepare",
+                    {"thread_id": "t1", "restore_point_id": "rp-1"},
+                )
+            ],
+        )
+
+    def test_prepare_sends_exact_two_key_rpc_schema(self):
+        # the daemon's work_restore_prepare RPC accepts exactly
+        # {thread_id, restore_point_id}; the client must not send extras
+        self._run(self._prepare_argv(), self._handler({"work_restore_prepare": self._application()}))
+        self.assertEqual(
+            self.calls,
+            [("work_restore_prepare", {"thread_id": "t1", "restore_point_id": "rp-1"})],
+        )
+        for _, params in self.calls:
+            self.assertEqual(set(params), {"thread_id", "restore_point_id"})
+
+    def test_prepare_json_passes_rpc_result_through(self):
+        payload = self._application()
+        code, out, err = self._run(
+            self._prepare_argv(extra=["--json"]),
+            self._handler({"work_restore_prepare": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), payload)
+        self.assertIn('"application_id"', out)
+
+    def test_prepare_malformed_result_humanized(self):
+        code, out, err = self._run(
+            self._prepare_argv(),
+            self._handler({"work_restore_prepare": {"application_id": 42}}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "zn: error: 服务返回了无法识别的结果（unexpected work_restore_prepare result",
+            err,
+        )
+
+    def test_prepare_tty_hint_behind_use_color(self):
+        code, out, err = self._run_on_tty(
+            self._prepare_argv(),
+            self._handler({"work_restore_prepare": self._application()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn(
+            "zn work restore-approve --thread-id t1 --application-id restore-app-1",
+            out,
+        )
+        self.assertIn("\x1b[2m", out)
+
+    def test_prepare_no_hint_on_pipe(self):
+        code, out, err = self._run(
+            self._prepare_argv(),
+            self._handler({"work_restore_prepare": self._application()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("zn work restore-approve", out)
+        self.assertNotIn("\x1b[", out + err)
+
+    def test_prepare_no_hint_with_no_color(self):
+        code, out, err = self._run_on_tty(
+            self._prepare_argv(),
+            self._handler({"work_restore_prepare": self._application()}),
+            no_color=True,
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("zn work restore-approve", out)
+        self.assertNotIn("\x1b[", out + err)
+
+    # -- restore-prepare: argparse: missing args exit 2 ------------------------
+
+    def test_prepare_missing_args_exit_2(self):
+        handler = self._handler({})
+        for argv in (
+            ["work", "restore-prepare"],
+            ["work", "restore-prepare", "--thread-id", "t1"],
+            ["work", "restore-prepare", "--restore-point-id", "rp-1"],
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                self._run(argv, handler)
+            self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_prepare_blank_args_exit_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(
+                ["work", "restore-prepare", "--thread-id", "t1",
+                 "--restore-point-id", "  "],
+                handler,
+            )
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    # -- restore-prepare: T2-6 offline ----------------------------------------
+
+    def test_offline_prepare_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._prepare_argv(), refused)
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有创建缺文件恢复申请", out)
+        self.assertIn("未发出", out)
+        self.assertNotIn("缺文件恢复申请已创建", out)
+
+    def test_offline_prepare_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._prepare_argv(extra=["--json"]), refused)
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["prepared"])
+        self.assertEqual(data["thread_id"], "t1")
+        self.assertEqual(data["restore_point_id"], "rp-1")
+
+    # -- restore-prepare: T2-5 server rejections --------------------------------
+
+    def test_prepare_unknown_thread_humanized(self):
+        handler = self._handler(
+            {
+                "work_restore_prepare": (
+                    False,
+                    None,
+                    "ValueError: unknown work thread: t9",
+                )
+            }
+        )
+        code, out, err = self._run(
+            ["work", "restore-prepare", "--thread-id", "t9",
+             "--restore-point-id", "rp-1"],
+            handler,
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error: 找不到这个工作线程（unknown work thread）", err)
+        self.assertIn("t9", err)
+        self.assertIn("zn work list", err)
+        self.assertNotIn("服务端返回错误", err)
+
+    def test_prepare_unknown_restore_point_humanized(self):
+        handler = self._handler(
+            {
+                "work_restore_prepare": (
+                    False,
+                    None,
+                    "ValueError: unknown Work restore point for thread",
+                )
+            }
+        )
+        code, out, err = self._run(self._prepare_argv(), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error: 找不到这个恢复点（unknown Work restore point）", err)
+        self.assertIn("rp-1", err)
+        self.assertIn("zn work get --thread-id", err)
+        self.assertNotIn("服务端返回错误", err)
+
+    def test_prepare_windows_only_humanized_no_traceback(self):
+        handler = self._handler(
+            {
+                "work_restore_prepare": (
+                    False,
+                    None,
+                    "RuntimeError: missing-file Work restore application "
+                    "currently requires Windows",
+                )
+            }
+        )
+        code, out, err = self._run(self._prepare_argv(), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("缺文件恢复目前只支持 Windows", err)
+        self.assertIn("currently requires Windows", err)
+        self.assertIn("这台机器用不了这条路", err)
+        self.assertNotIn("Traceback", err)
+        self.assertNotIn("Traceback", out)
+
+    def test_prepare_other_server_error_unchanged(self):
+        handler = self._handler(
+            {
+                "work_restore_prepare": (
+                    False,
+                    None,
+                    "RuntimeError: something exploded",
+                )
+            }
+        )
+        code, out, err = self._run(self._prepare_argv(), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("something exploded", err)
+        self.assertNotIn("找不到这个工作线程", err)
+        self.assertNotIn("缺文件恢复目前只支持 Windows", err)
+
+    # -- restore-approve: happy paths -------------------------------------------
+
+    def test_approve_success_prints_human_line(self):
+        code, out, err = self._run(
+            self._approve_argv(),
+            self._handler({"work_restore_approve": self._application()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("restore approve: 恢复申请已审批", out)
+        self.assertIn("application=restore-app-1", out)
+        self.assertIn("状态：approval_required", out)
+        self.assertEqual(
+            self.calls,
+            [
+                (
+                    "work_restore_approve",
+                    {"thread_id": "t1", "application_id": "restore-app-1"},
+                )
+            ],
+        )
+
+    def test_approve_sends_exact_two_key_rpc_schema(self):
+        self._run(self._approve_argv(), self._handler({"work_restore_approve": self._application()}))
+        for _, params in self.calls:
+            self.assertEqual(set(params), {"thread_id", "application_id"})
+
+    def test_approve_json_passes_rpc_result_through(self):
+        payload = self._application()
+        code, out, err = self._run(
+            self._approve_argv(extra=["--json"]),
+            self._handler({"work_restore_approve": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), payload)
+
+    def test_approve_malformed_result_humanized(self):
+        code, out, err = self._run(
+            self._approve_argv(),
+            self._handler({"work_restore_approve": {"status": "completed"}}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "zn: error: 服务返回了无法识别的结果（unexpected work_restore_approve result",
+            err,
+        )
+
+    def test_approve_tty_hint_points_to_application(self):
+        code, out, err = self._run_on_tty(
+            self._approve_argv(),
+            self._handler({"work_restore_approve": self._application()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn(
+            "zn work restore-application --application-id restore-app-1", out
+        )
+        self.assertIn("\x1b[2m", out)
+
+    def test_approve_no_hint_on_pipe(self):
+        code, out, err = self._run(
+            self._approve_argv(),
+            self._handler({"work_restore_approve": self._application()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("zn work restore-application", out)
+        self.assertNotIn("\x1b[", out + err)
+
+    # -- restore-approve: argparse / offline / rejections ------------------------
+
+    def test_approve_missing_args_exit_2(self):
+        handler = self._handler({})
+        for argv in (
+            ["work", "restore-approve"],
+            ["work", "restore-approve", "--thread-id", "t1"],
+            ["work", "restore-approve", "--application-id", "restore-app-1"],
+        ):
+            with self.assertRaises(SystemExit) as caught:
+                self._run(argv, handler)
+            self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_offline_approve_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._approve_argv(), refused)
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有审批这个恢复申请", out)
+        self.assertIn("未生效", out)
+        self.assertNotIn("恢复申请已审批", out)
+
+    def test_offline_approve_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._approve_argv(extra=["--json"]), refused)
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["approved"])
+        self.assertEqual(data["application_id"], "restore-app-1")
+
+    def test_approve_unknown_application_humanized(self):
+        handler = self._handler(
+            {
+                "work_restore_approve": (
+                    False,
+                    None,
+                    "ValueError: unknown Work restore application for thread",
+                )
+            }
+        )
+        code, out, err = self._run(self._approve_argv(), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "zn: error: 找不到这个恢复申请（unknown Work restore application）", err
+        )
+        self.assertIn("restore-app-1", err)
+        self.assertNotIn("服务端返回错误", err)
+
+    def test_approve_windows_only_humanized_no_traceback(self):
+        handler = self._handler(
+            {
+                "work_restore_approve": (
+                    False,
+                    None,
+                    "RuntimeError: missing-file Work restore application "
+                    "currently requires Windows",
+                )
+            }
+        )
+        code, out, err = self._run(self._approve_argv(), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("缺文件恢复目前只支持 Windows", err)
+        self.assertIn("currently requires Windows", err)
+        self.assertIn("这台机器用不了这条路", err)
+        self.assertNotIn("Traceback", err)
+
+    def test_approve_other_server_error_unchanged(self):
+        handler = self._handler(
+            {
+                "work_restore_approve": (
+                    False,
+                    None,
+                    "RuntimeError: something exploded",
+                )
+            }
+        )
+        code, out, err = self._run(self._approve_argv(), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("something exploded", err)
+        self.assertNotIn("找不到这个恢复申请", err)
+
+    # -- restore-application: status reporting -------------------------------------
+
+    def test_application_completed_reports_done(self):
+        payload = self._application(
+            status="completed",
+            requires_user_approval=False,
+            fresh_revalidation_required=False,
+            completed_at="2026-10-23T05:01:00Z",
+        )
+        code, out, err = self._run(
+            self._application_argv(),
+            self._handler({"work_restore_application": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("restore application: application=restore-app-1", out)
+        self.assertIn("目标文件：C:\\work\\notes.txt", out)
+        self.assertIn("状态：已完成（completed）", out)
+        self.assertIn("目标文件已恢复", out)
+        self.assertEqual(
+            self.calls,
+            [("work_restore_application", {"application_id": "restore-app-1"})],
+        )
+
+    def test_application_sends_exact_single_key_rpc_schema(self):
+        self._run(
+            self._application_argv(),
+            self._handler({"work_restore_application": self._application()}),
+        )
+        for _, params in self.calls:
+            self.assertEqual(set(params), {"application_id"})
+
+    def test_application_json_passes_rpc_result_through(self):
+        payload = self._application(status="completed", requires_user_approval=False)
+        code, out, err = self._run(
+            self._application_argv(extra=["--json"]),
+            self._handler({"work_restore_application": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), payload)
+
+    def test_application_pending_points_back_to_approve_on_tty(self):
+        code, out, err = self._run_on_tty(
+            self._application_argv(),
+            self._handler({"work_restore_application": self._application()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("状态：等待审批（approval_required）", out)
+        self.assertIn(
+            "zn work restore-approve --thread-id t1 --application-id restore-app-1",
+            out,
+        )
+        self.assertIn("\x1b[2m", out)
+
+    def test_application_pending_no_hint_on_pipe(self):
+        code, out, err = self._run(
+            self._application_argv(),
+            self._handler({"work_restore_application": self._application()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("状态：等待审批（approval_required）", out)
+        self.assertNotIn("zn work restore-approve", out)
+        self.assertNotIn("\x1b[", out + err)
+
+    def test_application_error_reports_human_reason(self):
+        payload = self._application(
+            status="blocked",
+            requires_user_approval=False,
+            fresh_revalidation_required=False,
+            error="durable restore bytes failed integrity verification",
+        )
+        code, out, err = self._run(
+            self._application_argv(),
+            self._handler({"work_restore_application": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("状态：blocked", out)
+        self.assertIn(
+            "失败原因：durable restore bytes failed integrity verification", out
+        )
+        self.assertNotIn("zn work restore-approve", out)
+
+    def test_application_malformed_result_humanized(self):
+        code, out, err = self._run(
+            self._application_argv(),
+            self._handler({"work_restore_application": {"application_id": 42}}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "zn: error: 服务返回了无法识别的结果（unexpected work_restore_application result",
+            err,
+        )
+
+    def test_application_unknown_application_humanized(self):
+        handler = self._handler(
+            {
+                "work_restore_application": (
+                    False,
+                    None,
+                    "ValueError: unknown Work restore application",
+                )
+            }
+        )
+        code, out, err = self._run(self._application_argv(), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "zn: error: 找不到这个恢复申请（unknown Work restore application）", err
+        )
+        self.assertNotIn("服务端返回错误", err)
+
+    def test_application_missing_args_exit_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["work", "restore-application"], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_offline_application_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._application_argv(), refused)
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有查到恢复申请的状态", out)
+        self.assertIn("未完成", out)
+
+    def test_offline_application_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._application_argv(extra=["--json"]), refused)
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertEqual(data["application_id"], "restore-app-1")
+
+    # -- epilog carries real runnable examples (no drift) --------------------------
+
+    def _epilog_choices(self):
+        parser = build_parser()
+        work = parser._subparsers._group_actions[0].choices["work"]
+        return work._subparsers._group_actions[0].choices
+
+    def test_prepare_epilog_example_is_real_command(self):
+        self.assertIn(
+            "zn work restore-prepare --thread-id <thread-id> "
+            "--restore-point-id <restore-point-id>",
+            self._epilog_choices()["restore-prepare"].epilog,
+        )
+
+    def test_approve_epilog_example_is_real_command(self):
+        self.assertIn(
+            "zn work restore-approve --thread-id <thread-id> "
+            "--application-id <application-id>",
+            self._epilog_choices()["restore-approve"].epilog,
+        )
+
+    def test_application_epilog_example_is_real_command(self):
+        self.assertIn(
+            "zn work restore-application --application-id <application-id>",
+            self._epilog_choices()["restore-application"].epilog,
+        )

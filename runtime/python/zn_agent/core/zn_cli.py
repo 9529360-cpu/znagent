@@ -2482,6 +2482,237 @@ def _cmd_work_detach(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- T21: `zn work restore-prepare` / `restore-approve` / `restore-application` ---
+# Terminal entries for the daemon's ``work_restore_prepare`` (daemon.py:672),
+# ``work_restore_approve`` (daemon.py:682) and ``work_restore_application``
+# (daemon.py:692) RPCs -- the three-step missing-file restore flow. When a
+# work thread's target file went missing (typically after a crash), the
+# resident can rebuild it from the exact bytes it retained, but only with
+# an explicit human approval in the middle. daemon.py is untouched.
+#
+# Contracts, inherited from the T12/T13/T14/D4 lineage (same as T16/T20):
+# - T2-1: presentation uses only the cli_format contract (plain human copy
+#   always; TTY niceties behind ``use_color()``).
+# - T2-5: server rejections humanized (Chinese body + English technical
+#   snippet in parentheses). The known dead end on non-Windows hosts is the
+#   engine's ``RuntimeError("missing-file Work restore application currently
+#   requires Windows")`` -- reported honestly as "this machine can't take
+#   this path", exit 1, no traceback, no false success claim. Unknown
+#   restore point / application ids get their own human copy.
+# - T2-6: unreachable resident -> exit 0 + an honest note naming what was
+#   NOT done, never claiming the restore was prepared/approved/inspected.
+# - T2-7: TTY-only hints stay behind ``use_color()``; pipes, NO_COLOR and
+#   ``--json`` keep historic bytes.
+# - T2-4: ``--json`` prints the RPC result byte-for-byte; exit codes for
+#   missing/illegal CLI args come from argparse (exit 2).
+# The RPC schemas are exactly {"thread_id", "restore_point_id"} /
+# {"thread_id", "application_id"} / {"application_id"} -- the client sends
+# exactly those keys, asserted in the tests.
+_WORK_RESTORE_UNKNOWN_THREAD_SIGNATURE = "unknown work thread"
+_WORK_RESTORE_UNKNOWN_APPLICATION_SIGNATURE = "unknown Work restore application"
+_WORK_RESTORE_UNKNOWN_POINT_SIGNATURE = "unknown Work restore point"
+_WORK_RESTORE_WINDOWS_ONLY_SIGNATURE = "currently requires Windows"
+
+
+def _humanize_work_restore_error(
+    exc: CliError, args: argparse.Namespace
+) -> CliError:
+    """Turn missing-file restore server rejections into human copy (T2-5).
+
+    Unknown thread ids surface as the daemon's
+    ``ValueError("unknown work thread: <id>")``; unknown restore points /
+    applications as the resident's ``ValueError("unknown Work restore ...")``;
+    non-Windows hosts get the engine's ``RuntimeError("... currently requires
+    Windows")``. Anything else travels the untouched generic path.
+    """
+    text = str(exc)
+    if _WORK_RESTORE_UNKNOWN_THREAD_SIGNATURE in text:
+        thread_id = getattr(args, "thread_id", "") or ""
+        return CliError(
+            "找不到这个工作线程（unknown work thread）："
+            f"线程 '{thread_id}' 不存在。"
+            "用 `zn work list` 看看。"
+        )
+    if _WORK_RESTORE_UNKNOWN_APPLICATION_SIGNATURE in text:
+        application_id = getattr(args, "application_id", "") or ""
+        return CliError(
+            "找不到这个恢复申请（unknown Work restore application）："
+            f"申请 '{application_id}' 不存在。"
+            "用创建申请时返回的 application_id 再试一次。"
+        )
+    if _WORK_RESTORE_UNKNOWN_POINT_SIGNATURE in text:
+        thread_id = getattr(args, "thread_id", "") or ""
+        restore_point_id = getattr(args, "restore_point_id", "") or ""
+        return CliError(
+            "找不到这个恢复点（unknown Work restore point）："
+            f"线程 '{thread_id}' 下没有 id 为 '{restore_point_id}' 的恢复点。"
+            "恢复点 id 在守护进程端工作快照的 metadata.restore_points 里，"
+            "用 `zn work get --thread-id <id> --json` 查看；"
+            "终端目前没有 restore-point 列表子命令。"
+        )
+    if _WORK_RESTORE_WINDOWS_ONLY_SIGNATURE in text:
+        return CliError(
+            "缺文件恢复目前只支持 Windows"
+            "（missing-file Work restore application currently requires Windows），"
+            "这台机器用不了这条路。"
+        )
+    return exc
+
+
+def _work_restore_checked_application(method: str, payload: Any) -> dict[str, Any]:
+    """Validate the application public-dict shape; humanized on skew."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("application_id"), str):
+        raise _unexpected_result(method, payload)
+    return payload
+
+
+def _cmd_work_restore_prepare(args: argparse.Namespace) -> int:
+    # T21 spec: the RPC schema is exactly {"thread_id", "restore_point_id"}
+    # and the client sends exactly those two keys -- asserted in the tests.
+    try:
+        ok, payload = _work_drive_rpc(
+            args,
+            "work_restore_prepare",
+            {"thread_id": args.thread_id, "restore_point_id": args.restore_point_id},
+        )
+    except CliError as exc:
+        raise _humanize_work_restore_error(exc, args)
+    if not ok:
+        # T2-6: unreachable resident -- exit 0, honestly saying no restore
+        # application was created; never claim the request went out.
+        return _work_drive_offline(
+            args,
+            payload,
+            unavailable="没有创建缺文件恢复申请（这次申请未发出）",
+            json_payload={
+                "prepared": False,
+                "thread_id": args.thread_id,
+                "restore_point_id": args.restore_point_id,
+            },
+        )
+    app = _work_restore_checked_application("work_restore_prepare", payload)
+    if args.json:
+        # --json passes the RPC result through byte-for-byte (same
+        # serialization convention as every other command).
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+    application_id = app["application_id"]
+    print(f"restore prepare: 缺文件恢复申请已创建 application={application_id}")
+    print(f"  目标文件：{app.get('target_path') or '?'}")
+    status = app.get("status") or "?"
+    if app.get("requires_user_approval"):
+        print(f"  状态：等待审批（{status}）")
+    else:
+        print(f"  状态：{status}")
+    if use_color():
+        print(
+            colorize(
+                f"  用 `zn work restore-approve --thread-id {args.thread_id} "
+                f"--application-id {application_id}` 审批",
+                "dim",
+            )
+        )
+    return 0
+
+
+def _cmd_work_restore_approve(args: argparse.Namespace) -> int:
+    # T21 spec: the RPC schema is exactly {"thread_id", "application_id"}.
+    try:
+        ok, payload = _work_drive_rpc(
+            args,
+            "work_restore_approve",
+            {"thread_id": args.thread_id, "application_id": args.application_id},
+        )
+    except CliError as exc:
+        raise _humanize_work_restore_error(exc, args)
+    if not ok:
+        # T2-6: unreachable resident -- exit 0, honestly saying nothing was
+        # approved; never claim the approval happened.
+        return _work_drive_offline(
+            args,
+            payload,
+            unavailable="没有审批这个恢复申请（审批未生效）",
+            json_payload={
+                "approved": False,
+                "thread_id": args.thread_id,
+                "application_id": args.application_id,
+            },
+        )
+    app = _work_restore_checked_application("work_restore_approve", payload)
+    if args.json:
+        # --json passes the RPC result through byte-for-byte (same
+        # serialization convention as every other command).
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+    application_id = app["application_id"]
+    print(f"restore approve: 恢复申请已审批 application={application_id}")
+    print(f"  状态：{app.get('status') or '?'}")
+    error = app.get("error")
+    if error:
+        print(f"  说明：{_one_line(error, limit=200)}")
+    if use_color():
+        print(
+            colorize(
+                f"  用 `zn work restore-application --application-id {application_id}` 查看恢复结果",
+                "dim",
+            )
+        )
+    return 0
+
+
+def _cmd_work_restore_application(args: argparse.Namespace) -> int:
+    # T21 spec: the RPC schema is exactly {"application_id"}.
+    try:
+        ok, payload = _work_drive_rpc(
+            args,
+            "work_restore_application",
+            {"application_id": args.application_id},
+        )
+    except CliError as exc:
+        raise _humanize_work_restore_error(exc, args)
+    if not ok:
+        # T2-6: unreachable resident -- exit 0, honestly saying the
+        # application state was not inspected; never invent a status.
+        return _work_drive_offline(
+            args,
+            payload,
+            unavailable="没有查到恢复申请的状态（这次查询未完成）",
+            json_payload={"application_id": args.application_id},
+        )
+    app = _work_restore_checked_application("work_restore_application", payload)
+    if args.json:
+        # --json passes the RPC result through byte-for-byte (same
+        # serialization convention as every other command).
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+    application_id = app["application_id"]
+    status = str(app.get("status") or "?")
+    print(f"restore application: application={application_id}")
+    target_path = app.get("target_path")
+    if target_path:
+        print(f"  目标文件：{target_path}")
+    error = app.get("error")
+    if status == "completed":
+        print("  状态：已完成（completed）——目标文件已恢复")
+    elif error:
+        print(f"  状态：{status}")
+        print(f"  失败原因：{_one_line(error, limit=200)}")
+    elif app.get("requires_user_approval"):
+        print(f"  状态：等待审批（{status}）")
+        if use_color():
+            thread_id = app.get("thread_id") or ""
+            print(
+                colorize(
+                    f"  用 `zn work restore-approve --thread-id {thread_id} "
+                    f"--application-id {application_id}` 审批",
+                    "dim",
+                )
+            )
+    else:
+        print(f"  状态：{status}")
+    return 0
+
+
 def _cmd_connector_list(args: argparse.Namespace) -> int:
     """List the known R-series connectors. Local only, no resident RPC."""
 
@@ -4660,6 +4891,56 @@ def build_parser() -> argparse.ArgumentParser:
     work_detach.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
     work_detach.add_argument("--json", action="store_true", help="print raw JSON")
     work_detach.set_defaults(func=_cmd_work_detach)
+
+    work_restore_prepare = work_sub.add_parser(
+        "restore-prepare",
+        help="prepare a missing-file restore application for a work thread",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn work restore-prepare --thread-id <thread-id> --restore-point-id <restore-point-id>",
+    )
+    work_restore_prepare.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
+    work_restore_prepare.add_argument(
+        "--restore-point-id",
+        type=lambda v: _require_non_empty(v, name="--restore-point-id"),
+        required=True,
+        help="恢复点 id：从 `zn work get --thread-id <id> --json` 输出的 metadata.restore_points 里取（终端目前没有 restore-point 列表子命令）",
+    )
+    work_restore_prepare.add_argument("--json", action="store_true", help="print raw JSON")
+    work_restore_prepare.set_defaults(func=_cmd_work_restore_prepare)
+
+    work_restore_approve = work_sub.add_parser(
+        "restore-approve",
+        help="approve a pending missing-file restore application",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn work restore-approve --thread-id <thread-id> --application-id <application-id>",
+    )
+    work_restore_approve.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
+    work_restore_approve.add_argument(
+        "--application-id",
+        type=lambda v: _require_non_empty(v, name="--application-id"),
+        required=True,
+        help="restore-prepare 返回的 application_id",
+    )
+    work_restore_approve.add_argument("--json", action="store_true", help="print raw JSON")
+    work_restore_approve.set_defaults(func=_cmd_work_restore_approve)
+
+    work_restore_application = work_sub.add_parser(
+        "restore-application",
+        help="inspect a missing-file restore application",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn work restore-application --application-id <application-id>",
+    )
+    work_restore_application.add_argument(
+        "--application-id",
+        type=lambda v: _require_non_empty(v, name="--application-id"),
+        required=True,
+        help="restore-prepare 返回的 application_id",
+    )
+    work_restore_application.add_argument("--json", action="store_true", help="print raw JSON")
+    work_restore_application.set_defaults(func=_cmd_work_restore_application)
 
     approval = sub.add_parser(
         "approval",
