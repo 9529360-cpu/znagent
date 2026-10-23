@@ -2,7 +2,7 @@
 
 Covers the two BrowserActionKind values that previously fell through to the
 "not implemented yet" branch of PlaywrightManagedBrowser.act, plus a
-dispatch-completeness audit that walks all 20 declared kinds through the
+dispatch-completeness audit that walks all 23 declared kinds through the
 product path (SemanticPlaywrightManagedBrowser) and proves none of them hits
 the "not implemented" fallback.
 """
@@ -23,6 +23,7 @@ from zn_agent.core.browser import (
     BrowserTargetQueryKind,
 )
 from zn_agent.core.managed_browser import PlaywrightManagedBrowser
+from zn_agent.core.models import utc_now
 from zn_agent.core.semantic_managed_browser import SemanticPlaywrightManagedBrowser
 
 _OWNER = BrowserSessionOwner(work_id="test", root_id="test", purpose="test")
@@ -573,6 +574,50 @@ class DispatchCompletenessAuditTests(unittest.TestCase):
             run(BrowserActionKind.DIALOG_ACCEPT)
             run(BrowserActionKind.DIALOG_DISMISS)
 
+            # Scene slice (C2 salvage): CLEAR / SCROLL_INTO_VIEW / HOVER are
+            # claimed by the scene mixins only for scene-bound targets. With
+            # a scene-hinted target but no fresh scene they must fail closed
+            # with a scene error, never the "not implemented" fallback.
+            scene_observation = adapter.observe(identity.session_id)
+            for kind in (
+                BrowserActionKind.CLEAR,
+                BrowserActionKind.SCROLL_INTO_VIEW,
+                BrowserActionKind.HOVER,
+            ):
+                scene_target = BrowserTarget(
+                    session_id=identity.session_id,
+                    page_id=scene_observation.page_id,
+                    kind=BrowserTargetKind.ELEMENT,
+                    target_id="scene-audit-1",
+                    observed_at=scene_observation.captured_at,
+                    selector_hint="browser_scene:audit-1",
+                )
+                scene_action = BrowserAction.create(
+                    session_id=identity.session_id,
+                    page_id=scene_observation.page_id,
+                    kind=kind,
+                    target=scene_target,
+                )
+                scene_authority = BrowserActionAuthority(
+                    action_id=scene_action.action_id,
+                    session_id=scene_action.session_id,
+                    issued_at=utc_now(),
+                    observation_captured_at=scene_observation.captured_at,
+                    permission=permission,
+                    target_id=scene_target.target_id,
+                    page_id=scene_observation.page_id,
+                )
+                effect = adapter.act(scene_action, scene_authority)
+                self.assertNotIn(
+                    "not implemented",
+                    (effect.error or "").lower(),
+                    f"{kind.value} fell through dispatch: {effect.error}",
+                )
+                outcomes[kind.value] = (
+                    effect.success,
+                    (effect.error or "")[:120],
+                )
+
             # Q5 additions.
             run(BrowserActionKind.PRESS, args={"key": "Enter"})
             run(BrowserActionKind.WAIT, args={"text": "confirmed"})
@@ -583,9 +628,9 @@ class DispatchCompletenessAuditTests(unittest.TestCase):
             adapter.close()
 
     def test_declared_kind_count_matches_audit_baseline(self):
-        # The audit ran against 20 kinds. If the enum grows, this test forces
+        # The audit ran against 23 kinds. If the enum grows, this test forces
         # the completeness audit above to be re-verified for the new kind.
-        self.assertEqual(len(list(BrowserActionKind)), 20)
+        self.assertEqual(len(list(BrowserActionKind)), 23)
 
 
 if __name__ == "__main__":
