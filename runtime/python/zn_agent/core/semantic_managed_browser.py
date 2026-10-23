@@ -50,6 +50,7 @@ from .managed_browser import (
     PlaywrightManagedBrowser,
     _ManagedTargetBinding,
 )
+from .managed_browser_press import PlaywrightBrowserPressMixin
 from .models import utc_now
 
 
@@ -409,6 +410,7 @@ class SemanticPlaywrightManagedBrowser(
     PlaywrightBrowserCausalPopupMixin,
     PlaywrightBrowserSceneActionMixin,
     PlaywrightBrowserTabNavigationMixin,
+    PlaywrightBrowserPressMixin,
     PlaywrightManagedBrowser,
 ):
     """Playwright adapter with fail-closed exact targets plus bounded scenes."""
