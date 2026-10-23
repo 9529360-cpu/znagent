@@ -4549,3 +4549,435 @@ class ZnCliWorkAttachT16Tests(_CliHarness):
         self.assertEqual(code, 0, err)
         self.assertNotIn("zn work get --thread-id", out)
         self.assertNotIn("\x1b[", out + err)
+
+
+class ZnCliRoutineProposeConfirmT17Tests(_CliHarness):
+    """T17: ``zn routine propose`` / ``zn routine confirm``.
+
+    Terminal face for the daemon's already-wired ``routine_propose`` /
+    ``routine_confirm`` RPCs: one sentence -> draft with the six
+    confirmations, then validate + create from a (possibly edited) draft.
+
+    New test class (Floor Guard: existing tests and assertions untouched).
+    """
+
+    def _draft(self, **overrides):
+        draft = {
+            "text": "每天早上8点提醒我看日程",
+            "task": "提醒我看日程",
+            "owner": "ZN",
+            "schedule_kind": "cron",
+            "interval_seconds": None,
+            "cron_expression": "0 8 * * *",
+            "timezone": "UTC",
+            "input_source": "ZN 记忆与当前工作现场",
+            "expected_result": "完成：提醒我看日程",
+            "approval_boundary": "只读汇总，不发送、不发布、不删除、不购买；超出范围需审批",
+            "missing_data_policy": "skip",
+            "auto_pause_after_days": 14,
+            "missing": [],
+        }
+        draft.update(overrides)
+        return draft
+
+    def _snapshot(self, **overrides):
+        snap = {
+            "routine_id": "routine-abc123",
+            "title": "提醒我看日程",
+            "task": "提醒我看日程",
+            "owner": "ZN",
+            "schedule_kind": "cron",
+            "schedule_spec": "0 8 * * *",
+            "timezone": "UTC",
+            "input_source": "ZN 记忆与当前工作现场",
+            "expected_result": "完成：提醒我看日程",
+            "approval_boundary": "只读汇总",
+            "missing_data_policy": "skip",
+            "status": "active",
+            "schedule_description": "每天 08:00（UTC）",
+            "created_at": "2026-10-23T00:00:00+00:00",
+        }
+        snap.update(overrides)
+        return snap
+
+    def _rejected(self, error_text):
+        """An RPC ok:false server rejection, as the real daemon sends."""
+        return (False, None, error_text)
+
+    def _run_on_tty(self, argv, handler, no_color=False):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        if no_color:
+            env["NO_COLOR"] = "1"
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def _refused(self, method, params):
+        raise socket.error("connection refused")
+
+    # -- propose: happy paths --------------------------------------------------
+
+    def test_propose_shows_six_confirmations(self):
+        draft = self._draft()
+        code, out, err = self._run(
+            ["routine", "propose", "每天早上8点提醒我看日程"],
+            self._handler({"routine_propose": draft}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            self.calls,
+            [("routine_propose", {"text": "每天早上8点提醒我看日程"})],
+        )
+        for label in ("任务：", "负责人：", "计划：", "输入来源：", "期望结果：", "审批边界：", "缺失数据策略："):
+            self.assertIn(label, out)
+        self.assertIn("提醒我看日程", out)
+        self.assertIn("0 8 * * *", out)
+        self.assertNotIn("缺项", out)
+        self.assertEqual(err, "")
+
+    def test_propose_missing_schedule_hint(self):
+        draft = self._draft(
+            schedule_kind="",
+            cron_expression=None,
+            missing=["schedule"],
+        )
+        code, out, err = self._run(
+            ["routine", "propose", "提醒我喝水"],
+            self._handler({"routine_propose": draft}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("未解析出时间计划", out)
+        self.assertIn("缺项：时间计划还没解析出来", out)
+        self.assertIn("每天早上8点", out)
+
+    def test_propose_json_passes_rpc_result_through(self):
+        draft = self._draft()
+        code, out, err = self._run(
+            ["routine", "propose", "每天早上8点提醒我看日程", "--json"],
+            self._handler({"routine_propose": draft}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), draft)
+        self.assertEqual(err, "")
+
+    def test_propose_unexpected_shape_fails_closed(self):
+        code, out, err = self._run(
+            ["routine", "propose", "每天早上8点提醒我看日程"],
+            self._handler({"routine_propose": ["not", "a", "dict"]}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertIn("无法识别的结果", err)
+        self.assertEqual(out, "")
+
+    # -- propose: input validation ---------------------------------------------
+
+    def test_propose_empty_text_is_human_guidance(self):
+        code, out, err = self._run(
+            ["routine", "propose", ""],
+            self._handler({}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error: 请用一句话描述这个例行任务", err)
+        self.assertIn('zn routine propose "每天早上8点提醒我看日程"', err)
+        self.assertEqual(self.calls, [])
+
+    def test_propose_missing_text_arg_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["routine", "propose"], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    # -- propose: offline / server errors ---------------------------------------
+
+    def test_propose_offline_claims_nothing(self):
+        code, out, err = self._run(
+            ["routine", "propose", "每天早上8点提醒我看日程"], self._refused
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("unreachable", out)
+        self.assertIn("没能生成例行任务草稿", out)
+        self.assertNotIn("草稿已生成", out)
+        self.assertEqual(err, "")
+
+    def test_propose_offline_json(self):
+        code, out, err = self._run(
+            ["routine", "propose", "每天早上8点提醒我看日程", "--json"],
+            self._refused,
+        )
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertIsNone(data["draft"])
+        self.assertEqual(err, "")
+
+    def test_propose_server_rejection_humanized(self):
+        code, out, err = self._run(
+            ["routine", "propose", "每天早上8点提醒我看日程"],
+            self._handler(
+                {
+                    "routine_propose": self._rejected(
+                        "ValueError: routine_propose requires text"
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertIn("请用一句话描述这个例行任务", err)
+        self.assertIn("routine_propose requires text", err)
+        self.assertNotIn("草稿已生成", out)
+
+    # -- propose: TTY niceties ----------------------------------------------------
+
+    def test_propose_tty_prints_next_step_hint(self):
+        code, out, err = self._run_on_tty(
+            ["routine", "propose", "每天早上8点提醒我看日程"],
+            self._handler({"routine_propose": self._draft()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("zn routine confirm --draft-file draft.json", out)
+        self.assertIn("\x1b[2m", out)
+
+    def test_propose_pipe_has_no_hint(self):
+        code, out, err = self._run(
+            ["routine", "propose", "每天早上8点提醒我看日程"],
+            self._handler({"routine_propose": self._draft()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("zn routine confirm --draft-file", out)
+        self.assertNotIn("\x1b[", out + err)
+
+    # -- confirm: happy paths ----------------------------------------------------
+
+    def test_confirm_from_draft_file_creates_routine(self):
+        draft = self._draft()
+        draft_path = Path(self.tmp.name) / "draft.json"
+        draft_path.write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
+        snap = self._snapshot()
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-file", str(draft_path)],
+            self._handler({"routine_confirm": snap}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.calls, [("routine_confirm", {"draft": draft})])
+        self.assertIn("例行任务 routine-abc123 已创建", out)
+        self.assertIn("[active]", out)
+        self.assertIn("每天 08:00", out)
+        self.assertEqual(err, "")
+
+    def test_confirm_from_draft_json_string(self):
+        draft = self._draft()
+        snap = self._snapshot()
+        code, out, err = self._run(
+            [
+                "routine",
+                "confirm",
+                "--draft-json",
+                json.dumps(draft, ensure_ascii=False),
+            ],
+            self._handler({"routine_confirm": snap}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.calls, [("routine_confirm", {"draft": draft})])
+        self.assertIn("已创建", out)
+        self.assertEqual(err, "")
+
+    def test_confirm_json_passes_rpc_result_through(self):
+        draft = self._draft()
+        snap = self._snapshot()
+        draft_path = Path(self.tmp.name) / "draft.json"
+        draft_path.write_text(json.dumps(draft, ensure_ascii=False), encoding="utf-8")
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-file", str(draft_path), "--json"],
+            self._handler({"routine_confirm": snap}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), snap)
+        self.assertEqual(err, "")
+
+    def test_confirm_unexpected_shape_fails_closed(self):
+        draft = self._draft()
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-json", json.dumps(draft)],
+            self._handler({"routine_confirm": []}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertIn("无法识别的结果", err)
+        self.assertEqual(out, "")
+
+    # -- confirm: draft source validation -----------------------------------------
+
+    def test_confirm_missing_draft_source_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["routine", "confirm"], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_confirm_both_draft_sources_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(
+                [
+                    "routine",
+                    "confirm",
+                    "--draft-json",
+                    "{}",
+                    "--draft-file",
+                    "draft.json",
+                ],
+                handler,
+            )
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_confirm_missing_draft_file_humanized(self):
+        missing = str(Path(self.tmp.name) / "no-such-draft.json")
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-file", missing],
+            self._handler({}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error: 找不到草稿文件", err)
+        self.assertIn("file not found", err)
+        self.assertEqual(self.calls, [])
+
+    def test_confirm_bad_json_file_humanized(self):
+        draft_path = Path(self.tmp.name) / "draft.json"
+        draft_path.write_text("{not valid json", encoding="utf-8")
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-file", str(draft_path)],
+            self._handler({}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error:", err)
+        self.assertIn("不是合法 JSON", err)
+        self.assertEqual(self.calls, [])
+
+    def test_confirm_non_object_draft_humanized(self):
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-json", "[1, 2, 3]"],
+            self._handler({}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error:", err)
+        self.assertIn("必须是 JSON 对象", err)
+        self.assertIn("draft must be an object", err)
+        self.assertEqual(self.calls, [])
+
+    def test_confirm_bad_draft_json_string_humanized(self):
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-json", "{oops"],
+            self._handler({}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("不是合法 JSON", err)
+        self.assertEqual(self.calls, [])
+
+    # -- confirm: server rejections humanized, exit 1 -------------------------------
+
+    def test_confirm_empty_task_rejection_humanized(self):
+        draft = self._draft(task="")
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-json", json.dumps(draft)],
+            self._handler(
+                {
+                    "routine_confirm": self._rejected(
+                        "ValueError: routine task must not be empty"
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertIn("zn: error: 草稿里没有任务内容", err)
+        self.assertIn("routine task must not be empty", err)
+        self.assertNotIn("已创建", out)
+
+    def test_confirm_missing_schedule_rejection_humanized(self):
+        draft = self._draft(schedule_kind="", cron_expression=None)
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-json", json.dumps(draft)],
+            self._handler(
+                {
+                    "routine_confirm": self._rejected(
+                        "ValueError: routine draft has no parsed schedule"
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertIn("zn: error: 草稿里没有可用的时间计划", err)
+        self.assertIn("routine draft has no parsed schedule", err)
+        self.assertNotIn("已创建", out)
+
+    def test_confirm_other_server_error_unchanged(self):
+        draft = self._draft()
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-json", json.dumps(draft)],
+            self._handler(
+                {
+                    "routine_confirm": self._rejected(
+                        "RuntimeError: trigger registration failed"
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertIn(
+            "服务端返回错误（routine_confirm）：RuntimeError: trigger registration failed",
+            err,
+        )
+        self.assertNotIn("已创建", out)
+
+    # -- confirm: offline -> exit 0, nothing claimed ---------------------------------
+
+    def test_confirm_offline_claims_nothing(self):
+        draft = self._draft()
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-json", json.dumps(draft)],
+            self._refused,
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("unreachable", out)
+        self.assertIn("没有创建任何例行任务", out)
+        self.assertNotIn("已创建", out)
+        self.assertEqual(err, "")
+
+    def test_confirm_offline_json(self):
+        draft = self._draft()
+        code, out, err = self._run(
+            ["routine", "confirm", "--draft-json", json.dumps(draft), "--json"],
+            self._refused,
+        )
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["changed"])
+        self.assertIsNone(data["routine"])
+        self.assertEqual(err, "")
+
+    # -- confirm: TTY niceties ----------------------------------------------------------
+
+    def test_confirm_tty_prints_list_hint(self):
+        draft = self._draft()
+        code, out, err = self._run_on_tty(
+            ["routine", "confirm", "--draft-json", json.dumps(draft)],
+            self._handler({"routine_confirm": self._snapshot()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("用 `zn routine list` 查看已创建的例行任务", out)
+        self.assertIn("\x1b[2m", out)
