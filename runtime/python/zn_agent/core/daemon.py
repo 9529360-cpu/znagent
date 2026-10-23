@@ -131,6 +131,15 @@ class ResidentRpcServer:
             self.resident, self.suggestions
         )
         self.work_control = OutcomeAwareRestoreWorkControl(self.work)
+        # Local import: keeps the model-first turn wiring in its own merge
+        # hunk instead of the shared top-level import block. The service is
+        # the `turn_submit` RPC below: each user turn reaches the model
+        # first, then materializes durable Work only when the model hands
+        # the request back. Stop/cancel and active-Work steering stay local
+        # control boundaries and never wait on the model.
+        from .model_first_turn import ModelFirstTurnService
+
+        self.turn = ModelFirstTurnService(self.resident, self.work_control)
         # Local import: keeps the diary wiring in its own merge hunk
         # (S1(b) precedent) instead of the shared top-level import block.
         # The diary trigger is the `diary_write` RPC below, called by the
@@ -522,6 +531,21 @@ class ResidentRpcServer:
                     ),
                 )
             )
+        elif method == "turn_submit":
+            thread_id = str(params.get("thread_id") or "").strip()
+            text = str(params.get("text") or params.get("task") or "").strip()
+            if not thread_id:
+                raise ValueError("turn_submit requires thread_id")
+            if not text:
+                raise ValueError("turn_submit requires text")
+            payload = params.get("payload")
+            if payload is not None and not isinstance(payload, dict):
+                raise ValueError("turn_submit payload must be an object")
+            turn = self.turn.submit(thread_id, text, payload=payload)
+            snapshot = turn.get("thread")
+            if snapshot is not None:
+                turn["thread"] = self._work_snapshot(snapshot)
+            result = turn
         elif method == "work_start":
             thread_id = str(params.get("thread_id") or "").strip()
             task = str(params.get("task") or "").strip()
