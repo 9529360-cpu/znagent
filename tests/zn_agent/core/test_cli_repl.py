@@ -1051,3 +1051,262 @@ class ChatSessionApprovalsTests(_Repl2Case):
         self.assertIn("/status", text)
         self.assertIn("/approvals", text)
         self.assertIn("zn approval decide", text)
+
+
+# ---------------------------------------------------------------------------
+# REPL-DEC: /decide <request_id> -- numbered decision menu over approval_list
+# ---------------------------------------------------------------------------
+
+
+class _InterruptInput:
+    """Replays *lines*, then raises KeyboardInterrupt once, then EOFError."""
+
+    def __init__(self, lines) -> None:
+        self._items = iter(lines)
+        self._interrupted = False
+
+    def __call__(self, prompt: str) -> str:
+        try:
+            return next(self._items)
+        except StopIteration:
+            if not self._interrupted:
+                self._interrupted = True
+                raise KeyboardInterrupt
+            raise EOFError from None
+
+
+class ChatSessionDecideTests(_Repl2Case):
+    def decide_client(self, *, pending, fail_list=False, fail_decide=False):
+        client = _StubClient()
+
+        def approval_list(params):
+            if fail_list:
+                raise CliError("daemon down (fake approval_list failure)")
+            return {"pending": pending}
+
+        def approval_decide(params):
+            if fail_decide:
+                raise CliError("daemon down (fake approval_decide failure)")
+            return {
+                "request": {
+                    "request_id": params.get("request_id"),
+                    "decision": params.get("decision"),
+                    "status": "decided",
+                    "decision_note": params.get("note"),
+                }
+            }
+
+        client.on("approval_list", approval_list)
+        client.on("approval_decide", approval_decide)
+        return client
+
+    def _card(self, request_id, **overrides):
+        card = {
+            "request_id": request_id,
+            "status": "pending",
+            "action_kind": "shell.exec",
+            "target": "ls /tmp",
+            "scope": "local",
+            "expires_at": "2026-10-23T10:00:00Z",
+            "created_at": "2026-10-23T08:00:00Z",
+        }
+        card.update(overrides)
+        return card
+
+    def _decide_calls(self, client):
+        return [p for m, p in client.calls if m == "approval_decide"]
+
+    def test_decide_shows_card_then_numbered_menu(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-1", "4"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        text = out.getvalue()
+        # Card first (shared renderer), then the option menu.
+        self.assertIn("ap-1  [pending]", text)
+        self.assertIn("shell.exec", text)
+        self.assertIn("1) 批准", text)
+        self.assertIn("2) 拒绝", text)
+        self.assertIn("3) 总是允许", text)
+        self.assertIn("4) 取消", text)
+
+    def test_decide_approve_records_allow_once(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-1", "1"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        calls = self._decide_calls(client)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            calls[0],
+            {"request_id": "ap-1", "decision": "allow_once"},
+        )
+        self.assertIn("ap-1：已批准", out.getvalue())
+
+    def test_decide_deny_with_reason_sends_note(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-1", "2", "路径太危险，先确认"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        calls = self._decide_calls(client)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["decision"], "deny")
+        self.assertEqual(calls[0]["note"], "路径太危险，先确认")
+        self.assertIn("ap-1：已拒绝", out.getvalue())
+        self.assertIn("路径太危险，先确认", out.getvalue())
+
+    def test_decide_deny_empty_reason_sends_no_note(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-1", "2", ""]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        calls = self._decide_calls(client)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["decision"], "deny")
+        # AP-1 contract: no note key at all when the reason is empty.
+        self.assertNotIn("note", calls[0])
+
+    def test_decide_always_allow_records_always_allow(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-1", "3"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        calls = self._decide_calls(client)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["decision"], "always_allow")
+        self.assertIn("ap-1：已设为总是允许", out.getvalue())
+
+    def test_decide_cancel_leaves_card_pending(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-1", "4"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(self._decide_calls(client), [])
+        self.assertIn("取消了", out.getvalue())
+
+    def test_decide_non_numeric_input_reasks(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-1", "批准", "0", "1"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        text = out.getvalue()
+        self.assertIn("只认 1 到 4 的数字", text)
+        calls = self._decide_calls(client)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["decision"], "allow_once")
+
+    def _interrupt_session(self, client, lines, *, interactive=True):
+        out, err = io.StringIO(), io.StringIO()
+        session = ChatSession(
+            client,
+            input_fn=_InterruptInput(lines),
+            out=out,
+            err=err,
+            interactive=interactive,
+            poll_interval=0.0,
+            sleep_fn=lambda _seconds: None,
+        )
+        return session, out, err
+
+    def test_decide_ctrl_c_at_menu_leaves_card_pending(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        # The interrupt lands on the menu read; the card must stay pending.
+        session, out, err = self._interrupt_session(
+            client, ["/decide ap-1"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(self._decide_calls(client), [])
+        self.assertIn("已退出选项", out.getvalue())
+        self.assertIn("还在待审批", out.getvalue())
+
+    def test_decide_ctrl_c_at_reason_leaves_card_pending(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        # Interrupt lands on the denial-reason read after choosing "2".
+        session, out, err = self._interrupt_session(
+            client, ["/decide ap-1", "2"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(self._decide_calls(client), [])
+        self.assertIn("已退出选项", out.getvalue())
+
+    def test_decide_missing_request_id_is_humanized(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(client, ["/decide"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        message = err.getvalue()
+        self.assertIn("缺了审批卡的编号", message)
+        self.assertIn("(missing request_id)", message)
+        self.assertIn("下一步", message)
+        # No RPC at all: missing arg never reaches the daemon.
+        self.assertEqual(client.calls, [])
+
+    def test_decide_unknown_card_id_is_humanized(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-9"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        message = err.getvalue()
+        self.assertIn("没找到待审批的卡片 ap-9", message)
+        self.assertIn("(approval card not found)", message)
+        self.assertEqual(self._decide_calls(client), [])
+
+    def test_decide_list_failure_is_humanized_and_session_continues(self):
+        client = self.decide_client(pending=[], fail_list=True)
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-1", "/decide"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        message = err.getvalue()
+        self.assertIn("(approval_list failed)", message)
+        self.assertIn("下一步", message)
+        # The follow-up /decide (missing arg) still runs: session survives.
+        self.assertIn("(missing request_id)", message)
+        self.assertEqual(self._decide_calls(client), [])
+
+    def test_decide_rpc_failure_is_humanized(self):
+        client = self.decide_client(
+            pending=[self._card("ap-1")], fail_decide=True
+        )
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-1", "1"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        message = err.getvalue()
+        self.assertIn("(approval_decide failed)", message)
+        self.assertIn("下一步", message)
+
+    def test_decide_piped_mode_matches_tty(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-1", "1"], interactive=False
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        calls = self._decide_calls(client)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["decision"], "allow_once")
+
+    def test_decide_piped_deny_with_reason(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide ap-1", "2", "管道里也拒绝"], interactive=False
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        calls = self._decide_calls(client)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["note"], "管道里也拒绝")
+
+    def test_help_lists_decide(self):
+        client = _StubClient()
+        session, out, err, _ = self.make_session(client, ["/help"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        text = out.getvalue()
+        self.assertIn("/decide", text)
+        self.assertIn("/decide <卡号>", text)
