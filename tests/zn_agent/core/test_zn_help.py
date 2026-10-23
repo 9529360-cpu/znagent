@@ -147,11 +147,11 @@ _EXPECTED_SNAPSHOT = """ZN 能帮你干的事（按场景）
     看 ZN 写过哪些日记（最新在前）
     例：zn diary list
   diary get
-    看某天的日记正文
-    例：zn diary get --date 2026-10-22
+    看今天的日记（默认今天）
+    例：zn diary get
   diary get
-    看某天日记的原始内容（脚本用）
-    例：zn diary get --date 2026-10-22 --json
+    看某天的日记
+    例：zn diary get --date 2026-10-22
 
 --- 日常 (5) ---
   suggestions list
