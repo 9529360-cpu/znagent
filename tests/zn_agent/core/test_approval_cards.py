@@ -353,13 +353,18 @@ class ApprovalCardStoreTests(unittest.TestCase):
         # A DB created before AP-1 lacks the column; reopening migrates it
         # and a note still round-trips.
         import sqlite3
+        from contextlib import closing
 
         path = Path(self._tmp.name) / "old.db"
         old_store = ApprovalCardStore(str(path))
         request = old_store.request_approval(
             action_kind="send", target="team", scope="chat:team"
         )
-        with sqlite3.connect(path) as conn:
+        # NOTE: sqlite3's context manager only commits/rolls back; it does
+        # NOT close the connection. The leaked handle blocks
+        # TemporaryDirectory.cleanup() on Windows (WinError 32), so close
+        # it deterministically with contextlib.closing.
+        with closing(sqlite3.connect(path)) as conn:
             conn.execute("ALTER TABLE approval_requests DROP COLUMN decision_note")
             conn.commit()
         reopened = ApprovalCardStore(str(path))
