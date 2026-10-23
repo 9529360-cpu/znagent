@@ -1232,6 +1232,17 @@ class ChatSessionDecideTests(_Repl2Case):
         )
         return session, out, err
 
+    def test_decide_bare_ctrl_c_at_picker_leaves_session_open(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        # The interrupt lands on the picker read: no decision menu, no
+        # RPC, and the session stays open.
+        session, out, err = self._interrupt_session(client, ["/decide"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(self._decide_calls(client), [])
+        text = out.getvalue()
+        self.assertIn("已退出选单", text)
+        self.assertIn("会话还在", text)
+
     def test_decide_ctrl_c_at_menu_leaves_card_pending(self):
         client = self.decide_client(pending=[self._card("ap-1")])
         # The interrupt lands on the menu read; the card must stay pending.
@@ -1253,16 +1264,80 @@ class ChatSessionDecideTests(_Repl2Case):
         self.assertEqual(self._decide_calls(client), [])
         self.assertIn("已退出选项", out.getvalue())
 
-    def test_decide_missing_request_id_is_humanized(self):
-        client = self.decide_client(pending=[self._card("ap-1")])
-        session, out, err, _ = self.make_session(client, ["/decide"])
+    def test_decide_bare_lists_numbered_picker_then_menu(self):
+        # REPL-DEC2: bare /decide lists pending cards with numbers; the
+        # picked card goes through the same numbered decision menu.
+        client = self.decide_client(
+            pending=[self._card("ap-1"), self._card("ap-2")]
+        )
+        session, out, err, _ = self.make_session(
+            client, ["/decide", "2", "1"]
+        )
         self.assertEqual(session.run(), 0, err.getvalue())
-        message = err.getvalue()
-        self.assertIn("缺了审批卡的编号", message)
-        self.assertIn("(missing request_id)", message)
-        self.assertIn("下一步", message)
-        # No RPC at all: missing arg never reaches the daemon.
-        self.assertEqual(client.calls, [])
+        text = out.getvalue()
+        # Picker: numbered list with the shared card renderer.
+        self.assertIn("输入序号选一张做决定", text)
+        self.assertIn("1)", text)
+        self.assertIn("2)", text)
+        self.assertIn("ap-1", text)
+        self.assertIn("ap-2", text)
+        # Then the existing decision menu for the picked card.
+        self.assertIn("1) 批准", text)
+        calls = self._decide_calls(client)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(
+            calls[0],
+            {"request_id": "ap-2", "decision": "allow_once"},
+        )
+        self.assertIn("ap-2：已批准", text)
+
+    def test_decide_bare_empty_pending_humanized_and_session_continues(self):
+        # REPL-DEC2: bare /decide with no pending cards says so plainly;
+        # the session stays open (no exit).
+        client = self.decide_client(pending=[])
+        session, out, err, _ = self.make_session(
+            client, ["/decide", "/decide"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        text = out.getvalue()
+        self.assertIn("现在没有待审批的卡片", text)
+        self.assertIn("会话不退出", text)
+        # No decision RPC; the follow-up command still runs: session lives.
+        self.assertEqual(self._decide_calls(client), [])
+
+    def test_decide_bare_non_numeric_and_out_of_range_reasks(self):
+        client = self.decide_client(
+            pending=[self._card("ap-1"), self._card("ap-2")]
+        )
+        session, out, err, _ = self.make_session(
+            client, ["/decide", "abc", "0", "99", "1", "1"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        text = out.getvalue()
+        self.assertIn("只认 1 到 2 的序号", text)
+        calls = self._decide_calls(client)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["request_id"], "ap-1")
+        self.assertEqual(calls[0]["decision"], "allow_once")
+
+    def test_decide_bare_pick_then_cancel_leaves_card_pending(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide", "1", "4"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(self._decide_calls(client), [])
+        self.assertIn("取消了", out.getvalue())
+
+    def test_decide_bare_piped_mode_matches_tty(self):
+        client = self.decide_client(pending=[self._card("ap-1")])
+        session, out, err, _ = self.make_session(
+            client, ["/decide", "1", "1"], interactive=False
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        calls = self._decide_calls(client)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(calls[0]["decision"], "allow_once")
 
     def test_decide_unknown_card_id_is_humanized(self):
         client = self.decide_client(pending=[self._card("ap-1")])
@@ -1284,8 +1359,9 @@ class ChatSessionDecideTests(_Repl2Case):
         message = err.getvalue()
         self.assertIn("(approval_list failed)", message)
         self.assertIn("下一步", message)
-        # The follow-up /decide (missing arg) still runs: session survives.
-        self.assertIn("(missing request_id)", message)
+        # The follow-up bare /decide hits the same list failure (it now
+        # lists pending cards instead of erroring on a missing arg);
+        # the session survives either way.
         self.assertEqual(self._decide_calls(client), [])
 
     def test_decide_rpc_failure_is_humanized(self):

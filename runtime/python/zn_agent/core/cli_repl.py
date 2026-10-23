@@ -17,7 +17,8 @@ line the user types is one turn of work on a durable resident Work thread:
   the thread via ``work_get``, ``/status`` shows the six-row ``zn status``
   aggregate (read-only, same data contract as ``_cmd_status`` in
   ``zn_cli.py``), ``/approvals`` lists pending approval cards read-only
-  and ``/decide <request_id>`` decides one card through a numbered
+  and ``/decide <request_id>`` (or bare ``/decide``, which lists the
+  pending cards with numbers first) decides one card through a numbered
   option menu (approve once / deny with an optional note / always allow
   / cancel), ``/help`` lists the session commands, ``/exit`` (or Ctrl-D / EOF)
   leaves. The REPL never attaches to an old thread on its own: ``/resume``
@@ -76,7 +77,7 @@ _HELP_TEXT = """会话命令（单独一行输入）：
   /history   回看当前会话的历史消息
   /status    看 ZN 当前状态（常驻/模型/连接器/待审批/自驱域，同 zn status）
   /approvals 列出待审批的卡片（只读；用 /decide <卡号> 做决定，也可去另一个终端跑 zn approval decide）
-  /decide    对一张审批卡做决定（/decide <卡号>：1 批准 / 2 拒绝（可附理由）/ 3 总是允许 / 4 取消）
+  /decide    对一张审批卡做决定（/decide 列出待审批卡片选序号；/decide <卡号>：1 批准 / 2 拒绝（可附理由）/ 3 总是允许 / 4 取消）
   /help      显示这份帮助
   /exit      退出会话（Ctrl-D 也可以）
 其他任何一行文字都会作为任务发给 ZN；干活时按 Ctrl-C 只取消当前这一轮，会话不退出。"""
@@ -604,41 +605,89 @@ class ChatSession:
         "always_allow": "已设为总是允许",
     }
 
-    def _decide_approval(self, request_id: str) -> None:
-        """Decide one approval card through a numbered menu
-        (``/decide <request_id>``).
-
-        The card is rendered with the shared ``zn approval list`` card
-        renderer, so the decision is made on the same detail ``/approvals``
-        and ``zn approval show`` display. The decision goes through the
-        existing ``approval_decide`` RPC with the same params ``zn
-        approval decide`` sends -- including the AP-1 note channel
-        (denial feedback only, passed straight to the daemon); nothing is
-        auto-approved and the card is never bypassed. Ctrl-C only leaves
-        the option menu: the card stays pending. The choice is read
-        through ``_read_line``, so piped mode behaves like a TTY.
-        """
-        request_id = request_id.strip()
-        if not request_id:
-            self._error(
-                "/decide 缺了审批卡的编号 (missing request_id)",
-                hint="先用 /approvals 列出待审批的卡片，再用 /decide <request_id> 做决定。",
-            )
-            return
+    def _pending_approval_cards(
+        self, *, retry_hint: str
+    ) -> list[dict] | None:
+        """Fetch pending approval cards; ``None`` means the fetch error
+        was already printed. Non-dict entries are dropped."""
         try:
             result = self.client.call("approval_list", {})
         except CliError as exc:
             self._error(
                 f"审批卡没拿到 (approval_list failed)：{exc}",
-                hint=f"确认 ZN 常驻进程还在运行，再试一次 /decide {request_id}。",
+                hint=f"确认 ZN 常驻进程还在运行，再试一次 {retry_hint}。",
             )
-            return
+            return None
         pending = result.get("pending") if isinstance(result, dict) else None
-        cards = (
+        return (
             [item for item in pending if isinstance(item, dict)]
             if isinstance(pending, list)
             else []
         )
+
+    def _pick_pending_card(self, cards: list[dict]) -> str | None:
+        """Numbered picker for bare ``/decide``; ``None`` = nothing picked.
+
+        Cards are rendered with the shared ``_format_approval_card``
+        renderer (the same detail ``/approvals`` shows), numbered 1..N.
+        No pending cards: a plain line saying so (the session stays open).
+        Non-numeric or out-of-range input re-asks; Ctrl-C only leaves the
+        picker (no decision menu, no ``approval_decide`` RPC).
+        """
+        if not cards:
+            self._say(
+                "（现在没有待审批的卡片；会话不退出——有卡时再 /decide 就行。）"
+            )
+            return None
+        self._say("待审批的卡片，输入序号选一张做决定：")
+        for index, card in enumerate(cards, 1):
+            head, _, detail = _format_approval_card(card).partition("\n")
+            self._say(f"  {index}) {head}")
+            if detail:
+                self._say(f"     {detail.strip()}")
+        while True:
+            try:
+                raw = self._read_line()
+            except KeyboardInterrupt:
+                self._say("\n（已退出选单；会话还在。）")
+                return None
+            if raw is None:  # EOF: piped input ended -- nothing decided
+                return None
+            choice = raw.strip()
+            if choice.isdigit():
+                index = int(choice)
+                if 1 <= index <= len(cards):
+                    return str(cards[index - 1].get("request_id"))
+            self._say(
+                f"只认 1 到 {len(cards)} 的序号，再选一次（Ctrl-C 退出选单）。"
+            )
+
+    def _decide_approval(self, request_id: str) -> None:
+        """Decide one approval card through a numbered menu
+        (``/decide <request_id>`` or bare ``/decide``).
+
+        Bare ``/decide`` lists the pending cards with numbers (the same
+        ``_format_approval_card`` renderer ``/approvals`` uses) and asks
+        which card to decide; the picked card then goes through the same
+        numbered decision menu as ``/decide <request_id>``. The decision
+        goes through the existing ``approval_decide`` RPC with the same
+        params ``zn approval decide`` sends -- including the AP-1 note
+        channel (denial feedback only, passed straight to the daemon);
+        nothing is auto-approved and the card is never bypassed. Ctrl-C
+        only leaves the picker/option menu: the card stays pending. The
+        choice is read through ``_read_line``, so piped mode behaves
+        like a TTY.
+        """
+        request_id = request_id.strip()
+        cards = self._pending_approval_cards(
+            retry_hint=f"/decide {request_id}" if request_id else "/decide"
+        )
+        if cards is None:  # fetch error already printed
+            return
+        if not request_id:
+            request_id = self._pick_pending_card(cards)
+            if request_id is None:
+                return  # empty pending / Ctrl-C / EOF: nothing decided
         card = next(
             (
                 item
