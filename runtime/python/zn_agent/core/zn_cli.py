@@ -9,7 +9,8 @@ call per command to the already-existing Daemon RPC methods
 ``approval_list`` / ``approval_decide`` / ``approval_rule_delete`` /
 ``approval_undo`` / ``approval_reconsider_denied`` / ``memory_list`` / ``team_list`` /
 ``routine_list`` / ``routine_get`` / ``routine_runs`` / ``routine_pause`` /
-``routine_resume`` / ``diary_list`` / ``diary_get``). All policy, execution, approval and
+``routine_resume`` / ``routine_propose`` / ``routine_confirm`` /
+``routine_edit`` / ``routine_delete`` / ``diary_list`` / ``diary_get``). All policy, execution, approval and
 persistence decisions stay server-side.
 
 Running ``zn`` with no subcommand (or ``zn chat``) opens the interactive
@@ -63,6 +64,7 @@ from typing import Any
 
 from .home import get_zn_home
 from .cli_format import colorize, kv, section, status_symbol, status_word, symbol, use_color
+from .routine_request import _parse_schedule_clause
 from .model_check import (
     DEFAULT_PROBE_TIMEOUT_SECONDS,
     check_model_routes,
@@ -3248,6 +3250,189 @@ def _cmd_routine_confirm(args: argparse.Namespace) -> int:
     return 0
 
 
+# --- T18: `zn routine edit` / `zn routine delete` ---------------------------
+# Terminal face for the mutation slice of the daemon's routine_* RPCs
+# (already dispatched in daemon.py ``_routine_result``): ``edit`` changes a
+# routine's time/content via ``routine_edit`` (params: routine_id + fields),
+# ``delete`` removes it via ``routine_delete`` (params: routine_id only).
+# No new daemon RPC, no daemon.py changes.
+#
+# Engaged guard (client-side): a routine with a run in flight -- the
+# read-only ``routine_get`` pre-flight shows a "running" entry in
+# recent_runs -- refuses edit/delete here with exit 1 and human guidance;
+# the mutation RPC is never sent. The daemon enforces the same rule
+# server-side (``_reject_if_engaged``), so a missed edge still fails closed;
+# the client check exists to fail fast with a better message. Note the
+# guidance deliberately says "wait for the run to finish": ``routine_pause``
+# is rejected while engaged too, so "pause first" would be wrong advice.
+#
+# Offline contract (T2-6 style, same as the other routine commands):
+# resident unreachable -> exit 0 + an honest note naming what was not done.
+# ``delete`` never claims a routine was deleted when it was not. A
+# server-side rejection (``ok: false``, e.g. an invalid schedule) is NOT
+# swallowed: it surfaces as a humanized error on stderr, exit 1.
+
+# recent_runs statuses that mean "a run is currently executing".
+_ROUTINE_ENGAGED_STATUSES = frozenset({"running"})
+
+
+def _routine_engaged(snapshot: dict[str, Any]) -> bool:
+    """True when the snapshot shows a run in flight (the routine is engaged)."""
+    runs = snapshot.get("recent_runs") or []
+    return any(
+        isinstance(run, dict)
+        and str(run.get("status")) in _ROUTINE_ENGAGED_STATUSES
+        for run in runs
+    )
+
+
+def _reject_routine_engaged(
+    action: str, routine_id: str, snapshot: dict[str, Any]
+) -> None:
+    """Refuse edit/delete while the routine is engaged (T18 guard).
+
+    Raises :class:`CliError` (exit 1) with human guidance; the caller must
+    not send any mutation RPC after this raises.
+    """
+    if not _routine_engaged(snapshot):
+        return
+    verb = {"edit": "修改", "delete": "删除"}.get(action, "操作")
+    raise CliError(
+        f"例行任务 {routine_id} 正在执行中（run in flight），现在不能{verb}。\n"
+        f"等这次运行结束后再试：`zn routine runs {routine_id}` 可以看进度。"
+    )
+
+
+def _parse_routine_edit_time(value: str) -> dict[str, Any]:
+    """Turn ``--time`` natural language into ``routine_edit`` schedule fields.
+
+    Reuses the same schedule-clause parser the daemon's propose path uses
+    (``routine_request._parse_schedule_clause``, same package), so
+    ``每天早上8点`` / ``每30分钟`` / ``每周五下午5点`` mean the same thing
+    here as they do in ``zn routine propose``. Only schema keys the daemon
+    accepts (schedule_kind / interval_seconds / cron_expression / timezone)
+    are returned.
+    """
+    parsed = _parse_schedule_clause(value)
+    if parsed is None:
+        raise CliError(
+            f"没听懂这个时间（could not parse schedule from --time {value!r}）："
+            "试试「每天早上8点」「每30分钟」「每周五下午5点」这样的说法。"
+        )
+    fields, _rest = parsed
+    return dict(fields)
+
+
+def _routine_preflight(args: argparse.Namespace, *, unavailable: str) -> Any:
+    """Read-only ``routine_get`` pre-flight shared by edit/delete.
+
+    Returns the routine snapshot dict. An unknown id raises the human
+    "not found" error (exit 1); an unreachable resident prints the offline
+    note and returns None (the caller must ``return 0`` without claiming
+    any mutation happened).
+    """
+    try:
+        ok, payload = _routine_rpc(
+            args, "routine_get", {"routine_id": args.routine_id}
+        )
+    except CliError as exc:
+        raise _unknown_routine_error(exc, args.routine_id) from None
+    if not ok:
+        _routine_offline(
+            args,
+            payload,
+            unavailable=unavailable,
+            json_payload={"changed": False, "routine": None},
+        )
+        return None
+    if not isinstance(payload, dict) or not payload:
+        raise _unexpected_result("routine_get", payload)
+    return payload
+
+
+def _cmd_routine_edit(args: argparse.Namespace) -> int:
+    fields: dict[str, Any] = {}
+    if args.time is not None:
+        fields.update(_parse_routine_edit_time(args.time))
+    if args.content is not None:
+        fields["task"] = args.content
+    if not fields:
+        raise CliError(
+            "edit 需要至少改一项（nothing to change）："
+            "用 --time 改时间（比如 --time \"每天早上9点\"），"
+            "用 --content 改内容（比如 --content \"提醒我看今天的日程\"）。"
+        )
+    snapshot = _routine_preflight(args, unavailable="没有修改任何例行任务")
+    if snapshot is None:
+        return 0
+    _reject_routine_engaged("edit", args.routine_id, snapshot)
+    try:
+        ok, payload = _routine_rpc(
+            args,
+            "routine_edit",
+            {"routine_id": args.routine_id, "fields": fields},
+        )
+    except CliError as exc:
+        raise _unknown_routine_error(exc, args.routine_id) from None
+    if not ok:
+        return _routine_offline(
+            args,
+            payload,
+            unavailable="没有修改任何例行任务",
+            json_payload={"changed": False, "routine": None},
+        )
+    result = payload
+    if not isinstance(result, dict) or not result.get("routine_id"):
+        raise _unexpected_result("routine_edit", result)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    routine_id = _one_line(result.get("routine_id"), limit=24)
+    status = result.get("status") or "active"
+    mark = status_symbol(status)
+    print(
+        f"{mark + ' ' if mark else ''}例行任务 {routine_id} 已更新 "
+        f"[{status_word(status)}]"
+    )
+    if args.time is not None:
+        schedule = _one_line(result.get("schedule_description"), limit=80)
+        print(f"  时间：{schedule or args.time}")
+    if args.content is not None:
+        task = _one_line(result.get("task"), limit=120)
+        if task:
+            print(f"  内容：{task}")
+    return 0
+
+
+def _cmd_routine_delete(args: argparse.Namespace) -> int:
+    snapshot = _routine_preflight(args, unavailable="没有删除任何例行任务")
+    if snapshot is None:
+        return 0
+    _reject_routine_engaged("delete", args.routine_id, snapshot)
+    try:
+        ok, payload = _routine_rpc(
+            args, "routine_delete", {"routine_id": args.routine_id}
+        )
+    except CliError as exc:
+        raise _unknown_routine_error(exc, args.routine_id) from None
+    if not ok:
+        return _routine_offline(
+            args,
+            payload,
+            unavailable="没有删除任何例行任务",
+            json_payload={"changed": False, "routine": None},
+        )
+    result = payload
+    if not isinstance(result, dict) or not result.get("deleted"):
+        raise _unexpected_result("routine_delete", result)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    routine_id = _one_line(result.get("routine_id") or args.routine_id, limit=24)
+    print(f"例行任务 {routine_id} 已删除")
+    return 0
+
+
 # --- T10: `zn diary ...` ---------------------------------------------------
 # Terminal face for the daemon's diary_* read-only RPCs (already dispatched
 # in daemon.py: ``diary_list`` -- inventory newest first, ``diary_get`` --
@@ -4834,15 +5019,18 @@ def build_parser() -> argparse.ArgumentParser:
 
     # T9: routines -- read + pause/resume. propose/edit stay on the chat path.
     # T17: creation slice -- propose one sentence -> draft, confirm -> create.
+    # T18: mutation slice -- edit time/content, delete.
     routine = sub.add_parser(
         "routine",
-        help="draft, create, inspect or pause/resume the resident's routines",
+        help="draft, create, inspect, edit, delete or pause/resume the resident's routines",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例：\n"
         "  zn routine propose \"每天早上8点提醒我看日程\"\n"
         "  zn routine propose \"每30分钟看一次日历\" --json > draft.json\n"
         "  zn routine confirm --draft-file draft.json\n"
-        "  zn routine list",
+        "  zn routine list\n"
+        "  zn routine edit --routine-id <id> --time \"每天早上9点\"\n"
+        "  zn routine delete --routine-id <id>",
     )
     routine_sub = routine.add_subparsers(
         dest="routine_command", metavar="subcommand", required=True
@@ -4980,6 +5168,55 @@ def build_parser() -> argparse.ArgumentParser:
     )
     routine_confirm.add_argument("--json", action="store_true", help="print raw JSON")
     routine_confirm.set_defaults(func=_cmd_routine_confirm)
+
+    # T18: edit / delete against the already-wired routine_edit /
+    # routine_delete RPCs. T3-2: epilog examples live on each leaf parser
+    # like every other command; every example line starts with "zn " and
+    # parses back to this leaf (test_zn_epilog contract).
+    routine_edit = routine_sub.add_parser(
+        "edit",
+        help="change a routine's time and/or content",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        '  zn routine edit --routine-id routine-abc123 --time "每天早上9点"\n'
+        '  zn routine edit --routine-id routine-abc123 --time "每30分钟"\n'
+        '  zn routine edit --routine-id routine-abc123 --content "提醒我看今天的日程"',
+    )
+    routine_edit.add_argument(
+        "--routine-id",
+        type=lambda v: _require_non_empty(v, name="--routine-id"),
+        required=True,
+        help="routine id, e.g. routine-abc123",
+    )
+    routine_edit.add_argument(
+        "--time",
+        type=lambda v: _require_non_empty(v, name="--time"),
+        default=None,
+        help='new schedule, e.g. "每天早上9点" / "每30分钟" / "每周五下午5点"',
+    )
+    routine_edit.add_argument(
+        "--content",
+        type=lambda v: _require_non_empty(v, name="--content"),
+        default=None,
+        help='new task content, e.g. "提醒我看今天的日程"',
+    )
+    routine_edit.add_argument("--json", action="store_true", help="print raw JSON")
+    routine_edit.set_defaults(func=_cmd_routine_edit)
+
+    routine_delete = routine_sub.add_parser(
+        "delete",
+        help="delete one routine",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n" "  zn routine delete --routine-id routine-abc123",
+    )
+    routine_delete.add_argument(
+        "--routine-id",
+        type=lambda v: _require_non_empty(v, name="--routine-id"),
+        required=True,
+        help="routine id, e.g. routine-abc123",
+    )
+    routine_delete.add_argument("--json", action="store_true", help="print raw JSON")
+    routine_delete.set_defaults(func=_cmd_routine_delete)
 
     # T10: diary -- read-only terminal face for the resident's daily diary.
     # diary_write stays on the chat path. T3-2: epilog examples live on
