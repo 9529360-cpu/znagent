@@ -10,5 +10,11 @@
   "license": "MIT",
   "engines": {
     "node": ">=22.22.0"
+  },
+  "scripts": {
+    "setup": "node scripts/zn-dev.mjs setup",
+    "doctor": "node scripts/zn-dev.mjs doctor",
+    "dev": "node scripts/zn-dev.mjs dev",
+    "test:dev-bootstrap": "node --test scripts/zn-dev.test.mjs"
   }
 }
