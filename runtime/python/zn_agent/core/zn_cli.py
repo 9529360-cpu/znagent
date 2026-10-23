@@ -190,6 +190,14 @@ _ERROR_COPY: dict[str, tuple[str, str]] = {
         "服务返回了无法识别的结果（unexpected {method} result；版本可能不一致）",
         "下一步：升级 ZN 到最新版本；若已是最新版本请反馈",
     ),
+    # WK-LAST: `zn work submit --last` with no prior thread. The English
+    # fragment in parentheses is kept verbatim for scripts/grep (T2-5);
+    # the next step points at the exact first-task command.
+    "no_work_history": (
+        "还没有历史会话（no work history）：ZN 手上没有任何工作记录，续不上",
+        "下一步：先交办第一件事，运行 `zn work submit --task \"…\"`"
+        "（不带 --last），会开一个新会话",
+    ),
 }
 
 
@@ -881,11 +889,75 @@ def _print_work_submit_result(result: dict[str, Any], thread_id: str) -> None:
             )
 
 
+# --- WK-LAST: `zn work submit --last` ("续最近会话") --------------------------
+# Resolve the most recent work thread with one read-only ``work_list``
+# probe (``limit=1``) -- the same pattern the REPL's ``/resume`` uses
+# (``_resume_latest`` in ``cli_repl.py``; a small local twin here because
+# ``cli_repl`` imports ``zn_cli``, so the import would be circular).
+# Then the existing submit path runs unchanged with the resolved thread.
+# Contracts:
+# - T2-1: presentation uses the cli_format contract; the TTY "续上会话" line
+#   is plain Chinese copy behind ``use_color()``, no symbols to degrade.
+# - T2-5: empty history is a humanized ``CliError`` (English fragment in
+#   parentheses kept verbatim, ``_ERROR_COPY["no_work_history"]``).
+# - T2-6: a failed probe never claims a submission -- connection/transport
+#   problems exit 0 with the honest offline note; a server-side rejection
+#   re-raises humanized (exit 1).
+# - T2-7 / --json: the TTY line prints only in human non-JSON mode; ``--json``
+#   stays byte-for-byte the ``work_submit`` result, and pipes keep the
+#   historic output.
+
+
+def _latest_work_thread(result: Any) -> tuple[str, str] | None:
+    """Return ``(thread_id, title)`` of the newest snapshot in a ``work_list`` result.
+
+    ``work_list`` returns snapshots newest-first (``updated_at DESC``), so
+    the first entry is the most recent thread. Returns ``None`` when there
+    is no usable thread -- empty history or a malformed payload.
+    """
+    if not isinstance(result, list) or not result:
+        return None
+    first = result[0]
+    if not isinstance(first, dict):
+        return None
+    thread_id = str(first.get("id") or "").strip()
+    if not thread_id:
+        return None
+    return thread_id, _one_line(first.get("title"), limit=60)
+
+
 def _cmd_work_submit(args: argparse.Namespace) -> int:
     endpoint = load_endpoint(getattr(args, "endpoint", None))
     client = ResidentClient(endpoint, timeout=args.timeout)
     thread_id = args.thread_id
     title = args.title
+    if getattr(args, "last", False):
+        # --last: resolve the newest thread first; the rest of the submit
+        # path below is untouched (same RPCs, same output).
+        try:
+            listed = client.call("work_list", {"limit": 1})
+        except CliError as exc:
+            if str(exc).startswith(_WORK_DRIVE_RPC_REJECTED_PREFIX):
+                raise  # server-side rejection: humanized copy, exit 1
+            # T2-6: unreachable resident -- exit 0, honestly saying nothing
+            # was resumed or submitted.
+            return _work_drive_offline(
+                args,
+                str(exc),
+                unavailable="没有续上任何会话（这次任务未交办）",
+                json_payload={"resumed": False, "submitted": False},
+            )
+        if not isinstance(listed, list):
+            raise _unexpected_result("work_list", listed)
+        latest = _latest_work_thread(listed)
+        if latest is None:
+            raise _cli_error("no_work_history")  # humanized, exit 1
+        thread_id, title = latest
+        if use_color() and not args.json:
+            # TTY-only one-liner naming the resumed session (T2-1/T2-7);
+            # --json and pipes keep the historic byte-stable output.
+            title_part = f"「{title}」" if title else ""
+            print(f"续上会话{title_part}({thread_id})")
     if not thread_id:
         created = client.call(
             "work_create",
@@ -4870,10 +4942,14 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例：\n"
         "  zn work submit --task \"把 downloads 里昨天的发票整理成一张表\"\n"
-        "  zn work submit --thread-id <thread-id> --task \"继续，把明细也加上\"",
+        "  zn work submit --thread-id <thread-id> --task \"继续，把明细也加上\"\n"
+        "  zn work submit --last --task \"继续，把明细也加上\"",
     )
-    work_submit.add_argument("--thread-id", default=None,
-                             help="existing thread id; omitted = create a new thread")
+    thread_or_last = work_submit.add_mutually_exclusive_group()
+    thread_or_last.add_argument("--thread-id", default=None,
+                                help="existing thread id; omitted = create a new thread")
+    thread_or_last.add_argument("--last", action="store_true",
+                                help="submit to the most recent thread instead of a new one（续最近会话）")
     work_submit.add_argument("--title", default=None,
                              help="title for a newly created thread")
     work_submit.add_argument("--task", type=lambda v: _require_non_empty(v, name="--task"), required=True)
