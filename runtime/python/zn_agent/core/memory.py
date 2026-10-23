@@ -227,6 +227,9 @@ def _hybrid_bm25(
 def _hybrid_entity_score(
     query_norm: str, query_tokens: list[str], key: str,
     aliases: tuple[str, ...] | list[str],
+    *,
+    _token_memo: dict[str, frozenset[str]] | None = None,
+    _norm_memo: dict[str, str] | None = None,
 ) -> tuple[float, str | None]:
     """Alias/entity weighting: 1.0 for an exact or mentioned entity.
 
@@ -237,24 +240,50 @@ def _hybrid_entity_score(
     on). Otherwise the score is the share of query tokens covered by
     the entity's tokens -- whole-token equality, so Latin "art" never
     matches "part".
+
+    ``_token_memo`` / ``_norm_memo`` (PERF-3) are query-local caches
+    for the pure per-name work (``_hybrid_tokens`` /
+    ``_hybrid_normalize``): candidate names repeat across the scoring
+    loop, so ``recall_hybrid`` passes shared dicts and each name is
+    normalized/tokenized once per query. Results are identical to
+    computing them inline every time.
     """
     names = [key, *(str(alias) for alias in aliases)]
+    norm_memo: dict[str, str] = {} if _norm_memo is None else _norm_memo
+    token_memo: dict[str, frozenset[str]] = (
+        {} if _token_memo is None else _token_memo
+    )
+
+    def _norm(name: str) -> str:
+        hit = norm_memo.get(name)
+        if hit is None:
+            hit = _hybrid_normalize(name)
+            norm_memo[name] = hit
+        return hit
+
+    def _tokens(name: str) -> frozenset[str]:
+        hit = token_memo.get(name)
+        if hit is None:
+            hit = frozenset(_hybrid_tokens(name))
+            token_memo[name] = hit
+        return hit
+
     for name in names:
-        if name and _hybrid_normalize(name) == query_norm:
+        if name and _norm(name) == query_norm:
             return 1.0, None if name == key else name
     for name in names:
-        norm = _hybrid_normalize(name)
+        norm = _norm(name)
         if norm and _HYBRID_CJK_RE.search(norm) and norm in query_norm:
             return 1.0, None if name == key else name
     entity_tokens: set[str] = set()
     for name in names:
-        entity_tokens.update(_hybrid_tokens(name))
+        entity_tokens.update(_tokens(name))
     query_set = set(query_tokens)
     if query_set and entity_tokens:
         hit = len(query_set & entity_tokens) / len(query_set)
         if hit > 0:
             for alias in aliases:
-                if isinstance(alias, str) and set(_hybrid_tokens(alias)) & query_set:
+                if isinstance(alias, str) and _tokens(alias) & query_set:
                     return hit, alias
             return hit, None
     return 0.0, None
@@ -909,6 +938,46 @@ class StructuredMemory:
             ),
         )
         return int(cursor.lastrowid)
+
+    def _open_window_rows(
+        self, keys: list[str],
+    ) -> dict[str, dict[str, Any] | None]:
+        """Batch variant of :meth:`_open_window_row` (PERF-3).
+
+        One schema ensure + one ``SELECT`` for many keys instead of
+        per-candidate N+1 queries; duplicate keys collapse to their
+        first open row, exactly as the single-key version's
+        ``LIMIT 1`` would return. The single-key version stays for
+        one-off callers (``recall()``); the hot
+        :meth:`_hybrid_candidates` loop uses this instead.
+        """
+        unique = list(dict.fromkeys(keys))
+        windows: dict[str, dict[str, Any] | None] = {
+            key: None for key in unique
+        }
+        if not unique:
+            return windows
+        self._ensure_history_schema()
+        with self.store._lock:
+            rows = self.store._conn.execute(
+                "SELECT id, fact_key, valid_at, linked_memory_ids_json"
+                " FROM memory_history"
+                " WHERE fact_key IN (%s) AND invalid_at IS NULL" % (
+                    ",".join("?" * len(unique)),
+                ),
+                unique,
+            ).fetchall()
+        for row in rows:
+            key = str(row["fact_key"])
+            if windows[key] is None:
+                windows[key] = {
+                    "id": int(row["id"]),
+                    "valid_at": str(row["valid_at"]),
+                    "linked_memory_ids": _parse_linked_ids(
+                        row["linked_memory_ids_json"]
+                    ),
+                }
+        return windows
 
     def _open_window_row(self, key: str) -> dict[str, Any] | None:
         """The open ledger row of ``key`` (id + window + links), if any."""
@@ -1962,10 +2031,17 @@ class StructuredMemory:
         top = max(raw_scores) if raw_scores else 0.0
         scored: list[dict[str, Any]] = []
         rescued: list[dict[str, Any]] = []
+        # PERF-3: query-local memo -- each candidate name is
+        # normalized/tokenized once per query instead of once per
+        # scoring step; scores are bit-for-bit identical.
+        _entity_token_memo: dict[str, frozenset[str]] = {}
+        _entity_norm_memo: dict[str, str] = {}
         for cand, raw, doc_tokens in zip(candidates, raw_scores, docs_tokens):
             keyword = raw / top if top > 0 else 0.0
             entity, matched_alias = _hybrid_entity_score(
-                query_norm, query_tokens, cand["key"], cand["aliases"]
+                query_norm, query_tokens, cand["key"], cand["aliases"],
+                _token_memo=_entity_token_memo,
+                _norm_memo=_entity_norm_memo,
             )
             exact_key = query_norm == self._normalize(cand["key"])
             exact_alias: str | None = None
@@ -2061,7 +2137,7 @@ class StructuredMemory:
         if as_of is None:
             index = self._validity_index()
             now = utc_now()
-            candidates: list[dict[str, Any]] = []
+            current: list[dict[str, Any]] = []
             for record in self.store.list_facts():
                 if _fact_expired(record, now):
                     continue
@@ -2070,7 +2146,15 @@ class StructuredMemory:
                     continue
                 if not self._is_current(record["key"], index=index):
                     continue
-                window = self._open_window_row(record["key"])
+                current.append(record)
+            # PERF-3: one schema ensure + one SELECT for all candidates
+            # (was N+1 per-candidate _open_window_row calls).
+            windows = self._open_window_rows(
+                [record["key"] for record in current]
+            )
+            candidates: list[dict[str, Any]] = []
+            for record in current:
+                window = windows.get(record["key"])
                 candidates.append({
                     "key": record["key"],
                     "value": record["value"],
