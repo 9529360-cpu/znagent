@@ -594,6 +594,9 @@ _EMPTY_RESULT_HINTS: dict[str, str] = {
     "diary_list": "下一步：日记是 ZN 在聊天里每天自动写的，跟它说「今天写了日记吗」就能看到",
     "approval_rules_list": "下一步：对一张卡用 `zn approval decide --request-id <id> --always-allow` 就会自动建一条规则",
     "approval_list": "下一步：审批卡由 ZN 在需要你确认时自动发出，先看看自动批准规则，运行 `zn approval rules list`",
+    # GOAL-HINT: goal group (M16) is read-only -- goals are created through
+    # chat by the engine itself, so the next step is a spoken sentence.
+    "goal_list": "下一步：跟 ZN 说一句话就能立一个自驱目标，比如「帮我盯着新款显卡的降价」",
 }
 
 
@@ -3211,6 +3214,7 @@ def _cmd_goal_list(args: argparse.Namespace) -> int:
         return 0
     if not goals:
         print("no self-drive goals")
+        _print_empty_hint("goal_list")
         return 0
     for item in goals:
         if not isinstance(item, dict):
