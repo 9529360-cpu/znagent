@@ -2023,7 +2023,7 @@ def _cmd_work_cancel(args: argparse.Namespace) -> int:
 #   and ``--json`` keep historic bytes.
 # T16 note: these two helpers started life as T14-specific names; they are
 # behavior-generic (one work-driving RPC call + offline rendering) and are
-# shared by T14/T16. Renamed without behavior change.
+# shared by T14/T16/T20. Renamed without behavior change.
 _WORK_DRIVE_RPC_REJECTED_PREFIX = _ERROR_COPY["rpc_rejected"][0].split("{method}")[0]
 
 
@@ -2393,6 +2393,89 @@ def _cmd_work_attach(args: argparse.Namespace) -> int:
         print(
             colorize(
                 f"  用 `zn work get --thread-id {args.thread_id}` 查看绑定的工作区",
+                "dim",
+            )
+        )
+    return 0
+
+
+# --- T20: `zn work detach` ---------------------------------------------------
+# Terminal entry for the daemon's ``work_detach_workspace`` (daemon.py:504)
+# RPC -- the inverse of T16's ``zn work attach``. daemon.py is untouched.
+#
+# Contracts, inherited from the T12/T13/T14/D4 lineage (same as T16):
+# - T2-1: presentation uses only the cli_format contract (plain human copy
+#   always; TTY niceties behind ``use_color()``).
+# - T2-5: server rejections humanized (Chinese body + English technical
+#   snippet in parentheses). ``work_detach_workspace`` rejects unknown
+#   thread ids with ``ValueError("unknown work thread: <id>")``.
+# - T2-6: unreachable resident -> exit 0 + an honest note naming what was
+#   NOT done, never claiming the workspace was detached.
+# - T2-7: TTY-only hints stay behind ``use_color()``; pipes, NO_COLOR and
+#   ``--json`` keep historic bytes.
+# - T2-4: ``--json`` prints the RPC result byte-for-byte; exit codes for
+#   missing/illegal CLI args come from argparse (exit 2).
+# Unlike ``zn work attach``, there is no path argument to validate
+# client-side: the RPC schema is exactly {"thread_id"} and the client sends
+# exactly that one key -- asserted in the tests.
+_WORK_DETACH_UNKNOWN_THREAD_SIGNATURE = "unknown work thread"
+
+
+def _humanize_work_detach_error(
+    exc: CliError, args: argparse.Namespace
+) -> CliError:
+    """Turn ``work_detach_workspace`` server rejections into human copy (T2-5).
+
+    Unknown thread ids surface as the daemon's
+    ``ValueError("unknown work thread: <id>")``; anything else travels the
+    untouched generic path.
+    """
+    thread_id = str(args.thread_id)
+    if _WORK_DETACH_UNKNOWN_THREAD_SIGNATURE in str(exc):
+        return CliError(
+            "找不到这个工作线程（unknown work thread）："
+            f"线程 '{thread_id}' 不存在。"
+            "用 `zn work list` 看看。"
+        )
+    return exc
+
+
+def _cmd_work_detach(args: argparse.Namespace) -> int:
+    # T20 spec: no client-side validation needed -- the inverse of attach
+    # carries no path; the RPC just takes the thread id.
+    try:
+        ok, payload = _work_drive_rpc(
+            args,
+            "work_detach_workspace",
+            {"thread_id": args.thread_id},
+        )
+    except CliError as exc:
+        raise _humanize_work_detach_error(exc, args)
+    if not ok:
+        # T2-6: unreachable resident -- exit 0, honestly saying nothing was
+        # detached; never claim the workspace association was removed.
+        return _work_drive_offline(
+            args,
+            payload,
+            unavailable="没有给线程解绑工作区（这次解绑未生效）",
+            json_payload={
+                "detached": False,
+                "thread_id": args.thread_id,
+            },
+        )
+    if not isinstance(payload, dict) or not isinstance(payload.get("id"), str):
+        raise _unexpected_result("work_detach_workspace", payload)
+    if args.json:
+        # --json passes the RPC result through byte-for-byte (same
+        # serialization convention as every other command).
+        print(json.dumps(payload, ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(f"detached workspace from thread={args.thread_id}")
+    print("  该线程已不再关联工作区目录")
+    if use_color():
+        print(
+            colorize(
+                f"  用 `zn work get --thread-id {args.thread_id}` 查看线程状态",
                 "dim",
             )
         )
@@ -4566,6 +4649,17 @@ def build_parser() -> argparse.ArgumentParser:
     )
     work_attach.add_argument("--json", action="store_true", help="print raw JSON")
     work_attach.set_defaults(func=_cmd_work_attach)
+
+    work_detach = work_sub.add_parser(
+        "detach",
+        help="detach the workspace directory from a work thread",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn work detach --thread-id <thread-id>",
+    )
+    work_detach.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
+    work_detach.add_argument("--json", action="store_true", help="print raw JSON")
+    work_detach.set_defaults(func=_cmd_work_detach)
 
     approval = sub.add_parser(
         "approval",

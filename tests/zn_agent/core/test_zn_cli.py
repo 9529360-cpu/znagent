@@ -4981,3 +4981,211 @@ class ZnCliRoutineProposeConfirmT17Tests(_CliHarness):
         self.assertEqual(code, 0, err)
         self.assertIn("用 `zn routine list` 查看已创建的例行任务", out)
         self.assertIn("\x1b[2m", out)
+
+
+class ZnCliWorkDetachT20Tests(_CliHarness):
+    """T20: ``zn work detach`` -- terminal entry for detaching a workspace.
+
+    The inverse of T16's ``zn work attach``. New test class (Floor Guard:
+    existing tests and assertions untouched).
+    """
+
+    def _run_on_tty(self, argv, handler, no_color=False):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        if no_color:
+            env["NO_COLOR"] = "1"
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def _argv(self, extra=()):
+        return ["work", "detach", "--thread-id", "t1", *extra]
+
+    def _result(self, **overrides):
+        # after a detach the snapshot's metadata has no "workspace" entry
+        # (daemon.py pops it before saving the thread)
+        result = {
+            "id": "t1",
+            "title": "Thread",
+            "created_at": "2026-10-22T01:00:00Z",
+            "updated_at": "2026-10-22T03:00:00Z",
+            "active_run": None,
+            "messages": [],
+            "artifacts": [],
+            "metadata": {},
+        }
+        result.update(overrides)
+        return result
+
+    # -- happy paths ---------------------------------------------------------
+
+    def test_detach_success_prints_human_line(self):
+        code, out, err = self._run(
+            self._argv(),
+            self._handler({"work_detach_workspace": self._result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("detached workspace from thread=t1", out)
+        self.assertIn("该线程已不再关联工作区目录", out)
+        self.assertEqual(
+            self.calls,
+            [
+                (
+                    "work_detach_workspace",
+                    {"thread_id": "t1"},
+                )
+            ],
+        )
+
+    def test_detach_sends_exact_single_key_rpc_schema(self):
+        # the daemon's work_detach_workspace RPC accepts exactly {thread_id};
+        # the client must not send a path or anything else
+        self._run(self._argv(), self._handler({"work_detach_workspace": self._result()}))
+        self.assertEqual(self.calls, [("work_detach_workspace", {"thread_id": "t1"})])
+        for _, params in self.calls:
+            self.assertEqual(set(params), {"thread_id"})
+
+    def test_detach_json_passes_rpc_result_through(self):
+        payload = self._result()
+        code, out, err = self._run(
+            self._argv(extra=["--json"]),
+            self._handler({"work_detach_workspace": payload}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out), payload)
+        self.assertIn('"id"', out)
+
+    def test_detach_malformed_result_humanized(self):
+        code, out, err = self._run(
+            self._argv(),
+            self._handler({"work_detach_workspace": {"id": 42, "metadata": {}}}),
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn(
+            "zn: error: 服务返回了无法识别的结果（unexpected work_detach_workspace result",
+            err,
+        )
+
+    def test_detach_tty_hint_behind_use_color(self):
+        code, out, err = self._run_on_tty(
+            self._argv(),
+            self._handler({"work_detach_workspace": self._result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("用 `zn work get --thread-id t1` 查看线程状态", out)
+        self.assertIn("\x1b[2m", out)
+
+    def test_detach_no_hint_on_pipe(self):
+        code, out, err = self._run(
+            self._argv(),
+            self._handler({"work_detach_workspace": self._result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("zn work get --thread-id", out)
+        self.assertNotIn("\x1b[", out + err)
+
+    def test_detach_no_hint_with_no_color(self):
+        code, out, err = self._run_on_tty(
+            self._argv(),
+            self._handler({"work_detach_workspace": self._result()}),
+            no_color=True,
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("zn work get --thread-id", out)
+        self.assertNotIn("\x1b[", out + err)
+
+    # -- argparse: missing --thread-id exits 2 --------------------------------
+
+    def test_missing_thread_id_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["work", "detach"], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_blank_thread_id_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["work", "detach", "--thread-id", "  "], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    # -- T2-6: unreachable resident -> exit 0, nothing claimed ------------------
+
+    def test_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._argv(), refused)
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有给线程解绑工作区", out)
+        self.assertIn("未生效", out)
+        self.assertNotIn("detached workspace from thread=t1", out)
+
+    def test_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(self._argv(extra=["--json"]), refused)
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["detached"])
+        self.assertEqual(data["thread_id"], "t1")
+
+    # -- T2-5: server rejections humanized, exit 1 -------------------------------
+
+    def test_unknown_thread_humanized(self):
+        handler = self._handler(
+            {
+                "work_detach_workspace": (
+                    False,
+                    None,
+                    "ValueError: unknown work thread: t9",
+                )
+            }
+        )
+        code, out, err = self._run(
+            ["work", "detach", "--thread-id", "t9"], handler
+        )
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error: 找不到这个工作线程（unknown work thread）", err)
+        self.assertIn("t9", err)
+        self.assertIn("zn work list", err)
+        self.assertNotIn("服务端返回错误", err)
+
+    def test_other_server_error_unchanged(self):
+        handler = self._handler(
+            {
+                "work_detach_workspace": (
+                    False,
+                    None,
+                    "RuntimeError: something exploded",
+                )
+            }
+        )
+        code, out, err = self._run(self._argv(), handler)
+        self.assertEqual(code, 1, err)
+        self.assertEqual(out, "")
+        self.assertIn("something exploded", err)
+        self.assertNotIn("找不到这个工作线程", err)
+
+    # -- epilog carries a real runnable example (no drift) -----------------------
+
+    def test_detach_epilog_example_is_real_command(self):
+        parser = build_parser()
+        work = parser._subparsers._group_actions[0].choices["work"]
+        detach = work._subparsers._group_actions[0].choices["detach"]
+        self.assertIn("zn work detach --thread-id <thread-id>", detach.epilog)
