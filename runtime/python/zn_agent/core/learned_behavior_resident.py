@@ -17,7 +17,9 @@ from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
 from .action import NativeActionIntent, derive_native_action_intents
-from .application_resident import ApplicationAwareResidentRuntime
+from .browser_workspace_adaptation_resident import (
+    BrowserWorkspaceAdaptationResidentRuntime,
+)
 from .models import AgentEvent, ResidentRunResult, WorkingState
 from .procedural_influence import (
     ProceduralActionInfluence,
@@ -256,7 +258,7 @@ def resolve_verified_working_context(
     )
 
 
-class MemoryLearnedBehaviorResidentRuntime(ApplicationAwareResidentRuntime):
+class MemoryLearnedBehaviorResidentRuntime(BrowserWorkspaceAdaptationResidentRuntime):
     """One active Resident with bounded prior-context reuse and an L4 fast path."""
 
     @staticmethod
