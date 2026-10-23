@@ -31,6 +31,8 @@ from .browser import (
     BrowserTargetQuery,
     BrowserTargetStaleError,
     BrowserTargetQueryKind,
+    BrowserTargetRegroundDisposition,
+    BrowserTargetRegrounding,
 )
 from .browser_select_option import browser_select_option_request
 from .models import utc_now
@@ -394,6 +396,46 @@ class ChromeDevToolsMcpManagedBrowser:
         )
         session.last_observation[resolved] = observation
         return observation
+
+    def reground_target(
+        self,
+        session_id: str,
+        query: BrowserTargetQuery,
+        previous_target: BrowserTarget,
+        *,
+        page_id: str = "",
+    ) -> BrowserTargetRegrounding:
+        session = self._session(session_id)
+        resolved_page_id = page_id or previous_target.page_id or session.default_page_id
+        if previous_target.session_id != session.identity.session_id:
+            raise ChromeDevToolsMcpBrowserError(
+                "browser target regrounding cannot use a target from another session"
+            )
+        if previous_target.page_id != resolved_page_id:
+            raise ChromeDevToolsMcpBrowserError(
+                "browser target regrounding cannot transfer authority across pages"
+            )
+        observation = self.observe_target(
+            session_id,
+            query,
+            page_id=resolved_page_id,
+        )
+        current = observation.target
+        if current is None:
+            raise ChromeDevToolsMcpBrowserError(
+                "fresh semantic regrounding returned no target"
+            )
+        # Chrome DevTools MCP documents snapshot UIDs as identities from the
+        # current page-content snapshot and requires consumers to use the latest
+        # snapshot. Equality across snapshots is therefore not sufficient proof
+        # of physical-node continuity. Re-ground conservatively as a new binding;
+        # action-time provider revalidation still protects dispatch.
+        return BrowserTargetRegrounding(
+            query=query,
+            previous_target=previous_target,
+            observation=observation,
+            disposition=BrowserTargetRegroundDisposition.REBOUND_TARGET,
+        )
 
     def read_page(self, session_id: str, *, page_id: str = "") -> dict[str, Any]:
         session = self._session(session_id)

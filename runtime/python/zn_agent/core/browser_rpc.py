@@ -164,6 +164,23 @@ class _ResidentManagedBrowser:
             lambda: self._browser.observe_target(session_id, query, page_id=page_id)
         )
 
+    def reground_target(
+        self,
+        session_id: str,
+        query,
+        previous_target,
+        *,
+        page_id: str = "",
+    ):
+        return self._owner.call(
+            lambda: self._browser.reground_target(
+                session_id,
+                query,
+                previous_target,
+                page_id=page_id,
+            )
+        )
+
     def read_page(self, session_id: str, *, page_id: str = ""):
         reader = getattr(self._browser, "read_page", None)
         if not callable(reader):
