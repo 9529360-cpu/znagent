@@ -55,7 +55,7 @@ def _row_commands() -> list[str]:
 # no glyphs); any copy edit must update this string deliberately.
 _EXPECTED_SNAPSHOT = """ZN 能帮你干的事（按场景）
 
---- 交办 (5) ---
+--- 交办 (7) ---
   work submit
     交办一件事给 ZN，常驻服务去执行
     例：zn work submit --task "把 downloads 里昨天的发票整理成一张表"
@@ -63,8 +63,14 @@ _EXPECTED_SNAPSHOT = """ZN 能帮你干的事（按场景）
     看看 ZN 手上正在干的活
     例：zn work list
   work get
+    看最近那件事的进展和结果（默认最近）
+    例：zn work get --last
+  work get
     看某件事的进展和结果
     例：zn work get --thread-id <id>
+  work cancel
+    停掉最近那件事里正在干的活（默认最近）
+    例：zn work cancel --last --event-id <id>
   work cancel
     停掉一件正在干的活
     例：zn work cancel --thread-id <id> --event-id <id>
@@ -184,13 +190,13 @@ class TestHelpSnapshot(unittest.TestCase):
         titles = [title for title, _ in _HELP_SECTIONS]
         self.assertEqual(titles, ["交办", "审批", "审批规则与撤销", "记忆", "团队与自驱", "例行任务", "日记", "日常"])
 
-    def test_each_section_has_three_to_five_rows(self):
+    def test_each_section_has_three_to_seven_rows(self):
         for title, rows in _HELP_SECTIONS:
             self.assertGreaterEqual(
                 len(rows), 3, f"section {title!r} has fewer than 3 rows"
             )
             self.assertLessEqual(
-                len(rows), 5, f"section {title!r} has more than 5 rows"
+                len(rows), 7, f"section {title!r} has more than 7 rows"
             )
 
     def test_every_example_is_copy_pasteable(self):

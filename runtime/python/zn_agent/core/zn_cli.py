@@ -4797,8 +4797,18 @@ _HELP_SECTIONS: tuple[tuple[str, tuple[tuple[str, str, str], ...]], ...] = (
             ),
             (
                 "work get",
+                "看最近那件事的进展和结果（默认最近）",
+                "zn work get --last",
+            ),
+            (
+                "work get",
                 "看某件事的进展和结果",
                 "zn work get --thread-id <id>",
+            ),
+            (
+                "work cancel",
+                "停掉最近那件事里正在干的活（默认最近）",
+                "zn work cancel --last --event-id <id>",
             ),
             (
                 "work cancel",
