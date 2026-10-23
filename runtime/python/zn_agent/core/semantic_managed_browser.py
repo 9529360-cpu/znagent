@@ -39,6 +39,7 @@ from .browser import (
 from .browser_causal_popup import PlaywrightBrowserCausalPopupMixin
 from .browser_scene import PlaywrightBrowserSceneMixin
 from .browser_scene_actions import PlaywrightBrowserSceneActionMixin
+from .browser_scene_clear_press import PlaywrightBrowserSceneClearPressMixin
 from .browser_scene_command import PlaywrightBrowserSceneCommandMixin
 from .browser_scene_controls import PlaywrightBrowserSceneControlMixin
 from .browser_scene_file_transfer import PlaywrightBrowserSceneFileTransferMixin
@@ -403,12 +404,9 @@ _TAB_ARIA_SELECTED_SCRIPT = r"""
 
 
 class SemanticPlaywrightManagedBrowser(
+    PlaywrightBrowserSceneClearPressMixin,
     PlaywrightBrowserSceneMixin,
-    PlaywrightBrowserSceneTableMixin,
     PlaywrightBrowserCausalPopupMixin,
-    PlaywrightBrowserSceneFileTransferMixin,
-    PlaywrightBrowserSceneCommandMixin,
-    PlaywrightBrowserSceneControlMixin,
     PlaywrightBrowserSceneActionMixin,
     PlaywrightBrowserTabNavigationMixin,
     PlaywrightManagedBrowser,
