@@ -1,4 +1,4 @@
-"""T10: `zn diary list` / `zn diary get --date YYYY-MM-DD` CLI.
+"""T10: `zn diary list` / `zn diary get [--date YYYY-MM-DD]` CLI.
 
 The daemon side is already wired (daemon.py dispatches ``diary_list`` /
 ``diary_get`` to ``DiaryEngine``); this file covers the terminal face only,
@@ -7,6 +7,9 @@ against a scripted fake resident socket:
 - list: empty / non-empty / --limit passthrough / --json
 - get: detail card / --json / missing date (daemon answers null) -> human
   "not found" error / server rejection surfaces, exit 1
+- DIARY-TODAY: omitting --date defaults to today -- the RPC goes out with
+  today's date, the TTY headline carries the "（默认今天）" hint, --json
+  is unchanged passthrough; explicit --date behavior is unchanged
 - --date validation: strict YYYY-MM-DD, usage error (exit 2) otherwise
 - offline (resident unreachable): both commands exit 0 with an honest
   "unreachable" note and the start hint
@@ -22,6 +25,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest import mock
+from datetime import date
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "runtime" / "python"))
 
@@ -280,6 +284,78 @@ class DiaryGetTests(_DiaryCliHarness):
         self.assertEqual(out, "")
 
 
+class DiaryGetDefaultDateTests(_DiaryCliHarness):
+    """DIARY-TODAY: ``zn diary get`` with no --date resolves to today."""
+
+    def test_get_defaults_to_today_with_hint(self):
+        today = date.today().isoformat()
+        code, out, err = self._run(
+            ["diary", "get"],
+            self._handler({"diary_get": _diary_entry(today)}),
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(self.calls, [("diary_get", {"date": today})])
+        # The TTY headline names the resolved date and says it defaulted.
+        first_line = out.splitlines()[0]
+        self.assertIn(today, first_line)
+        self.assertIn("（默认今天）", first_line)
+        self.assertIn("素材数：5", out)
+        self.assertEqual(err, "")
+
+    def test_get_explicit_date_carries_no_hint(self):
+        code, out, err = self._run(
+            ["diary", "get", "--date", "2026-10-22"],
+            self._handler({"diary_get": _diary_entry("2026-10-22")}),
+        )
+        self.assertEqual(code, 0)
+        self.assertNotIn("（默认今天）", out)
+        self.assertEqual(err, "")
+
+    def test_get_default_json_passthrough(self):
+        # --json output is raw: the date field is the resolved today, and
+        # no hint text leaks into the JSON.
+        today = date.today().isoformat()
+        code, out, err = self._run(
+            ["diary", "get", "--json"],
+            self._handler({"diary_get": _diary_entry(today)}),
+        )
+        self.assertEqual(code, 0)
+        parsed = json.loads(out)
+        self.assertEqual(parsed["date"], today)
+        self.assertNotIn("默认今天", out)
+        self.assertEqual(err, "")
+
+    def test_get_default_missing_entry_is_human_error(self):
+        # No entry for today: same humanized "not found" error, naming
+        # today's date, exit 1.
+        today = date.today().isoformat()
+        code, out, err = self._run(
+            ["diary", "get"], self._handler({"diary_get": None})
+        )
+        self.assertEqual(code, 1)
+        self.assertIn(f"找不到 {today} 的日记", err)
+        self.assertIn("no diary entry for that date", err)
+        self.assertEqual(out, "")
+
+    def test_get_default_offline(self):
+        today = date.today().isoformat()
+        code, out, err = self._run_offline(["diary", "get"])
+        self.assertEqual(code, 0)
+        self.assertIn("unreachable", out)
+        self.assertIn(f"看不到 {today} 的日记", out)
+        self.assertEqual(err, "")
+
+    def test_get_default_offline_json(self):
+        today = date.today().isoformat()
+        code, out, err = self._run_offline(["diary", "get", "--json"])
+        self.assertEqual(code, 0)
+        parsed = json.loads(out)
+        self.assertFalse(parsed["daemon_reachable"])
+        self.assertEqual(parsed["date"], today)
+        self.assertIsNone(parsed["entry"])
+        self.assertEqual(err, "")
+
+
 class DiaryOfflineTests(_DiaryCliHarness):
     """Resident unreachable: exit 0 with an honest note; no false success."""
 
@@ -329,6 +405,12 @@ class DiaryDateArgTests(unittest.TestCase):
             ["diary", "get", "--date", "2026-10-22"]
         )
         self.assertEqual(namespace.date, "2026-10-22")
+
+    def test_date_arg_is_optional_and_defaults_none(self):
+        # DIARY-TODAY: --date is no longer required; the CLI resolves
+        # today at command time, so argparse must leave it unset.
+        namespace = build_parser().parse_args(["diary", "get"])
+        self.assertIsNone(namespace.date)
 
     def test_invalid_dates_rejected_with_usage_error(self):
         for bad in (

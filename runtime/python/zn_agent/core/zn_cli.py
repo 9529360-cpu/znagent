@@ -4093,15 +4093,23 @@ def _format_diary_line(item: dict[str, Any]) -> str:
     return line
 
 
-def _format_diary_detail(item: dict[str, Any]) -> str:
+def _format_diary_detail(
+    item: dict[str, Any], *, defaulted_to_today: bool = False
+) -> str:
     """Full detail view of one diary entry (``zn diary get``).
 
     Headline row (date), then indented label rows for the fields the
     ``diary_get`` RPC already returns, then the body rendered with
     :func:`_long_text` so line structure survives (T2-4 rule).
+    When the caller omitted ``--date`` and today was defaulted in,
+    the headline carries the "（默认今天）" hint so the TTY reader
+    knows which date was resolved.
     """
     entry_date = _one_line(item.get("date"), limit=12) or "?"
-    lines = [f"日记 {entry_date}"]
+    headline = f"日记 {entry_date}"
+    if defaulted_to_today:
+        headline += "（默认今天）"
+    lines = [headline]
     count = item.get("item_count")
     if isinstance(count, int):
         lines.append(f"  素材数：{count}")
@@ -4147,20 +4155,26 @@ def _cmd_diary_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_diary_get(args: argparse.Namespace) -> int:
-    ok, payload = _diary_rpc(args, "diary_get", {"date": args.date})
+    # DIARY-TODAY: --date is optional; when omitted, resolve to today at
+    # command time (not parser-build time) so a long-lived import still
+    # gets the right date. daemon.py's diary_get takes only a date string
+    # and has no default semantics -- this is purely the CLI-side default.
+    defaulted_to_today = not args.date
+    date_str = args.date or date.today().isoformat()
+    ok, payload = _diary_rpc(args, "diary_get", {"date": date_str})
     if not ok:
         return _diary_offline(
             args,
             payload,
-            unavailable=f"看不到 {args.date} 的日记",
-            json_payload={"date": args.date, "entry": None},
+            unavailable=f"看不到 {date_str} 的日记",
+            json_payload={"date": date_str, "entry": None},
         )
     if payload is None:
         # The daemon answers null (not a rejection) when the date has no
         # entry: humanized "not found", exit 1. The English fragment keeps
         # the server contract greppable; the next line points at the list.
         raise CliError(
-            f"找不到 {args.date} 的日记（no diary entry for that date）。"
+            f"找不到 {date_str} 的日记（no diary entry for that date）。"
             "用 'zn diary list' 看看 ZN 写过哪些日记。"
         )
     result = payload
@@ -4169,7 +4183,9 @@ def _cmd_diary_get(args: argparse.Namespace) -> int:
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
-    print(_format_diary_detail(result))
+    print(
+        _format_diary_detail(result, defaulted_to_today=defaulted_to_today)
+    )
     return 0
 
 
@@ -5945,13 +5961,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="show one diary entry by date (read-only)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例：\n"
+        "  zn diary get\n"
         "  zn diary get --date 2026-10-22",
     )
     diary_get.add_argument(
         "--date",
-        required=True,
         type=lambda v: _require_date(v, name="--date"),
-        help="entry date in YYYY-MM-DD, e.g. 2026-10-22",
+        default=None,
+        help="entry date in YYYY-MM-DD, e.g. 2026-10-22 (default: today)",
     )
     diary_get.add_argument("--json", action="store_true", help="print raw JSON")
     diary_get.set_defaults(func=_cmd_diary_get)
