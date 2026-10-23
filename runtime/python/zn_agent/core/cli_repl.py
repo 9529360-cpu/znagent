@@ -17,8 +17,9 @@ line the user types is one turn of work on a durable resident Work thread:
   the thread via ``work_get``, ``/status`` shows the six-row ``zn status``
   aggregate (read-only, same data contract as ``_cmd_status`` in
   ``zn_cli.py``), ``/approvals`` lists pending approval cards read-only
-  (deciding stays in the ``zn approval decide`` subcommand),
-  ``/help`` lists the session commands, ``/exit`` (or Ctrl-D / EOF)
+  and ``/decide <request_id>`` decides one card through a numbered
+  option menu (approve once / deny with an optional note / always allow
+  / cancel), ``/help`` lists the session commands, ``/exit`` (or Ctrl-D / EOF)
   leaves. The REPL never attaches to an old thread on its own: ``/resume``
   is the only way to pick one up, so a fresh start always begins empty.
   If ``work_list`` fails, ``/resume`` falls back to new-thread behaviour
@@ -73,7 +74,8 @@ _HELP_TEXT = """会话命令（单独一行输入）：
   /resume    回到最近的会话（下一句话接上它的上下文继续说）
   /history   回看当前会话的历史消息
   /status    看 ZN 当前状态（常驻/模型/连接器/待审批/自驱域，同 zn status）
-  /approvals 列出待审批的卡片（只读；决定去另一个终端跑 zn approval decide）
+  /approvals 列出待审批的卡片（只读；用 /decide <卡号> 做决定，也可去另一个终端跑 zn approval decide）
+  /decide    对一张审批卡做决定（/decide <卡号>：1 批准 / 2 拒绝（可附理由）/ 3 总是允许 / 4 取消）
   /help      显示这份帮助
   /exit      退出会话（Ctrl-D 也可以）
 其他任何一行文字都会作为任务发给 ZN；干活时按 Ctrl-C 只取消当前这一轮，会话不退出。"""
@@ -467,6 +469,12 @@ class ChatSession:
             if text == "/approvals":
                 self._show_pending_approvals()
                 continue
+            if text == "/decide":
+                self._decide_approval("")
+                continue
+            if text.startswith("/decide "):
+                self._decide_approval(text[len("/decide "):])
+                continue
             self._run_turn(text)
 
     def _read_line(self) -> str | None:
@@ -580,6 +588,152 @@ class ChatSession:
         for card in cards:
             self._say(_format_approval_card(card))
         self._say(colorize(f"  {_APPROVAL_PENDING_HINT}", "dim", stream=self.out))
+
+    _DECIDE_MENU = (
+        "给这张卡做个决定，输入数字：\n"
+        "  1) 批准（只批准这一次）\n"
+        "  2) 拒绝（可以附理由）\n"
+        "  3) 总是允许（以后同类请求自动批准）\n"
+        "  4) 取消"
+    )
+
+    _DECIDE_LABELS = {
+        "allow_once": "已批准",
+        "deny": "已拒绝",
+        "always_allow": "已设为总是允许",
+    }
+
+    def _decide_approval(self, request_id: str) -> None:
+        """Decide one approval card through a numbered menu
+        (``/decide <request_id>``).
+
+        The card is rendered with the shared ``zn approval list`` card
+        renderer, so the decision is made on the same detail ``/approvals``
+        and ``zn approval show`` display. The decision goes through the
+        existing ``approval_decide`` RPC with the same params ``zn
+        approval decide`` sends -- including the AP-1 note channel
+        (denial feedback only, passed straight to the daemon); nothing is
+        auto-approved and the card is never bypassed. Ctrl-C only leaves
+        the option menu: the card stays pending. The choice is read
+        through ``_read_line``, so piped mode behaves like a TTY.
+        """
+        request_id = request_id.strip()
+        if not request_id:
+            self._error(
+                "/decide 缺了审批卡的编号 (missing request_id)",
+                hint="先用 /approvals 列出待审批的卡片，再用 /decide <request_id> 做决定。",
+            )
+            return
+        try:
+            result = self.client.call("approval_list", {})
+        except CliError as exc:
+            self._error(
+                f"审批卡没拿到 (approval_list failed)：{exc}",
+                hint=f"确认 ZN 常驻进程还在运行，再试一次 /decide {request_id}。",
+            )
+            return
+        pending = result.get("pending") if isinstance(result, dict) else None
+        cards = (
+            [item for item in pending if isinstance(item, dict)]
+            if isinstance(pending, list)
+            else []
+        )
+        card = next(
+            (
+                item
+                for item in cards
+                if str(item.get("request_id")) == request_id
+            ),
+            None,
+        )
+        if card is None:
+            self._error(
+                f"没找到待审批的卡片 {request_id} (approval card not found)",
+                hint="卡号用 /approvals 复制；这张卡可能已经被处理过了。",
+            )
+            return
+        self._say(_format_approval_card(card))
+        chosen = self._choose_decision()
+        if chosen is None:
+            return  # cancelled or Ctrl-C: the card stays pending
+        decision, note = chosen
+        params: dict[str, Any] = {
+            "request_id": request_id,
+            "decision": decision,
+        }
+        if decision == "deny" and note.strip():
+            # AP-1 note channel: denial feedback only. Notes are only ever
+            # collected for denials, so the AP-1 warn-and-drop case for
+            # approvals cannot occur here; the params match
+            # `zn approval decide` byte for byte.
+            params["note"] = note.strip()
+        try:
+            decided = self.client.call("approval_decide", params)
+        except CliError as exc:
+            self._error(
+                f"决定没发出去 (approval_decide failed)：{exc}",
+                hint="确认 ZN 常驻进程还在运行，再试一次这张卡的 /decide。",
+            )
+            return
+        if not isinstance(decided, dict) or not isinstance(
+            decided.get("request"), dict
+        ):
+            self._error(
+                "决定返回了意料之外的结果 "
+                "(unexpected approval_decide result)。"
+            )
+            return
+        label = self._DECIDE_LABELS[decision]
+        note_text = (
+            f"（理由：{_one_line(note.strip(), limit=60)}）"
+            if decision == "deny" and note.strip()
+            else ""
+        )
+        self._say(f"· {request_id}：{label}{note_text}")
+
+    def _choose_decision(self) -> tuple[str, str] | None:
+        """Read the numbered decision; ``None`` means the user cancelled
+        or Ctrl-C'd out.
+
+        Non-numeric input re-asks; Ctrl-C only leaves this menu (no
+        ``approval_decide`` RPC is ever sent, the card stays pending).
+        """
+        self._say(self._DECIDE_MENU)
+        while True:
+            try:
+                raw = self._read_line()
+            except KeyboardInterrupt:
+                self._say("\n（已退出选项；这张卡还在待审批里。）")
+                return None
+            if raw is None:  # EOF: piped input ended -- nothing decided
+                return None
+            choice = raw.strip()
+            if choice == "4":
+                self._say("取消了，这张卡还在待审批里。")
+                return None
+            if choice in ("1", "3"):
+                return ("allow_once", "") if choice == "1" else (
+                    "always_allow",
+                    "",
+                )
+            if choice == "2":
+                reason = self._ask_denial_reason()
+                if reason is None:
+                    return None
+                return "deny", reason
+            self._say("只认 1 到 4 的数字，再选一次（Ctrl-C 退出选项）。")
+
+    def _ask_denial_reason(self) -> str | None:
+        """Read the optional denial reason; ``None`` means Ctrl-C/EOF."""
+        self._say("拒绝理由（可空，直接回车跳过）：")
+        try:
+            raw = self._read_line()
+        except KeyboardInterrupt:
+            self._say("\n（已退出选项；这张卡还在待审批里。）")
+            return None
+        if raw is None:  # EOF: piped input ended -- nothing decided
+            return None
+        return raw
 
     # -- one turn of work ---------------------------------------------------
 
