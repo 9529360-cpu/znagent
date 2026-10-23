@@ -2671,8 +2671,10 @@ def _cmd_goal_status(args: argparse.Namespace) -> int:
 # --- T9: `zn routine ...` --------------------------------------------------
 # Terminal face for the daemon's routine_* RPCs (already dispatched in
 # daemon.py ``_routine_result``): list / get / runs are read-only,
-# pause / resume are the only mutations in this slice. propose / edit /
-# confirm / delete / test_run stay on the chat path and are NOT exposed
+# pause / resume are the mutations from the T9 slice. T17 adds the
+# creation slice: propose (one sentence -> confirmation draft) and
+# confirm (validate a possibly user-edited draft, then create).
+# edit / delete / test_run stay on the chat path and are NOT exposed
 # here. No new daemon RPC, no daemon.py changes.
 #
 # Offline contract (T2-6 style): every command exits 0 when the resident is
@@ -2974,6 +2976,275 @@ def _cmd_routine_resume(args: argparse.Namespace) -> int:
         f"{mark + ' ' if mark else ''}例行任务 {args.routine_id} "
         f"已恢复 [{status_word(status)}]"
     )
+    return 0
+
+
+# --- T17: `zn routine propose` / `zn routine confirm` -----------------------
+# Terminal face for the creation slice of the daemon's routine_* RPCs
+# (already dispatched in daemon.py ``_routine_result``): ``propose`` turns
+# one sentence into a draft carrying the six confirmations (task, owner,
+# input_source, expected_result, approval_boundary, missing_data_policy)
+# plus a ``missing`` list naming anything the parser could not figure out;
+# ``confirm`` validates a (possibly user-edited) draft and creates the
+# routine. No new daemon RPC, no daemon.py changes.
+#
+# Offline contract (T2-6 style, same as the other routine commands):
+# resident unreachable -> exit 0 + an honest note naming what was not done.
+# ``confirm`` never claims a routine was created when it was not. A
+# server-side rejection (``ok: false``, e.g. an invalid draft) is NOT
+# swallowed: it surfaces as a humanized error on stderr, exit 1.
+
+_MISSING_DRAFT_ITEM_HINTS = {
+    "schedule": (
+        "时间计划还没解析出来：在描述里写清楚什么时候运行，"
+        "比如「每天早上8点」「每30分钟」「每周五下午5点」。"
+    ),
+    "task": (
+        "任务内容还没解析出来：说清楚要做什么，比如「提醒我看今天的日程」。"
+    ),
+}
+
+
+def _format_routine_draft(draft: dict[str, Any]) -> str:
+    """Human card for a ``routine_propose`` draft: the six confirmations."""
+    kind = draft.get("schedule_kind") or ""
+    cron = _one_line(draft.get("cron_expression"), limit=40)
+    interval = draft.get("interval_seconds")
+    timezone = _one_line(draft.get("timezone"), limit=40)
+    zone = f"（时区 {timezone}）" if timezone else ""
+    if kind == "cron" and cron:
+        schedule = f"cron {cron}{zone}"
+    elif kind == "interval" and isinstance(interval, (int, float)) and interval > 0:
+        schedule = f"每 {int(interval)} 秒{zone}"
+    else:
+        schedule = "（未解析出时间计划）"
+    rows = [
+        ("任务", _one_line(draft.get("task"), limit=200)),
+        ("负责人", _one_line(draft.get("owner"), limit=40)),
+        ("计划", schedule),
+        ("输入来源", _one_line(draft.get("input_source"), limit=120)),
+        ("期望结果", _one_line(draft.get("expected_result"), limit=200)),
+        ("审批边界", _one_line(draft.get("approval_boundary"), limit=200)),
+        ("缺失数据策略", _one_line(draft.get("missing_data_policy"), limit=40)),
+    ]
+    lines = ["草稿已生成，请逐项确认："]
+    for label, value in rows:
+        lines.append(f"  {label}：{value or '（空）'}")
+    return "\n".join(lines)
+
+
+def _format_missing_draft_items(draft: dict[str, Any]) -> list[str]:
+    """Human guidance for each name in the draft's ``missing`` list."""
+    missing = draft.get("missing")
+    if not isinstance(missing, list):
+        return []
+    hints = []
+    for item in missing:
+        name = str(item).strip()
+        if not name:
+            continue
+        hints.append(
+            _MISSING_DRAFT_ITEM_HINTS.get(
+                name, f"「{name}」还没确认：请在草稿 JSON 里补上再确认。"
+            )
+        )
+    return hints
+
+
+# T2-5: human lead + English technical fragment in parentheses for the
+# common propose/confirm server rejections. Anything not listed falls
+# through to the generic ``rpc_rejected`` copy (still humanized, exit 1).
+_ROUTINE_CREATION_ERROR_COPY: tuple[tuple[str, str], ...] = (
+    (
+        "routine_propose requires text",
+        "请用一句话描述这个例行任务（routine_propose requires text）\n"
+        "示例：zn routine propose \"每天早上8点提醒我看日程\"",
+    ),
+    (
+        "routine request must not be empty",
+        "请用一句话描述这个例行任务（routine request must not be empty）\n"
+        "示例：zn routine propose \"每天早上8点提醒我看日程\"",
+    ),
+    (
+        "routine draft must be an object",
+        "草稿必须是 JSON 对象（{...}），现在给的不是对象"
+        "（routine draft must be an object）",
+    ),
+    (
+        "routine_confirm requires a draft object",
+        "确认需要一段草稿（routine_confirm requires a draft object）："
+        "用 --draft-json '<json>' 或 --draft-file <path> 传入",
+    ),
+    (
+        "routine task must not be empty",
+        "草稿里没有任务内容（task 为空）（routine task must not be empty）："
+        "请补上要做什么，再重新确认",
+    ),
+    (
+        "routine task must be at most 200 characters",
+        "草稿里的任务描述太长了，最多 200 字"
+        "（routine task must be at most 200 characters）：请精简一下再确认",
+    ),
+    (
+        "routine owner must not be empty",
+        "草稿里没有负责人（owner 为空）（routine owner must not be empty）："
+        "请填上谁负责这条例行任务",
+    ),
+    (
+        "routine input source must not be empty",
+        "草稿里没有输入来源（input_source 为空）"
+        "（routine input source must not be empty）：请写清楚数据从哪儿来",
+    ),
+    (
+        "routine expected result must not be empty",
+        "草稿里没有期望结果（expected_result 为空）"
+        "（routine expected result must not be empty）：请写清楚做完算什么样",
+    ),
+    (
+        "missing-data policy must be one of",
+        "缺失数据策略（missing_data_policy）只能是这几个之一"
+        "（missing-data policy must be one of: skip / notify / use_last_known）",
+    ),
+    (
+        "routine draft has no parsed schedule",
+        "草稿里没有可用的时间计划（routine draft has no parsed schedule）："
+        "在描述里写清楚什么时候运行，比如「每天早上8点」，"
+        "重新生成草稿后再确认",
+    ),
+)
+
+
+def _routine_creation_error(exc: CliError) -> CliError:
+    """Swap a common propose/confirm server rejection for human copy.
+
+    The daemon answers ``ok: false`` with a ``ValueError: ...`` whose text
+    is matched below; anything else is returned unchanged so the generic
+    humanized ``rpc_rejected`` copy stays the fallback.
+    """
+    text = str(exc)
+    for fragment, human in _ROUTINE_CREATION_ERROR_COPY:
+        if fragment in text:
+            return CliError(human)
+    return exc
+
+
+def _load_routine_draft(args: argparse.Namespace) -> dict[str, Any]:
+    """Read the draft for ``zn routine confirm`` from --draft-json/file.
+
+    Raises :class:`CliError` (exit 1) for unreadable files, non-UTF-8
+    bytes, bad JSON, or a non-object payload -- all before any RPC leaves
+    the terminal.
+    """
+    if args.draft_file is not None:
+        path = args.draft_file
+        source = f"草稿文件 '{path}'"
+        try:
+            raw = Path(path).read_text(encoding="utf-8")
+        except FileNotFoundError:
+            raise CliError(
+                f"找不到{source}（file not found）：检查路径是否写对；"
+                "或先用 `zn routine propose \"…\" --json > draft.json` 生成一份"
+            ) from None
+        except UnicodeDecodeError:
+            raise CliError(
+                f"{source}不是 UTF-8 文本（not utf-8）：请用 UTF-8 重新保存"
+            ) from None
+        except OSError as exc:
+            detail = exc.strerror or "read error"
+            raise CliError(
+                f"读不懂{source}（{detail}）：检查文件权限"
+            ) from None
+    else:
+        raw = args.draft_json
+        source = "--draft-json"
+    try:
+        draft = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise CliError(
+            f"{source}里的内容不是合法 JSON"
+            f"（{exc.msg}，第 {exc.lineno} 行第 {exc.colno} 列）："
+            "检查引号和括号是否配对"
+        ) from None
+    if not isinstance(draft, dict):
+        raise CliError(
+            f"{source}里的草稿必须是 JSON 对象（{{...}}），"
+            f"现在是 {type(draft).__name__}（draft must be an object）"
+        )
+    return draft
+
+
+def _cmd_routine_propose(args: argparse.Namespace) -> int:
+    text = (args.text or "").strip()
+    if not text:
+        raise CliError(
+            "请用一句话描述这个例行任务。\n"
+            "示例：zn routine propose \"每天早上8点提醒我看日程\""
+        )
+    try:
+        ok, payload = _routine_rpc(args, "routine_propose", {"text": text})
+    except CliError as exc:
+        raise _routine_creation_error(exc) from None
+    if not ok:
+        return _routine_offline(
+            args,
+            payload,
+            unavailable="没能生成例行任务草稿",
+            json_payload={"draft": None},
+        )
+    draft = payload
+    if not isinstance(draft, dict) or not draft:
+        raise _unexpected_result("routine_propose", draft)
+    if args.json:
+        print(json.dumps(draft, ensure_ascii=False, indent=2, default=str))
+        return 0
+    print(_format_routine_draft(draft))
+    for hint in _format_missing_draft_items(draft):
+        print(f"  缺项：{hint}")
+    if use_color():
+        print(
+            colorize(
+                "  下一步：先用 `zn routine propose \"…\" --json > draft.json` "
+                "把草稿存成文件，改好后用 `zn routine confirm --draft-file draft.json` 创建",
+                "dim",
+            )
+        )
+    return 0
+
+
+def _cmd_routine_confirm(args: argparse.Namespace) -> int:
+    draft = _load_routine_draft(args)
+    try:
+        ok, payload = _routine_rpc(args, "routine_confirm", {"draft": draft})
+    except CliError as exc:
+        raise _routine_creation_error(exc) from None
+    if not ok:
+        return _routine_offline(
+            args,
+            payload,
+            unavailable="没有创建任何例行任务",
+            json_payload={"changed": False, "routine": None},
+        )
+    result = payload
+    if not isinstance(result, dict) or not result.get("routine_id"):
+        raise _unexpected_result("routine_confirm", result)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
+        return 0
+    routine_id = _one_line(result.get("routine_id"), limit=24)
+    status = result.get("status") or "active"
+    mark = status_symbol(status)
+    print(
+        f"{mark + ' ' if mark else ''}例行任务 {routine_id} 已创建 "
+        f"[{status_word(status)}]"
+    )
+    schedule = _one_line(result.get("schedule_description"), limit=80)
+    if schedule:
+        print(f"  计划：{schedule}")
+    task = _one_line(result.get("task"), limit=120)
+    if task:
+        print(f"  任务：{task}")
+    if use_color():
+        print(colorize("  下一步：用 `zn routine list` 查看已创建的例行任务", "dim"))
     return 0
 
 
@@ -4562,8 +4833,16 @@ def build_parser() -> argparse.ArgumentParser:
     goal_status.set_defaults(func=_cmd_goal_status)
 
     # T9: routines -- read + pause/resume. propose/edit stay on the chat path.
+    # T17: creation slice -- propose one sentence -> draft, confirm -> create.
     routine = sub.add_parser(
-        "routine", help="inspect or pause/resume the resident's routines"
+        "routine",
+        help="draft, create, inspect or pause/resume the resident's routines",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn routine propose \"每天早上8点提醒我看日程\"\n"
+        "  zn routine propose \"每30分钟看一次日历\" --json > draft.json\n"
+        "  zn routine confirm --draft-file draft.json\n"
+        "  zn routine list",
     )
     routine_sub = routine.add_subparsers(
         dest="routine_command", metavar="subcommand", required=True
@@ -4658,6 +4937,49 @@ def build_parser() -> argparse.ArgumentParser:
     )
     routine_resume.add_argument("--json", action="store_true", help="print raw JSON")
     routine_resume.set_defaults(func=_cmd_routine_resume)
+
+    # T17: routine creation slice -- propose / confirm against the already
+    # wired routine_propose / routine_confirm RPCs. T3-2: epilog examples
+    # live on each leaf parser like every other command.
+    routine_propose = routine_sub.add_parser(
+        "propose",
+        help="draft a routine from one sentence (shows the six confirmations)",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn routine propose \"每天早上8点提醒我看日程\"\n"
+        "  zn routine propose \"每30分钟看一次日历\" --json",
+    )
+    routine_propose.add_argument(
+        "text",
+        help="one-sentence description, e.g. \"每天早上8点提醒我看日程\"",
+    )
+    routine_propose.add_argument(
+        "--json", action="store_true", help="print raw JSON"
+    )
+    routine_propose.set_defaults(func=_cmd_routine_propose)
+
+    routine_confirm = routine_sub.add_parser(
+        "confirm",
+        help="create a routine from a (possibly edited) draft",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="示例：\n"
+        "  zn routine confirm --draft-file draft.json\n"
+        "  zn routine confirm --draft-json '{\"task\": \"提醒我看日程\","
+        " \"schedule_kind\": \"cron\", \"cron_expression\": \"0 8 * * *\"}'",
+    )
+    draft_source = routine_confirm.add_mutually_exclusive_group(required=True)
+    draft_source.add_argument(
+        "--draft-json",
+        default=None,
+        help="draft as a JSON object string",
+    )
+    draft_source.add_argument(
+        "--draft-file",
+        default=None,
+        help="path to a file holding the draft JSON object",
+    )
+    routine_confirm.add_argument("--json", action="store_true", help="print raw JSON")
+    routine_confirm.set_defaults(func=_cmd_routine_confirm)
 
     # T10: diary -- read-only terminal face for the resident's daily diary.
     # diary_write stays on the chat path. T3-2: epilog examples live on
