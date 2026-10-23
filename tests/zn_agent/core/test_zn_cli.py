@@ -6270,3 +6270,398 @@ class ZnCliWorkSubmitLastTests(_CliHarness):
         self.assertIn(
             'zn work submit --last --task "继续，把明细也加上"', submit.epilog
         )
+
+
+class ZnCliWorkGetLastTests(_CliHarness):
+    """WK-LAST2: ``zn work get --last`` ("看最近会话").
+
+    A read-only ``work_list`` probe (``limit=1``) resolves the newest thread
+    -- the same pattern WK-LAST uses for ``submit --last`` -- then the
+    existing get path runs unchanged.
+    New test class (Floor Guard: existing tests and assertions untouched).
+    """
+
+    def _threads(self):
+        return [
+            {
+                "id": "thread-9",
+                "title": "最近的活",
+                "updated_at": "2026-10-23T06:00:00Z",
+            },
+            {
+                "id": "thread-1",
+                "title": "旧的活",
+                "updated_at": "2026-10-22T06:00:00Z",
+            },
+        ]
+
+    def _snapshot(self, thread_id="thread-9", title="最近的活"):
+        return {
+            "id": thread_id,
+            "title": title,
+            "created_at": "2026-10-23T05:00:00Z",
+            "updated_at": "2026-10-23T06:00:00Z",
+            "messages": [
+                {
+                    "created_at": "2026-10-23T05:01:00Z",
+                    "role": "user",
+                    "text": "hello",
+                },
+                {
+                    "created_at": "2026-10-23T05:02:00Z",
+                    "role": "assistant",
+                    "text": "done",
+                },
+            ],
+        }
+
+    def _run_on_tty(self, argv, handler):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def test_last_resolves_newest_thread_and_gets(self):
+        snapshot = self._snapshot()
+        code, out, err = self._run(
+            ["work", "get", "--last"],
+            self._handler({"work_list": self._threads(), "work_get": snapshot}),
+        )
+        self.assertEqual(code, 0, err)
+        # The probe is read-only and cheap: limit=1, then the normal get.
+        self.assertEqual(
+            self.calls,
+            [
+                ("work_list", {"limit": 1}),
+                ("work_get", {"thread_id": "thread-9", "message_limit": 120}),
+            ],
+        )
+        self.assertIn("hello", out)
+        self.assertIn("done", out)
+        # The older second entry must not win.
+        self.assertNotIn("thread-1", out)
+        # Piped: no TTY-only "最近的会话" line.
+        self.assertNotIn("最近的会话", out)
+
+    def test_last_prints_resolved_line_on_tty(self):
+        snapshot = self._snapshot()
+        code, out, err = self._run_on_tty(
+            ["work", "get", "--last"],
+            self._handler({"work_list": self._threads(), "work_get": snapshot}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("查看最近的会话「最近的活」(thread-9)", out)
+        self.assertEqual(
+            [method for method, _ in self.calls], ["work_list", "work_get"]
+        )
+
+    def test_last_without_title_prints_plain_resolved_line(self):
+        threads = [{"id": "thread-9", "title": "", "updated_at": "2026-10-23T06:00:00Z"}]
+        snapshot = self._snapshot(thread_id="thread-9", title="")
+        code, out, err = self._run_on_tty(
+            ["work", "get", "--last"],
+            self._handler({"work_list": threads, "work_get": snapshot}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("查看最近的会话(thread-9)", out)
+
+    # -- argparse: --last and --thread-id are mutually exclusive (exit 2) -----
+
+    def test_last_with_thread_id_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["work", "get", "--thread-id", "t1", "--last"], handler)
+        self.assertEqual(caught.exception.code, 2)
+        # No RPC was attempted.
+        self.assertEqual(self.calls, [])
+
+    def test_neither_thread_id_nor_last_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["work", "get"], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    # -- empty history: humanized error, exit 1 (T2-5) -------------------------
+
+    def test_last_empty_history_is_human_error(self):
+        code, out, err = self._run(
+            ["work", "get", "--last"],
+            self._handler({"work_list": []}),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error:", err)
+        self.assertIn("还没有历史会话", err)
+        # T2-5: the English fragment is kept verbatim in parentheses; the
+        # shared WK-LAST copy is reused, not rewritten.
+        self.assertIn("（no work history）", err)
+        self.assertIn("下一步", err)
+        self.assertEqual(self.calls, [("work_list", {"limit": 1})])
+
+    def test_last_malformed_list_is_unexpected_result(self):
+        code, out, err = self._run(
+            ["work", "get", "--last"],
+            self._handler({"work_list": {"not": "a list"}}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("无法识别的结果", err)
+
+    def test_last_list_rejected_surfaces_humanized(self):
+        handler = self._handler({"work_list": (False, None, "boom")})
+        code, out, err = self._run(["work", "get", "--last"], handler)
+        self.assertEqual(code, 1)
+        self.assertIn("zn: error:", err)
+        self.assertIn("服务端返回错误", err)
+
+    # -- --json stays byte-for-byte the work_get result -----------------------
+
+    def test_last_json_passthrough_is_byte_stable(self):
+        snapshot = self._snapshot()
+        expected = json.dumps(snapshot, ensure_ascii=False, indent=2, default=str) + "\n"
+        code, out, err = self._run(
+            ["work", "get", "--last", "--json"],
+            self._handler({"work_list": self._threads(), "work_get": snapshot}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, expected)
+        self.assertNotIn("最近的会话", out)
+
+    # -- T2-6: unreachable resident -> exit 0, nothing claimed -----------------
+
+    def test_last_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(["work", "get", "--last"], refused)
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有取到任何会话", out)
+        self.assertIn("没有结果", out)
+        self.assertNotIn("hello", out)
+
+    def test_last_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(["work", "get", "--last", "--json"], refused)
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["fetched"])
+
+    # -- epilog carries a real runnable example (no drift) ---------------------
+
+    def test_get_epilog_example_is_real_command(self):
+        parser = build_parser()
+        work = parser._subparsers._group_actions[0].choices["work"]
+        get = work._subparsers._group_actions[0].choices["get"]
+        self.assertIn("zn work get --last", get.epilog)
+
+
+class ZnCliWorkCancelLastTests(_CliHarness):
+    """WK-LAST2: ``zn work cancel --last`` ("取消最近会话上的事件").
+
+    ``--last`` only resolves the *thread* via the read-only ``work_list``
+    probe (``limit=1``); ``--event-id`` stays required -- cancelling an
+    event is destructive, so the user still names which event to cancel.
+    New test class (Floor Guard: existing tests and assertions untouched).
+    """
+
+    def _threads(self):
+        return [
+            {
+                "id": "thread-9",
+                "title": "最近的活",
+                "updated_at": "2026-10-23T06:00:00Z",
+            },
+            {
+                "id": "thread-1",
+                "title": "旧的活",
+                "updated_at": "2026-10-22T06:00:00Z",
+            },
+        ]
+
+    def _cancel_result(self):
+        return {
+            "progress": {
+                "state": "cancelled",
+                "cancelled": True,
+                "reason": "user asked",
+            }
+        }
+
+    def _run_on_tty(self, argv, handler):
+        self._patch_connect(handler)
+
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        env["TERM"] = "xterm-256color"
+        with mock.patch.dict(os.environ, env, clear=True):
+            with contextlib.redirect_stdout(tty), contextlib.redirect_stderr(stderr):
+                code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def test_last_resolves_newest_thread_and_cancels(self):
+        code, out, err = self._run(
+            ["work", "cancel", "--last", "--event-id", "ev-1"],
+            self._handler({"work_list": self._threads(), "work_cancel": self._cancel_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        # The probe is read-only and cheap: limit=1, then the normal cancel.
+        self.assertEqual(
+            self.calls,
+            [
+                ("work_list", {"limit": 1}),
+                ("work_cancel", {"thread_id": "thread-9", "event_id": "ev-1"}),
+            ],
+        )
+        self.assertIn("cancelled event=ev-1 on thread=thread-9", out)
+        # The older second entry must not win.
+        self.assertNotIn("thread-1", out)
+        # Piped: no TTY-only "最近的会话" line.
+        self.assertNotIn("最近的会话", out)
+
+    def test_last_prints_resolved_line_on_tty(self):
+        code, out, err = self._run_on_tty(
+            ["work", "cancel", "--last", "--event-id", "ev-1"],
+            self._handler({"work_list": self._threads(), "work_cancel": self._cancel_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("取消最近的会话「最近的活」(thread-9)上的事件 ev-1", out)
+        self.assertIn("cancelled event=ev-1 on thread=thread-9", out)
+        self.assertEqual(
+            [method for method, _ in self.calls], ["work_list", "work_cancel"]
+        )
+
+    def test_last_without_title_prints_plain_resolved_line(self):
+        threads = [{"id": "thread-9", "title": "", "updated_at": "2026-10-23T06:00:00Z"}]
+        code, out, err = self._run_on_tty(
+            ["work", "cancel", "--last", "--event-id", "ev-1"],
+            self._handler({"work_list": threads, "work_cancel": self._cancel_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("取消最近的会话(thread-9)上的事件 ev-1", out)
+
+    # -- argparse: --last and --thread-id are mutually exclusive (exit 2); --
+    # --event-id stays required even with --last ------------------------------
+
+    def test_last_with_thread_id_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(
+                ["work", "cancel", "--thread-id", "t1", "--last", "--event-id", "ev-1"],
+                handler,
+            )
+        self.assertEqual(caught.exception.code, 2)
+        # No RPC was attempted.
+        self.assertEqual(self.calls, [])
+
+    def test_last_without_event_id_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["work", "cancel", "--last"], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    def test_neither_thread_id_nor_last_exits_2(self):
+        handler = self._handler({})
+        with self.assertRaises(SystemExit) as caught:
+            self._run(["work", "cancel", "--event-id", "ev-1"], handler)
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+    # -- empty history: humanized error, exit 1 (T2-5) -------------------------
+
+    def test_last_empty_history_is_human_error(self):
+        code, out, err = self._run(
+            ["work", "cancel", "--last", "--event-id", "ev-1"],
+            self._handler({"work_list": []}),
+        )
+        self.assertEqual(code, 1)
+        self.assertEqual(out, "")
+        self.assertIn("zn: error:", err)
+        self.assertIn("还没有历史会话", err)
+        # T2-5: the English fragment is kept verbatim in parentheses; the
+        # shared WK-LAST copy is reused, not rewritten.
+        self.assertIn("（no work history）", err)
+        self.assertIn("下一步", err)
+        self.assertEqual(self.calls, [("work_list", {"limit": 1})])
+
+    def test_last_malformed_list_is_unexpected_result(self):
+        code, out, err = self._run(
+            ["work", "cancel", "--last", "--event-id", "ev-1"],
+            self._handler({"work_list": {"not": "a list"}}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("无法识别的结果", err)
+
+    def test_last_list_rejected_surfaces_humanized(self):
+        handler = self._handler({"work_list": (False, None, "boom")})
+        code, out, err = self._run(
+            ["work", "cancel", "--last", "--event-id", "ev-1"], handler
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("zn: error:", err)
+        self.assertIn("服务端返回错误", err)
+
+    # -- --json stays byte-for-byte the work_cancel result -------------------
+
+    def test_last_json_passthrough_is_byte_stable(self):
+        result = self._cancel_result()
+        expected = json.dumps(result, ensure_ascii=False, indent=2, default=str) + "\n"
+        code, out, err = self._run(
+            ["work", "cancel", "--last", "--event-id", "ev-1", "--json"],
+            self._handler({"work_list": self._threads(), "work_cancel": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, expected)
+        self.assertNotIn("最近的会话", out)
+
+    # -- T2-6: unreachable resident -> exit 0, nothing claimed -----------------
+
+    def test_last_offline_claims_nothing(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            ["work", "cancel", "--last", "--event-id", "ev-1"], refused
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("常驻服务未运行", out)
+        self.assertIn("没有取消任何会话", out)
+        self.assertIn("没有执行", out)
+        self.assertNotIn("cancelled event", out)
+
+    def test_last_offline_json(self):
+        def refused(method, params):
+            raise socket.error("connection refused")
+
+        code, out, err = self._run(
+            ["work", "cancel", "--last", "--event-id", "ev-1", "--json"], refused
+        )
+        self.assertEqual(code, 0, err)
+        data = json.loads(out)
+        self.assertFalse(data["daemon_reachable"])
+        self.assertFalse(data["cancelled"])
+
+    # -- epilog carries a real runnable example (no drift) ---------------------
+
+    def test_cancel_epilog_example_is_real_command(self):
+        parser = build_parser()
+        work = parser._subparsers._group_actions[0].choices["work"]
+        cancel = work._subparsers._group_actions[0].choices["cancel"]
+        self.assertIn("zn work cancel --last --event-id <event-id>", cancel.epilog)

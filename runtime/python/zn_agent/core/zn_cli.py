@@ -649,16 +649,30 @@ def _cmd_work_list(args: argparse.Namespace) -> int:
 
 
 def _cmd_work_get(args: argparse.Namespace) -> int:
+    thread_id = args.thread_id
+    if getattr(args, "last", False):
+        # WK-LAST2: resolve the newest thread first; the rest of the get
+        # path below is untouched (same RPC, same output).
+        code, thread_id, title = _resolve_last_work_thread(
+            args,
+            unavailable="没有取到任何会话（这次查看没有结果）",
+            json_payload={"fetched": False},
+        )
+        if code is not None:
+            return code
+        _print_last_thread_resolved(
+            args, verb="查看", thread_id=thread_id, title=title
+        )
     result = _client(args).call(
         "work_get",
-        {"thread_id": args.thread_id, "message_limit": args.message_limit},
+        {"thread_id": thread_id, "message_limit": args.message_limit},
     )
     if not isinstance(result, dict):
         raise _unexpected_result("work_get", result)
     if args.json:
         print(json.dumps(result, ensure_ascii=False, indent=2, default=str))
         return 0
-    print(f"{result.get('id') or args.thread_id}  {_one_line(result.get('title'), limit=80)}")
+    print(f"{result.get('id') or thread_id}  {_one_line(result.get('title'), limit=80)}")
     print(f"created={result.get('created_at') or '-'}  updated={result.get('updated_at') or '-'}")
     messages = result.get("messages")
     if isinstance(messages, list) and messages:
@@ -1071,6 +1085,81 @@ def _cmd_work_submit(args: argparse.Namespace) -> int:
     elapsed_seconds = time.monotonic() - submit_started
     _print_work_submit_result(result, thread_id, elapsed_seconds)
     return 0
+
+
+# --- WK-LAST2: `zn work get --last` / `zn work cancel --last` -----------------
+# The natural follow-up to WK-LAST (`zn work submit --last`): one read-only
+# ``work_list`` probe (``limit=1``) resolves the newest thread, then the
+# existing get/cancel path runs unchanged with the resolved id. daemon.py is
+# untouched -- no new RPC, only the existing work_list/get/cancel paths.
+#
+# cancel semantics (decided here): ``--last`` only resolves the *thread*;
+# ``--event-id`` stays required. Cancelling an event is a destructive
+# choice, so the user still names which event to cancel; a bare
+# ``zn work cancel --last`` exits 2 (argparse: --event-id is required).
+#
+# Contracts, all inherited from WK-LAST:
+# - T2-5: empty history raises the shared ``_ERROR_COPY["no_work_history"]``
+#   copy verbatim (humanized, exit 1). Its next step already points at
+#   submitting the first task, which is the correct fix for get/cancel too.
+# - T2-6: a failed probe never claims anything -- an unreachable resident
+#   exits 0 with the honest offline note naming what was NOT done; a
+#   server-side rejection re-raises humanized (exit 1).
+# - T2-1/T2-7: the TTY-only one-liner naming the resolved session is plain
+#   Chinese behind ``use_color()``; --json and pipes keep historic bytes.
+# - argparse mutual exclusion: --last vs --thread-id conflicts exit 2 (the
+#   groups are built in build_parser, next to the other work subparsers).
+
+
+def _resolve_last_work_thread(
+    args: argparse.Namespace, *, unavailable: str, json_payload: dict[str, Any]
+) -> tuple[int | None, str, str]:
+    """Resolve ``--last`` to ``(offline_exit_code, thread_id, title)``.
+
+    *offline_exit_code* is not None only for the T2-6 offline case -- the
+    honest note is already printed and the caller must stop with that code
+    (0). Server-side rejections re-raise humanized; empty history raises
+    the shared humanized copy; a malformed probe payload raises
+    ``_unexpected_result("work_list")``.
+    """
+    endpoint = load_endpoint(getattr(args, "endpoint", None))
+    client = ResidentClient(endpoint, timeout=args.timeout)
+    try:
+        listed = client.call("work_list", {"limit": 1})
+    except CliError as exc:
+        if str(exc).startswith(_WORK_DRIVE_RPC_REJECTED_PREFIX):
+            raise  # server-side rejection: humanized copy, exit 1
+        # T2-6: unreachable resident -- exit 0, honestly saying nothing
+        # was fetched or cancelled.
+        code = _work_drive_offline(
+            args, str(exc), unavailable=unavailable, json_payload=json_payload
+        )
+        return code, "", ""
+    if not isinstance(listed, list):
+        raise _unexpected_result("work_list", listed)
+    latest = _latest_work_thread(listed)
+    if latest is None:
+        raise _cli_error("no_work_history")  # humanized, exit 1
+    thread_id, title = latest
+    return None, thread_id, title
+
+
+def _print_last_thread_resolved(
+    args: argparse.Namespace,
+    *,
+    verb: str,
+    thread_id: str,
+    title: str,
+    suffix: str = "",
+) -> None:
+    """TTY-only one-liner naming the session ``--last`` resolved to.
+
+    Plain Chinese copy (T2-1/T2-7); suppressed for --json and pipes so the
+    historic byte-stable output is unchanged.
+    """
+    if use_color() and not args.json:
+        title_part = f"「{title}」" if title else ""
+        print(f"{verb}最近的会话{title_part}({thread_id}){suffix}")
 
 
 def _parse_approval_time(value: Any) -> datetime | None:
@@ -2084,10 +2173,29 @@ def _print_cancel_finished_hint(thread_id: str) -> None:
 
 
 def _cmd_work_cancel(args: argparse.Namespace) -> int:
+    thread_id = args.thread_id
+    if getattr(args, "last", False):
+        # WK-LAST2: --last only resolves the thread; --event-id stays
+        # required (see the parser comment). The cancel path below is
+        # untouched (same RPC, same output).
+        code, thread_id, title = _resolve_last_work_thread(
+            args,
+            unavailable="没有取消任何会话（这次取消没有执行）",
+            json_payload={"cancelled": False},
+        )
+        if code is not None:
+            return code
+        _print_last_thread_resolved(
+            args,
+            verb="取消",
+            thread_id=thread_id,
+            title=title,
+            suffix=f"上的事件 {args.event_id}",
+        )
     try:
         result = _client(args).call(
             "work_cancel",
-            {"thread_id": args.thread_id, "event_id": args.event_id},
+            {"thread_id": thread_id, "event_id": args.event_id},
         )
     except CliError as exc:
         # D4: cancelling a finished run is a known dead end -- humanize it
@@ -2095,7 +2203,7 @@ def _cmd_work_cancel(args: argparse.Namespace) -> int:
         # NO_COLOR / --json keep the historic generic error byte-stable,
         # and any other rejection travels the untouched generic path.
         if _work_cancel_finished_run(exc) and use_color() and not args.json:
-            _print_cancel_finished_hint(args.thread_id)
+            _print_cancel_finished_hint(thread_id)
             raise CliError(_WORK_CANCEL_FINISHED_LEAD) from None
         raise
     if not isinstance(result, dict) or not isinstance(result.get("progress"), dict):
@@ -2105,7 +2213,7 @@ def _cmd_work_cancel(args: argparse.Namespace) -> int:
         return 0
     progress = result["progress"]
     print(
-        f"cancelled event={args.event_id} on thread={args.thread_id}  "
+        f"cancelled event={args.event_id} on thread={thread_id}  "
         f"state={_one_line(progress.get('state') or progress.get('status') or '?')}"
     )
     cancelled = progress.get("cancelled")
@@ -4967,9 +5075,21 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例：\n"
         "  zn work get --thread-id <thread-id>\n"
-        "  zn work get --thread-id <thread-id> --message-limit 20",
+        "  zn work get --thread-id <thread-id> --message-limit 20\n"
+        "  zn work get --last",
     )
-    work_get.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
+    # WK-LAST2: --last vs --thread-id are mutually exclusive (exit 2).
+    get_thread_or_last = work_get.add_mutually_exclusive_group(required=True)
+    get_thread_or_last.add_argument(
+        "--thread-id",
+        type=lambda v: _require_non_empty(v, name="--thread-id"),
+        help="work thread id",
+    )
+    get_thread_or_last.add_argument(
+        "--last",
+        action="store_true",
+        help="show the most recent work thread instead of naming one（看最近会话）",
+    )
     work_get.add_argument(
         "--message-limit",
         type=lambda v: _require_positive_int(v, name="--message-limit", maximum=500),
@@ -5003,9 +5123,23 @@ def build_parser() -> argparse.ArgumentParser:
         help="cancel an active work event",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例：\n"
-        "  zn work cancel --thread-id <thread-id> --event-id <event-id>",
+        "  zn work cancel --thread-id <thread-id> --event-id <event-id>\n"
+        "  zn work cancel --last --event-id <event-id>",
     )
-    work_cancel.add_argument("--thread-id", type=lambda v: _require_non_empty(v, name="--thread-id"), required=True)
+    # WK-LAST2: --last vs --thread-id are mutually exclusive (exit 2).
+    # --last only resolves the thread; --event-id stays required -- the
+    # user still names which event to cancel.
+    cancel_thread_or_last = work_cancel.add_mutually_exclusive_group(required=True)
+    cancel_thread_or_last.add_argument(
+        "--thread-id",
+        type=lambda v: _require_non_empty(v, name="--thread-id"),
+        help="work thread id",
+    )
+    cancel_thread_or_last.add_argument(
+        "--last",
+        action="store_true",
+        help="cancel on the most recent work thread instead of naming one（取消最近会话上的事件）",
+    )
     work_cancel.add_argument("--event-id", type=lambda v: _require_non_empty(v, name="--event-id"), required=True)
     work_cancel.add_argument("--json", action="store_true", help="print raw JSON")
     work_cancel.set_defaults(func=_cmd_work_cancel)
