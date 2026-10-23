@@ -272,6 +272,26 @@ class ProactiveContactEngine:
             ),
         }
 
+    # -- 只读历史（PC-1） --------------------------------------------------
+
+    def recent_contacts(self, limit: int = 10) -> list[dict[str, Any]]:
+        """返回最近的主动联系记录（newest first），纯只读。
+
+        只 SELECT ``resident_proactive_contact_log``；绝不调用
+        ``maybe_contact``，不动抑制表、不写任何记账行——问候决策
+        状态机保持原样，读历史不会消耗一次问候机会。
+        """
+        self._ensure_schema()
+        count = max(1, min(100, int(limit or 10)))
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT suggestion_key, kind, sent_at, day "
+                "FROM resident_proactive_contact_log "
+                "ORDER BY id DESC LIMIT ?",
+                (count,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     # -- 候选与渲染 ----------------------------------------------------
 
     def _pick_candidate(

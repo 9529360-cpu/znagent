@@ -407,6 +407,14 @@ class ResidentRpcServer:
                 raise ValueError("proactive_contact_feedback requires key")
             feedback = str(params.get("feedback") or "").strip()
             result = self.proactive_contact.note_feedback(key, feedback)
+        elif method == "proactive_contact_recent":
+            # PC-1: read-only view of past proactive contacts, newest
+            # first. Unlike proactive_contact_check this never calls
+            # maybe_contact: no greeting bookkeeping is written and the
+            # restraint state machine does not move.
+            result = self.proactive_contact.recent_contacts(
+                limit=self._limit(params)
+            )
         elif method == "diary_write":
             # S1(c): write today's diary entry (at most once per local day;
             # stable-key dedup). This RPC is the diary's trigger point for
