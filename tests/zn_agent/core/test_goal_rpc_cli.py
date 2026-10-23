@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -23,7 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "runtime" / "python
 from zn_agent.core.daemon import ResidentRpcServer
 from zn_agent.core.provider_bridge import build_resident_runtime_from_existing_stack
 from zn_agent.core.self_drive import install_self_drive_behavior
-from zn_agent.core.zn_cli import run
+from zn_agent.core.zn_cli import _EMPTY_RESULT_HINTS, run
 
 _SECRET = "0f2e9a4c6b1d8f3e5a7c9d0b2e4f6a8c1d3e5f7a9b0c2d4e6f8a0b1c3d5e7f9"
 
@@ -390,6 +391,96 @@ class ZnCliGoalTests(_GoalCliHarness):
         )
         self.assertEqual(code, 1)
         self.assertIn("unexpected goal_list result", err)
+
+
+class ZnCliGoalEmptyHintTests(_GoalCliHarness):
+    """GOAL-HINT: empty `zn goal list` gets the T3-4 "what next" tail.
+
+    The goal group is read-only (goals are created through chat by the
+    engine itself), so the hint names a spoken sentence, not a command.
+    ``--json`` and piped output stay byte-identical to before.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        # T3-4 asserts byte-exact "no ..." lines, so the T3-3 first-run
+        # probe must not leak into this output: point the home at a temp
+        # dir that already holds kernel data (deterministically non-fresh).
+        # Mirrors ZnCliNextHintT34Tests in test_zn_cli.py.
+        hint_home = Path(self.tmp.name) / "zn-home"
+        (hint_home / "kernel").mkdir(parents=True)
+        home_env = mock.patch.dict(os.environ, {"ZN_AGENT_HOME": str(hint_home)})
+        home_env.start()
+        self.addCleanup(home_env.stop)
+
+    def _run_on_tty(self, argv, handler):
+        class _Tty(io.StringIO):
+            def isatty(self):
+                return True
+
+        def connect(address, timeout=None):
+            return _FakeSocket(handler)
+
+        tty, stderr = _Tty(), io.StringIO()
+        env = {key: value for key, value in os.environ.items() if key != "NO_COLOR"}
+        env["TERM"] = "xterm-256color"
+        with (
+            mock.patch("socket.create_connection", side_effect=connect),
+            mock.patch("zn_agent.core.zn_cli.use_color", return_value=True),
+            mock.patch(
+                "zn_agent.core.zn_cli.colorize",
+                side_effect=lambda s, *a, **k: s,
+            ),
+            mock.patch.dict(os.environ, env, clear=True),
+            contextlib.redirect_stdout(tty),
+            contextlib.redirect_stderr(stderr),
+        ):
+            code = run(["--endpoint", str(self.endpoint_path), *argv])
+        return code, tty.getvalue(), stderr.getvalue()
+
+    def test_empty_goal_list_prints_next_hint_on_tty(self):
+        code, out, err = self._run_on_tty(
+            ["goal", "list"],
+            self._handler({"goal_list": {"enabled": True, "goals": []}}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("no self-drive goals", out)
+        self.assertIn(_EMPTY_RESULT_HINTS["goal_list"], out)
+
+    def test_empty_goal_list_json_is_byte_identical(self):
+        code, out, err = self._run(
+            ["goal", "list", "--json"],
+            self._handler({"goal_list": {"enabled": True, "goals": []}}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "[]\n")
+        self.assertNotIn("下一步", out)
+
+    def test_empty_goal_list_pipe_has_no_hint(self):
+        code, out, err = self._run(
+            ["goal", "list"],
+            self._handler({"goal_list": {"enabled": True, "goals": []}}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(out, "no self-drive goals\n")
+        self.assertNotIn("下一步", out)
+
+    def test_non_empty_goal_list_never_gets_hint_on_tty(self):
+        goals = [
+            {
+                "intention_id": "goal-1",
+                "status": "active",
+                "objective": "整理书架",
+                "origin": "user",
+            }
+        ]
+        code, out, err = self._run_on_tty(
+            ["goal", "list"],
+            self._handler({"goal_list": {"enabled": True, "goals": goals}}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("goal-1", out)
+        self.assertNotIn("下一步", out)
 
 
 if __name__ == "__main__":
