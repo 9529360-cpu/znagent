@@ -14,12 +14,19 @@ line the user types is one turn of work on a durable resident Work thread:
   returns to the prompt -- the REPL itself keeps running;
 * ``/new`` starts a fresh thread, ``/resume`` attaches the REPL to the
   most recent existing thread (via ``work_list``), ``/history`` re-reads
-  the thread via ``work_get``, ``/help`` lists the session commands,
-  ``/exit`` (or Ctrl-D / EOF) leaves. The REPL never attaches to an old
-  thread on its own: ``/resume`` is the only way to pick one up, so a
-  fresh start always begins empty. If ``work_list`` fails, ``/resume``
-  falls back to new-thread behaviour with a human-readable note instead
-  of crashing.
+  the thread via ``work_get``, ``/status`` shows the six-row ``zn status``
+  aggregate (read-only, same data contract as ``_cmd_status`` in
+  ``zn_cli.py``), ``/approvals`` lists pending approval cards read-only
+  (deciding stays in the ``zn approval decide`` subcommand),
+  ``/help`` lists the session commands, ``/exit`` (or Ctrl-D / EOF)
+  leaves. The REPL never attaches to an old thread on its own: ``/resume``
+  is the only way to pick one up, so a fresh start always begins empty.
+  If ``work_list`` fails, ``/resume`` falls back to new-thread behaviour
+  with a human-readable note instead of crashing. ``/status`` and
+  ``/approvals`` never exit the session: when the resident is
+  unreachable they print the T2-6 offline rows (each resident-backed row
+  marked unreachable with a human-readable hint) and return to the
+  prompt.
 
 No backend semantics are added: every operation is an existing Daemon
 RPC, the resident keeps owning execution, approvals and persistence.
@@ -40,7 +47,14 @@ import sys
 import time
 from typing import Any, Callable, TextIO
 
-from .zn_cli import CliError
+from .zn_cli import (
+    CliError,
+    _APPROVAL_PENDING_HINT,
+    _STATUS_DEFAULT_PROBE_TIMEOUT_SECONDS,
+    _format_approval_card,
+)
+from .cli_format import colorize, section, status_word, symbol
+from .model_check import check_model_routes
 
 __all__ = ["ChatSession", "DEFAULT_POLL_INTERVAL_SECONDS"]
 
@@ -58,6 +72,8 @@ _HELP_TEXT = """会话命令（单独一行输入）：
   /new       开新会话（下一句话在新 thread 里交办）
   /resume    回到最近的会话（下一句话接上它的上下文继续说）
   /history   回看当前会话的历史消息
+  /status    看 ZN 当前状态（常驻/模型/连接器/待审批/自驱域，同 zn status）
+  /approvals 列出待审批的卡片（只读；决定去另一个终端跑 zn approval decide）
   /help      显示这份帮助
   /exit      退出会话（Ctrl-D 也可以）
 其他任何一行文字都会作为任务发给 ZN；干活时按 Ctrl-C 只取消当前这一轮，会话不退出。"""
@@ -107,6 +123,261 @@ def _latest_thread(result: Any) -> tuple[str, str] | None:
     if not thread_id:
         return None
     return thread_id, _one_line(first.get("title"), limit=60)
+
+
+def _status_lines(client: Any, *, stream: TextIO) -> list[str]:
+    """Six-row ZN status aggregate for the REPL (``/status``).
+
+    Same data contract as ``zn status`` (``_cmd_status`` in ``zn_cli.py``,
+    read-only verified there): the five resident RPCs ``ping`` / ``status`` /
+    ``connector_status`` / ``approval_list`` / ``autonomy_list`` plus the
+    local model probe. Rendering reuses the cli_format contract (TTY-gated
+    colors/symbols via the *stream* the REPL writes to, T2-1/T2-7) and the
+    same row copy/hints, so the REPL and the subcommand never drift apart.
+
+    When the resident is unreachable, every resident-backed row is marked
+    unreachable with a human-readable hint (T2-6 offline contract) while
+    the local model probe and the local connector evaluation still run --
+    and the caller keeps the session alive (``/status`` never exits).
+    """
+    lines: list[str] = []
+    daemon_error = ""
+
+    def _rpc(method: str, params: dict[str, Any] | None = None) -> Any:
+        nonlocal daemon_error
+        try:
+            return client.call(method, params)
+        except CliError as exc:
+            daemon_error = str(exc)
+            return None
+
+    ping_result = _rpc("ping", {})
+    summary_result = _rpc("status", {})
+    connector_result = _rpc("connector_status", {})
+    approval_result = _rpc("approval_list", {})
+    autonomy_result = _rpc("autonomy_list")
+
+    # Local probe, like ``zn status``: works without a running resident.
+    report = check_model_routes(
+        probe_timeout_seconds=_STATUS_DEFAULT_PROBE_TIMEOUT_SECONDS
+    )
+
+    def _row(
+        label: str,
+        text: str,
+        *,
+        kind: str | None = None,
+        hint: str | None = None,
+        sym: str | None = None,
+    ) -> None:
+        # T2-7: unified status glyph, TTY-only via symbol() ("" off-TTY, so
+        # piped output keeps its historic bytes). The stream is the REPL's
+        # own output stream, not necessarily sys.stdout.
+        mark = symbol(sym, stream=stream) if sym else ""
+        cell = f"{label:<10} {mark + ' ' if mark else ''}{text}"
+        if kind:
+            cell = colorize(cell, kind, stream=stream)
+        if hint:
+            cell += colorize(f"  → {hint}", "dim", stream=stream)
+        lines.append(cell)
+
+    lines.append(section("ZN status", stream=stream))
+
+    # resident row
+    if isinstance(ping_result, dict):
+        pulse = _one_line(ping_result.get("pulse_count"), limit=12)
+        if ping_result.get("alive"):
+            _row(
+                "resident",
+                f"{status_word(True, stream=stream)} (pulse_count={pulse})",
+                sym="ok",
+            )
+        else:
+            _row(
+                "resident",
+                status_word("unknown", stream=stream),
+                kind="err",
+                hint="zn-resident",
+                sym="fail",
+            )
+    else:
+        _row(
+            "resident",
+            f"{status_word('unreachable', stream=stream)} "
+            f"({_one_line(daemon_error, limit=90)})",
+            kind="err",
+            hint="check ZN_HOME, or start the resident service (zn-resident)",
+            sym="fail",
+        )
+
+    # summary row
+    if isinstance(summary_result, dict):
+        identity = summary_result.get("identity") or {}
+        if not isinstance(identity, dict):
+            identity = {}
+        dependency = summary_result.get("model_dependency") or {}
+        if not isinstance(dependency, dict):
+            dependency = {}
+        name = _one_line(identity.get("name"), limit=32)
+        version = _one_line(identity.get("version"), limit=16)
+        invocations = _one_line(dependency.get("model_invocations"), limit=12)
+        _row(
+            "summary",
+            f"{name} v{version} · model_invocations={invocations}",
+        )
+    else:
+        _row("summary", status_word("unreachable", stream=stream), kind="err")
+
+    # model row (local probe)
+    if not report.configured:
+        _row(
+            "model",
+            "no model routes configured",
+            kind="err",
+            hint="zn model check",
+            sym="fail",
+        )
+    else:
+        reached = report.reachable_count
+        total = len(report.results)
+        if reached:
+            _row("model", f"{reached} of {total} route(s) reachable", sym="ok")
+        else:
+            _row(
+                "model",
+                f"{reached} of {total} route(s) reachable",
+                kind="err",
+                hint="zn model check",
+                sym="fail",
+            )
+
+    # connector row
+    connector_local = False
+    connector_counts: dict[str, Any] = {
+        "mounted": None,
+        "approved": None,
+        "failed": None,
+    }
+    if isinstance(connector_result, dict) and isinstance(
+        connector_result.get("connectors"), list
+    ):
+        connectors = [
+            c for c in connector_result["connectors"] if isinstance(c, dict)
+        ]
+        connector_counts["mounted"] = sum(1 for c in connectors if c.get("mounted"))
+        connector_counts["approved"] = sum(
+            1 for c in connectors if c.get("approved")
+        )
+        connector_counts["failed"] = sum(
+            1 for c in connectors if c.get("approved") and not c.get("mounted")
+        )
+    else:
+        connector_local = True
+        try:
+            from .connector_autoattach import evaluate_connector_status
+
+            items = evaluate_connector_status()
+        except Exception as exc:
+            connector_counts["config_error"] = _one_line(str(exc), limit=200)
+            items = []
+        approved_items = [
+            i for i in items if isinstance(i, dict) and i.get("approved")
+        ]
+        connector_counts["mounted"] = sum(
+            1
+            for i in approved_items
+            if isinstance(i.get("last_mount"), dict)
+            and i["last_mount"].get("mounted") is True
+        )
+        connector_counts["approved"] = len(approved_items)
+        connector_counts["failed"] = sum(
+            1
+            for i in approved_items
+            if isinstance(i.get("last_mount"), dict)
+            and i["last_mount"].get("mounted") is False
+        )
+
+    counts = connector_counts
+    if counts.get("config_error"):
+        _row(
+            "connectors",
+            f"config error: {counts['config_error']}",
+            kind="err",
+            hint="check connectors.yaml",
+            sym="fail",
+        )
+    elif connector_local:
+        approved, failed = counts["approved"], counts["failed"]
+        if failed:
+            _row(
+                "connectors",
+                f"{approved} approved, {failed} failed (local config evaluation)",
+                kind="err",
+                hint="zn connector status",
+                sym="fail",
+            )
+        else:
+            _row(
+                "connectors",
+                f"{approved} approved (local config evaluation)",
+                hint="zn connector status",
+                sym="ok",
+            )
+    else:
+        mounted, approved, failed = (
+            counts["mounted"],
+            counts["approved"],
+            counts["failed"],
+        )
+        if failed:
+            _row(
+                "connectors",
+                f"{mounted} of {approved} mounted, {failed} failed",
+                kind="err",
+                hint="zn connector status",
+                sym="fail",
+            )
+        else:
+            _row("connectors", f"{mounted} of {approved} mounted", sym="ok")
+
+    # approvals row
+    if isinstance(approval_result, dict) and isinstance(
+        approval_result.get("pending"), list
+    ):
+        pending = len(approval_result["pending"])
+    else:
+        pending = None
+    if pending is None:
+        _row(
+            "approvals",
+            status_word("unreachable", stream=stream),
+            kind="err",
+            sym="fail",
+        )
+    elif pending:
+        _row(
+            "approvals",
+            f"{pending} pending",
+            kind="warn",
+            hint="zn approval list",
+            sym="warn",
+        )
+    else:
+        _row("approvals", "none pending")
+
+    # autonomy row
+    if isinstance(autonomy_result, list):
+        domains = sum(1 for item in autonomy_result if isinstance(item, dict))
+    else:
+        domains = None
+    if domains is None:
+        _row("autonomy", status_word("unreachable", stream=stream), kind="err")
+    else:
+        _row(
+            "autonomy", f"{domains} explicit domain(s)", hint="zn autonomy list"
+        )
+
+    return lines
 
 
 class ChatSession:
@@ -190,6 +461,12 @@ class ChatSession:
             if text == "/help":
                 self._say(_HELP_TEXT)
                 continue
+            if text == "/status":
+                self._show_status()
+                continue
+            if text == "/approvals":
+                self._show_pending_approvals()
+                continue
             self._run_turn(text)
 
     def _read_line(self) -> str | None:
@@ -262,6 +539,47 @@ class ChatSession:
                 f"{message.get('role') or '?'}: "
                 f"{_one_line(message.get('text'), limit=500)}"
             )
+
+    def _show_status(self) -> None:
+        """Show the six-row status aggregate (``/status`` ↔ ``zn status``).
+
+        Read-only over the session client's RPCs; when the resident is
+        unreachable the offline rows are printed (T2-6) and the session
+        simply continues.
+        """
+        for line in _status_lines(self.client, stream=self.out):
+            self._say(line)
+
+    def _show_pending_approvals(self) -> None:
+        """List pending approval cards, one card each (``/approvals``).
+
+        Read-only: cards reuse the ``zn approval list`` card renderer.
+        Deciding stays in the ``zn approval decide`` subcommand -- only a
+        guidance line is printed, never an interactive prompt. With no
+        pending cards the command stays silent (no session noise).
+        """
+        try:
+            result = self.client.call("approval_list", {})
+        except CliError as exc:
+            self._error(
+                f"待审批的卡片没列出来：{exc}",
+                hint=(
+                    "确认 ZN 常驻进程还在运行，再试一次 /approvals；"
+                    "或在另一个终端跑 zn approval list。"
+                ),
+            )
+            return
+        pending = result.get("pending") if isinstance(result, dict) else None
+        cards = (
+            [item for item in pending if isinstance(item, dict)]
+            if isinstance(pending, list)
+            else []
+        )
+        if not cards:
+            return
+        for card in cards:
+            self._say(_format_approval_card(card))
+        self._say(colorize(f"  {_APPROVAL_PENDING_HINT}", "dim", stream=self.out))
 
     # -- one turn of work ---------------------------------------------------
 

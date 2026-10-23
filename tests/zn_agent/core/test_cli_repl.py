@@ -795,3 +795,259 @@ class ChatSessionResumeTests(_SessionCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+# ---------------------------------------------------------------------------
+# REPL-2: /status and /approvals slash commands
+# ---------------------------------------------------------------------------
+
+
+def _route_report(**overrides):
+    from zn_agent.core.model_check import ModelCheckReport, RouteCheckResult
+
+    results = overrides.pop(
+        "results",
+        (
+            RouteCheckResult("r1", "deepseek", "deepseek-chat", True, 0.10, ""),
+            RouteCheckResult("r2", "deepseek", "deepseek-reasoner", True, 0.20, ""),
+        ),
+    )
+    return ModelCheckReport(
+        configured=overrides.pop("configured", True),
+        config_error=None,
+        results=results,
+    )
+
+
+class _Repl2Case(_SessionCase):
+    def add_turn_handlers(self, client, thread_id="thread-1"):
+        """Script a one-shot completed turn after the slash command."""
+        client.on("work_create", lambda params: {"id": thread_id})
+
+        def start(params):
+            return {
+                "thread": {"id": thread_id, "messages": []},
+                "progress": {
+                    "event_id": f"ev-{params['task']}",
+                    "stage": "complete",
+                    "status": "completed",
+                    "finalized": True,
+                    "terminal": True,
+                },
+            }
+
+        client.on("work_start", start)
+
+    def stub_probe(self, report):
+        patcher = mock.patch(
+            "zn_agent.core.cli_repl.check_model_routes", return_value=report
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def stub_connector_eval(self, items):
+        patcher = mock.patch(
+            "zn_agent.core.connector_autoattach.evaluate_connector_status",
+            return_value=items,
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def status_client(self, *, fail=False):
+        """Script the five ``zn status`` RPCs (ping/status/connector_status/
+        approval_list/autonomy_list) against the stub client."""
+        client = _StubClient()
+
+        def maybe_fail(method, payload):
+            def handler(params):
+                if fail:
+                    raise CliError(f"daemon down (fake {method} failure)")
+                return payload
+
+            return handler
+
+        client.on(
+            "ping", maybe_fail("ping", {"alive": True, "pulse_count": 7})
+        )
+        client.on(
+            "status",
+            maybe_fail(
+                "status",
+                {
+                    "identity": {"name": "ZN", "version": "0.1.0"},
+                    "model_dependency": {"model_invocations": 12},
+                },
+            ),
+        )
+        client.on(
+            "connector_status",
+            maybe_fail(
+                "connector_status",
+                {
+                    "connectors": [
+                        {"name": "search", "mounted": True, "approved": True},
+                        {"name": "rss", "mounted": True, "approved": True},
+                        {
+                            "name": "mail",
+                            "mounted": False,
+                            "approved": True,
+                            "reason": "needs auth",
+                        },
+                    ]
+                },
+            ),
+        )
+        client.on(
+            "approval_list",
+            maybe_fail("approval_list", {"pending": [{"request_id": "ap-1"}]}),
+        )
+        client.on(
+            "autonomy_list",
+            maybe_fail("autonomy_list", [{"domain": "a"}, {"domain": "b"}]),
+        )
+        return client
+
+
+class ChatSessionStatusTests(_Repl2Case):
+    def test_status_reachable_shows_six_rows(self):
+        client = self.status_client()
+        self.stub_probe(_route_report())
+        session, out, err, _ = self.make_session(client, ["/status"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        text = out.getvalue()
+        self.assertIn("ZN status", text)
+        self.assertIn("resident", text)
+        self.assertIn("pulse_count=7", text)
+        self.assertIn("summary", text)
+        self.assertIn("ZN v0.1.0", text)
+        self.assertIn("model_invocations=12", text)
+        self.assertIn("2 of 2 route(s) reachable", text)
+        self.assertIn("connectors", text)
+        self.assertIn("2 of 3 mounted, 1 failed", text)
+        self.assertIn("approvals", text)
+        self.assertIn("1 pending", text)
+        self.assertIn("autonomy", text)
+        self.assertIn("2 explicit domain(s)", text)
+        self.assertEqual(err.getvalue(), "")
+
+    def test_status_unreachable_marks_rows_and_session_continues(self):
+        client = self.status_client(fail=True)
+        self.stub_probe(_route_report())
+        self.stub_connector_eval([])
+        self.add_turn_handlers(client)
+        session, out, err, _ = self.make_session(
+            client, ["/status", "之后还能说话"]
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        text = out.getvalue()
+        # T2-6 offline contract: every resident-backed row unreachable with
+        # a human-readable hint; the session itself keeps going.
+        self.assertIn("unreachable", text)
+        self.assertIn("check ZN_HOME", text)
+        self.assertIn("zn-resident", text)
+        self.assertIn("summary", text)
+        # The local model probe still runs without a resident.
+        self.assertIn("2 of 2 route(s) reachable", text)
+        # Local connector evaluation still runs without a resident.
+        self.assertIn("(local config evaluation)", text)
+        # The follow-up turn still works: /status never exits the session.
+        starts = [p for m, p in client.calls if m == "work_start"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["task"], "之后还能说话")
+
+    def test_status_piped_mode_works(self):
+        client = self.status_client()
+        self.stub_probe(_route_report())
+        session, out, err, read = self.make_session(
+            client, ["/status"], interactive=False
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertIn("ZN status", out.getvalue())
+        self.assertIn("1 pending", out.getvalue())
+
+    def test_status_model_probe_failure_still_renders_other_rows(self):
+        client = self.status_client()
+        self.stub_probe(_route_report(configured=False, results=()))
+        session, out, err, _ = self.make_session(client, ["/status"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        text = out.getvalue()
+        self.assertIn("no model routes configured", text)
+        self.assertIn("pulse_count=7", text)
+
+
+class ChatSessionApprovalsTests(_Repl2Case):
+    def approvals_client(self, *, pending, fail=False):
+        client = _StubClient()
+
+        def approval_list(params):
+            if fail:
+                raise CliError("daemon down (fake approval_list failure)")
+            return {"pending": pending}
+
+        client.on("approval_list", approval_list)
+        return client
+
+    def _card(self, request_id, **overrides):
+        card = {
+            "request_id": request_id,
+            "status": "pending",
+            "action_kind": "shell.exec",
+            "target": "ls /tmp",
+            "scope": "local",
+            "expires_at": "2026-10-23T10:00:00Z",
+            "created_at": "2026-10-23T08:00:00Z",
+        }
+        card.update(overrides)
+        return card
+
+    def test_approvals_lists_one_card_per_pending_card(self):
+        client = self.approvals_client(
+            pending=[self._card("ap-1"), self._card("ap-2")]
+        )
+        session, out, err, _ = self.make_session(client, ["/approvals"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        text = out.getvalue()
+        # Cards reuse the ``zn approval list`` card renderer: headline +
+        # detail line per card.
+        self.assertIn("ap-1", text)
+        self.assertIn("ap-2", text)
+        self.assertIn("shell.exec", text)
+        self.assertIn("target=ls /tmp", text)
+        # Guidance only: deciding stays in the subcommand, with the real
+        # CLI syntax (--request-id is required by zn approval decide).
+        self.assertIn("zn approval decide --request-id", text)
+        self.assertEqual(err.getvalue(), "")
+
+    def test_approvals_empty_pending_is_silent(self):
+        client = self.approvals_client(pending=[])
+        # Non-interactive: no welcome banner, so any output must come from
+        # /approvals itself -- and there must be none.
+        session, out, err, _ = self.make_session(
+            client, ["/approvals"], interactive=False
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertEqual(out.getvalue(), "")
+        self.assertEqual(err.getvalue(), "")
+
+    def test_approvals_failure_is_humanized_and_session_continues(self):
+        client = self.approvals_client(pending=[], fail=True)
+        self.add_turn_handlers(client)
+        session, out, err, _ = self.make_session(
+            client, ["/approvals", "之后还能说话"]
+        )
+        self.assertEqual(session.run(), 0)
+        message = err.getvalue()
+        self.assertIn("待审批的卡片没列出来", message)
+        self.assertIn("下一步", message)
+        starts = [p for m, p in client.calls if m == "work_start"]
+        self.assertEqual(len(starts), 1)
+        self.assertEqual(starts[0]["task"], "之后还能说话")
+
+    def test_help_lists_status_and_approvals(self):
+        client = _StubClient()
+        session, out, err, _ = self.make_session(client, ["/help"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        text = out.getvalue()
+        self.assertIn("/status", text)
+        self.assertIn("/approvals", text)
+        self.assertIn("zn approval decide", text)
