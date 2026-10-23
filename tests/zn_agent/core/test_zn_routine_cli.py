@@ -16,6 +16,12 @@ face only, against a scripted fake resident socket:
   with zero mutation RPCs / missing --routine-id -> exit 2
 - delete: success / --json passthrough / unknown id / server rejection /
   engaged -> exit 1 with zero mutation RPCs / missing --routine-id -> exit 2
+- test-run: real execution (status running) / awaiting_approval held run /
+  denied boundary -> human error / engaged -> exit 1 with zero mutation RPCs /
+  --json passthrough / unknown id / server rejection / missing --routine-id
+  -> exit 2
+- acknowledge: success resets auto-pause clock / --json passthrough /
+  unknown id / missing --routine-id -> exit 2
 - offline (resident unreachable): every command exits 0 with an honest
   "unreachable" note and the start hint -- pause/resume/edit/delete never
   print success
@@ -832,6 +838,262 @@ class RoutineDeleteTests(_RoutineCliHarness):
         self.assertEqual(self.calls, [])
 
 
+def _test_run_row(run_id="run-tr1", status="running", **overrides):
+    row = _run_row(
+        run_id=run_id,
+        status=status,
+        trigger_kind="test_run",
+        scheduled_at=None,
+        finished_at=None,
+    )
+    row.update(overrides)
+    return row
+
+
+class RoutineTestRunTests(_RoutineCliHarness):
+    """T19: ``zn routine test-run`` -- real execution, not a dry run.
+
+    Every test asserts the exact RPC methods/params: the read-only
+    ``routine_get`` pre-flight first, then exactly one ``routine_test_run`` --
+    and zero mutation RPCs when the routine is engaged.
+    """
+
+    def test_run_executes_now(self):
+        snapshot = _routine_snapshot(approval_boundary="")
+        started = _test_run_row(status="running")
+        code, out, err = self._run(
+            ["routine", "test-run", "--routine-id", "routine-abc123"],
+            self._handler(
+                {"routine_get": snapshot, "routine_test_run": started}
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("试运行已启动", out)
+        self.assertIn("真执行，不是 dry-run", out)
+        self.assertIn("run-tr1", out)
+        self.assertEqual(
+            self.calls,
+            [
+                ("routine_get", {"routine_id": "routine-abc123"}),
+                ("routine_test_run", {"routine_id": "routine-abc123"}),
+            ],
+        )
+        self.assertEqual(err, "")
+
+    def test_run_awaiting_approval_holds_without_executing(self):
+        snapshot = _routine_snapshot(
+            approval_boundary="只读汇总，不发送、不发布、不删除、不购买"
+        )
+        held = _test_run_row(status="awaiting_approval")
+        code, out, err = self._run(
+            ["routine", "test-run", "--routine-id", "routine-abc123"],
+            self._handler(
+                {"routine_get": snapshot, "routine_test_run": held}
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("审批等待", out)
+        self.assertIn("awaiting_approval", out)
+        self.assertIn("暂不执行", out)
+        self.assertNotIn("已启动", out)
+        self.assertEqual(err, "")
+
+    def test_run_json_passthrough(self):
+        snapshot = _routine_snapshot(approval_boundary="")
+        started = _test_run_row(status="running")
+        code, out, err = self._run(
+            [
+                "routine",
+                "test-run",
+                "--routine-id",
+                "routine-abc123",
+                "--json",
+            ],
+            self._handler(
+                {"routine_get": snapshot, "routine_test_run": started}
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        parsed = json.loads(out)
+        self.assertEqual(parsed["run_id"], "run-tr1")
+        self.assertEqual(parsed["trigger_kind"], "test_run")
+        self.assertEqual(parsed["status"], "running")
+        self.assertEqual(err, "")
+
+    def test_run_engaged_refuses_without_mutation_rpc(self):
+        snapshot = _routine_snapshot(
+            recent_runs=[_run_row(status="running")]
+        )
+        code, out, err = self._run(
+            ["routine", "test-run", "--routine-id", "routine-abc123"],
+            self._handler({"routine_get": snapshot}),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("正在执行中", err)
+        self.assertIn("不能试运行", err)
+        self.assertIn("等这次运行结束后再试", err)
+        self.assertEqual(self.calls, [("routine_get", {"routine_id": "routine-abc123"})])
+        self.assertNotIn("已启动", out)
+
+    def test_run_denied_boundary_is_human_error(self):
+        code, out, err = self._run(
+            ["routine", "test-run", "--routine-id", "routine-abc123"],
+            self._handler(
+                {
+                    "routine_get": _routine_snapshot(
+                        approval_boundary="只读汇总，不发送"
+                    ),
+                    "routine_test_run": _rejected(
+                        "ValueError: routine test run blocked by its approval "
+                        "boundary: approval card denied"
+                    ),
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("这次试运行被审批边界拦下了", err)
+        self.assertIn(
+            "（routine test run blocked by its approval boundary）", err
+        )
+        self.assertIn("approval card denied", err)
+        self.assertNotIn("已启动", out)
+
+    def test_run_unknown_id_is_human_error(self):
+        code, out, err = self._run(
+            ["routine", "test-run", "--routine-id", "routine-nope"],
+            self._handler(
+                {
+                    "routine_get": _rejected(
+                        "KeyError: unknown routine: routine-nope"
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("找不到例行任务 'routine-nope'", err)
+        self.assertNotIn("已启动", out)
+
+    def test_run_server_rejection_surfaces(self):
+        code, out, err = self._run(
+            ["routine", "test-run", "--routine-id", "routine-abc123"],
+            self._handler(
+                {
+                    "routine_get": _routine_snapshot(approval_boundary=""),
+                    "routine_test_run": _rejected(
+                        "RuntimeError: boom"
+                    ),
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("服务端返回错误（routine_test_run）", err)
+        self.assertIn("boom", err)
+        self.assertNotIn("已启动", out)
+
+    def test_run_malformed_payload_fails_closed(self):
+        code, out, err = self._run(
+            ["routine", "test-run", "--routine-id", "routine-abc123"],
+            self._handler(
+                {
+                    "routine_get": _routine_snapshot(approval_boundary=""),
+                    "routine_test_run": {"status": "running"},
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertNotIn("已启动", out)
+        self.assertEqual(err.strip() != "", True)
+
+    def test_run_missing_routine_id_exits_2_without_rpc(self):
+        with self.assertRaises(SystemExit) as caught:
+            run(
+                [
+                    "--endpoint",
+                    str(self.endpoint_path),
+                    "routine",
+                    "test-run",
+                ]
+            )
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+
+class RoutineAcknowledgeTests(_RoutineCliHarness):
+    """T19: ``zn routine acknowledge`` -- "I looked at it", resets the
+    auto-pause clock.
+    """
+
+    def test_acknowledge(self):
+        snapshot = _routine_snapshot()
+        confirmed = _routine_snapshot(
+            last_confirmed_at="2026-10-23T05:30:00+00:00"
+        )
+        code, out, err = self._run(
+            ["routine", "acknowledge", "--routine-id", "routine-abc123"],
+            self._handler(
+                {"routine_get": snapshot, "routine_acknowledge": confirmed}
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("已确认例行任务 routine-abc123", out)
+        self.assertIn("自动暂停计时器已重置", out)
+        self.assertEqual(
+            self.calls,
+            [
+                ("routine_get", {"routine_id": "routine-abc123"}),
+                ("routine_acknowledge", {"routine_id": "routine-abc123"}),
+            ],
+        )
+        self.assertEqual(err, "")
+
+    def test_acknowledge_json_passthrough(self):
+        confirmed = _routine_snapshot()
+        code, out, err = self._run(
+            [
+                "routine",
+                "acknowledge",
+                "--routine-id",
+                "routine-abc123",
+                "--json",
+            ],
+            self._handler(
+                {"routine_get": _routine_snapshot(), "routine_acknowledge": confirmed}
+            ),
+        )
+        self.assertEqual(code, 0, err)
+        parsed = json.loads(out)
+        self.assertEqual(parsed["routine_id"], "routine-abc123")
+        self.assertEqual(err, "")
+
+    def test_acknowledge_unknown_id_is_human_error(self):
+        code, out, err = self._run(
+            ["routine", "acknowledge", "--routine-id", "routine-nope"],
+            self._handler(
+                {
+                    "routine_get": _rejected(
+                        "KeyError: unknown routine: routine-nope"
+                    )
+                }
+            ),
+        )
+        self.assertEqual(code, 1)
+        self.assertIn("找不到例行任务 'routine-nope'", err)
+        self.assertNotIn("已确认", out)
+
+    def test_acknowledge_missing_routine_id_exits_2_without_rpc(self):
+        with self.assertRaises(SystemExit) as caught:
+            run(
+                [
+                    "--endpoint",
+                    str(self.endpoint_path),
+                    "routine",
+                    "acknowledge",
+                ]
+            )
+        self.assertEqual(caught.exception.code, 2)
+        self.assertEqual(self.calls, [])
+
+
 class RoutineOfflineTests(_RoutineCliHarness):
     """Resident unreachable: exit 0 with an honest note; no false success."""
 
@@ -931,6 +1193,49 @@ class RoutineOfflineTests(_RoutineCliHarness):
         self.assertIn("unreachable", out)
         self.assertIn("没有删除任何例行任务", out)
         self.assertNotIn("已删除", out)
+        self.assertEqual(err, "")
+
+    def test_test_run_offline_reports_no_change(self):
+        code, out, err = self._run_offline(
+            ["routine", "test-run", "--routine-id", "routine-abc123"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("unreachable", out)
+        self.assertIn("zn-resident", out)
+        self.assertIn("没有试运行任何例行任务", out)
+        self.assertNotIn("已启动", out)
+        self.assertEqual(err, "")
+
+    def test_test_run_offline_json(self):
+        code, out, err = self._run_offline(
+            ["routine", "test-run", "--routine-id", "routine-abc123", "--json"]
+        )
+        self.assertEqual(code, 0)
+        parsed = json.loads(out)
+        self.assertFalse(parsed["daemon_reachable"])
+        self.assertFalse(parsed["changed"])
+        self.assertEqual(err, "")
+
+    def test_acknowledge_offline_reports_no_change(self):
+        code, out, err = self._run_offline(
+            ["routine", "acknowledge", "--routine-id", "routine-abc123"]
+        )
+        self.assertEqual(code, 0)
+        self.assertIn("unreachable", out)
+        self.assertIn("zn-resident", out)
+        self.assertIn("没有确认任何例行任务", out)
+        self.assertNotIn("已确认", out)
+        self.assertEqual(err, "")
+
+    def test_acknowledge_offline_json(self):
+        code, out, err = self._run_offline(
+            ["routine", "acknowledge", "--routine-id", "routine-abc123", "--json"]
+        )
+        self.assertEqual(code, 0)
+        parsed = json.loads(out)
+        self.assertFalse(parsed["daemon_reachable"])
+        self.assertFalse(parsed["changed"])
+        self.assertIsNone(parsed["routine"])
         self.assertEqual(err, "")
 
 
