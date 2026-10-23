@@ -295,6 +295,82 @@ class ApprovalCardStoreTests(unittest.TestCase):
         self.assertEqual(audit[0].request_id, request.request_id)
         self.assertEqual(audit[0].action_kind, "send")
 
+    # AP-1: feedback note recorded with a decision -------------------------
+    def test_decide_deny_with_note_records_note_on_row_and_audit(self) -> None:
+        request = self.store.request_approval(
+            action_kind="send", target="team", scope="chat:team"
+        )
+        decided = self.store.decide(
+            request.request_id, "deny", note="太贵了，换个方案"
+        )
+        self.assertEqual(decided.status, "denied")
+        self.assertEqual(decided.decision_note, "太贵了，换个方案")
+        # The note survives the DB round trip and shows in to_dict().
+        reread = self.store.get_request(request.request_id)
+        self.assertIsNotNone(reread)
+        assert reread is not None
+        self.assertEqual(reread.decision_note, "太贵了，换个方案")
+        self.assertEqual(
+            reread.to_dict()["decision_note"], "太贵了，换个方案"
+        )
+        audit = self.store.list_audit()
+        self.assertEqual(len(audit), 1)
+        self.assertIn("太贵了，换个方案", audit[0].note)
+
+    def test_decide_without_note_leaves_row_and_audit_unchanged(self) -> None:
+        # Lock: decisions without a note behave exactly as before.
+        denied = self.store.request_approval(
+            action_kind="send", target="team", scope="chat:team"
+        )
+        self.store.decide(denied.request_id, "deny")
+        reread = self.store.get_request(denied.request_id)
+        self.assertIsNotNone(reread)
+        assert reread is not None
+        self.assertEqual(reread.decision_note, "")
+        audit = self.store.list_audit()
+        self.assertEqual(audit[0].note, "")
+        approved = self.store.request_approval(
+            action_kind="delete", target="x", scope="files:x"
+        )
+        decided = self.store.decide(
+            approved.request_id, "allow_once", edited_command="ls"
+        )
+        self.assertEqual(decided.decision_note, "")
+        self.assertEqual(
+            self.store.list_audit()[0].note, "command edited on approval"
+        )
+
+    def test_decide_note_is_collapsed_to_one_line(self) -> None:
+        request = self.store.request_approval(
+            action_kind="send", target="team", scope="chat:team"
+        )
+        decided = self.store.decide(
+            request.request_id, "deny", note="  太贵\n了， 换方案  "
+        )
+        self.assertEqual(decided.decision_note, "太贵 了， 换方案")
+
+    def test_decision_note_column_backfilled_on_old_databases(self) -> None:
+        # A DB created before AP-1 lacks the column; reopening migrates it
+        # and a note still round-trips.
+        import sqlite3
+        from contextlib import closing
+
+        path = Path(self._tmp.name) / "old.db"
+        old_store = ApprovalCardStore(str(path))
+        request = old_store.request_approval(
+            action_kind="send", target="team", scope="chat:team"
+        )
+        # NOTE: sqlite3's context manager only commits/rolls back; it does
+        # NOT close the connection. The leaked handle blocks
+        # TemporaryDirectory.cleanup() on Windows (WinError 32), so close
+        # it deterministically with contextlib.closing.
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("ALTER TABLE approval_requests DROP COLUMN decision_note")
+            conn.commit()
+        reopened = ApprovalCardStore(str(path))
+        decided = reopened.decide(request.request_id, "deny", note="补测")
+        self.assertEqual(decided.decision_note, "补测")
+
     def test_delete_rule(self) -> None:
         rule = self.store.create_rule(
             action_kind="send", scope="chat:team", effect="auto_allow"
@@ -605,5 +681,92 @@ class ApprovalDaemonRpcTests(unittest.TestCase):
                                 "params": {"request_id": fresh["request_id"]},
                             }
                         )
+                finally:
+                    resident.store.close()
+
+    def test_approval_decide_note_round_trip_through_daemon(self) -> None:
+        # AP-1: the daemon passes the note param through into the store; the
+        # note is visible on the row and in the audit entry.
+        import io
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from zn_agent.core.daemon import ResidentRpcServer
+        from zn_agent.core.provider_bridge import (
+            build_resident_runtime_from_existing_stack,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch(
+                "zn_agent.core.life.shutil.disk_usage",
+                return_value=SimpleNamespace(total=100, used=50, free=50),
+            ):
+                resident = build_resident_runtime_from_existing_stack(
+                    config={"model": {}},
+                    store_path=Path(tmp) / "kernel.db",
+                )
+                try:
+                    server = ResidentRpcServer(
+                        resident=resident,
+                        input_stream=io.StringIO(),
+                        output_stream=io.StringIO(),
+                    )
+                    created = server.handle(
+                        {
+                            "id": "1",
+                            "method": "approval_request",
+                            "params": {
+                                "action_kind": "purchase",
+                                "target": "Acme Pro",
+                                "scope": "billing:acme",
+                                "source": "resident",
+                            },
+                        }
+                    )
+                    self.assertTrue(created["ok"], created)
+                    request_id = created["result"]["request"]["request_id"]
+
+                    decided = server.handle(
+                        {
+                            "id": "2",
+                            "method": "approval_decide",
+                            "params": {
+                                "request_id": request_id,
+                                "decision": "deny",
+                                "note": "太贵了",
+                            },
+                        }
+                    )
+                    self.assertTrue(decided["ok"], decided)
+                    self.assertEqual(
+                        decided["result"]["request"]["decision_note"], "太贵了"
+                    )
+
+                    # Without a note the params stay the old shape and the
+                    # row shows an empty note.
+                    created2 = server.handle(
+                        {
+                            "id": "3",
+                            "method": "approval_request",
+                            "params": {
+                                "action_kind": "purchase",
+                                "target": "Acme Plus",
+                                "scope": "billing:acme",
+                                "source": "resident",
+                            },
+                        }
+                    )
+                    request_id2 = created2["result"]["request"]["request_id"]
+                    decided2 = server.handle(
+                        {
+                            "id": "4",
+                            "method": "approval_decide",
+                            "params": {"request_id": request_id2, "decision": "deny"},
+                        }
+                    )
+                    self.assertTrue(decided2["ok"], decided2)
+                    self.assertEqual(
+                        decided2["result"]["request"]["decision_note"], ""
+                    )
                 finally:
                     resident.store.close()

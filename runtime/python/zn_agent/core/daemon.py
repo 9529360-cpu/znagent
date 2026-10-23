@@ -796,6 +796,9 @@ class ResidentRpcServer:
             request = store.decide(
                 str(params.get("request_id") or ""),
                 str(params.get("decision") or ""),
+                # AP-1: feedback note recorded with the decision (only
+                # meaningful on deny; the CLI warns and drops it on allow).
+                note=str(params.get("note") or ""),
             )
             result = {"request": request.to_dict()}
         elif method == "approval_reconsider_denied":

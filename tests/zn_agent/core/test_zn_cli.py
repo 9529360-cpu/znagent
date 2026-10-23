@@ -326,6 +326,94 @@ class ZnCliUnitTests(_CliHarness):
                     [("approval_decide", {"request_id": "req-1", "decision": decision})],
                 )
 
+    # AP-1: zn approval decide --note -------------------------------------
+    def test_approval_decide_deny_with_note_sends_note(self):
+        result = {
+            "request": {
+                "request_id": "req-1",
+                "status": "denied",
+                "decision": "deny",
+                "decision_note": "太贵了",
+            }
+        }
+        code, out, err = self._run(
+            [
+                "approval",
+                "decide",
+                "--request-id",
+                "req-1",
+                "--deny",
+                "--note",
+                "太贵了",
+            ],
+            self._handler({"approval_decide": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("req-1", out)
+        self.assertEqual(
+            self.calls,
+            [
+                (
+                    "approval_decide",
+                    {
+                        "request_id": "req-1",
+                        "decision": "deny",
+                        "note": "太贵了",
+                    },
+                )
+            ],
+        )
+
+    def test_approval_decide_allow_with_note_warns_and_ignores_note(self):
+        result = {
+            "request": {
+                "request_id": "req-1",
+                "status": "approved_once",
+                "decision": "allow_once",
+            }
+        }
+        code, out, err = self._run(
+            [
+                "approval",
+                "decide",
+                "--request-id",
+                "req-1",
+                "--allow",
+                "--note",
+                "看看再说",
+            ],
+            self._handler({"approval_decide": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("req-1", out)
+        # The decision is recorded; the warning goes to stderr (T2-5 style).
+        self.assertIn("--note", err)
+        self.assertIn("只在拒绝", err)
+        # The note is dropped: RPC params byte-identical to a plain allow.
+        self.assertEqual(
+            self.calls,
+            [("approval_decide", {"request_id": "req-1", "decision": "allow_once"})],
+        )
+
+    def test_approval_decide_deny_without_note_omits_note_param(self):
+        # Lock: a bare --deny sends no note key at all.
+        result = {
+            "request": {
+                "request_id": "req-1",
+                "status": "denied",
+                "decision": "deny",
+            }
+        }
+        code, out, err = self._run(
+            ["approval", "decide", "--request-id", "req-1", "--deny"],
+            self._handler({"approval_decide": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertEqual(
+            self.calls,
+            [("approval_decide", {"request_id": "req-1", "decision": "deny"})],
+        )
+
     def test_memory_list_prints_facts_without_values(self):
         facts = [
             {
@@ -1080,6 +1168,38 @@ class ZnCliApprovalUxT23Tests(_CliHarness):
         self.assertIn("决定", out)
         self.assertIn("deny", out)
         self.assertIn("决定时间", out)
+
+    def test_show_renders_decision_note_when_present(self):
+        # AP-1: deny --note feedback shows in the card detail.
+        card = {
+            "request_id": "req-noted",
+            "status": "denied",
+            "action_kind": "purchase",
+            "target": "example store",
+            "scope": "shopping",
+            "decision": "deny",
+            "decided_at": "2026-10-21T18:30:00Z",
+            "decision_note": "太贵了，换个方案",
+            "created_at": "2026-10-21T18:00:00Z",
+            "expires_at": "",
+        }
+        result = {"pending": [], "denied": [card], "expired": [], "applied": []}
+        code, out, err = self._run(
+            ["approval", "show", "req-noted"],
+            self._handler({"approval_list": result}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertIn("决定备注", out)
+        self.assertIn("太贵了，换个方案", out)
+
+    def test_show_hides_decision_note_row_when_absent(self):
+        # The shared fixture has no decision_note: no row, output unchanged.
+        code, out, err = self._run(
+            ["approval", "show", "req-denied"],
+            self._handler({"approval_list": self._approval_result()}),
+        )
+        self.assertEqual(code, 0, err)
+        self.assertNotIn("决定备注", out)
 
     def test_show_missing_id_human_error(self):
         code, out, err = self._run(
