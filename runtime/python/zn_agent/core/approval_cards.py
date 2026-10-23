@@ -233,6 +233,11 @@ class ApprovalRequest:
     decided_at: str | None = None
     decision: str | None = None
     event_id: str | None = None
+    # AP-1: feedback recorded with the decision (the user-supplied note on
+    # `zn approval decide --note`; only meaningful on deny). Stored on the
+    # request row and in the audit entry; it never changes the decision
+    # semantics. Empty means "no feedback given".
+    decision_note: str = ""
     # Command approved by the user after editing it on the card. Empty
     # means "run the original command"; the execution path runs this
     # version when set.
@@ -269,6 +274,7 @@ class ApprovalRequest:
             decided_at=str(raw.get("decided_at") or "") or None,
             decision=str(raw.get("decision") or "") or None,
             event_id=str(raw.get("event_id") or "") or None,
+            decision_note=str(raw.get("decision_note") or ""),
             approved_command=str(raw.get("approved_command") or ""),
             diff_text=str(raw.get("diff_text") or ""),
             previous_content=str(raw.get("previous_content") or ""),
@@ -434,6 +440,8 @@ class ApprovalCardStore:
                 ("previous_captured", "INTEGER NOT NULL DEFAULT 0"),
                 ("review_note", "TEXT NOT NULL DEFAULT ''"),
                 ("undone", "INTEGER NOT NULL DEFAULT 0"),
+                # AP-1: feedback note recorded with a decision (deny --note).
+                ("decision_note", "TEXT NOT NULL DEFAULT ''"),
             ):
                 if column not in columns:
                     conn.execute(
@@ -641,6 +649,7 @@ class ApprovalCardStore:
         now: datetime | None = None,
         edited_command: str | None = None,
         permission_policy: PermissionPolicy | None = None,
+        note: str | None = None,
     ) -> ApprovalRequest:
         """Decide a pending request.
 
@@ -650,6 +659,11 @@ class ApprovalCardStore:
         runs it instead of the original. When a permission policy is
         supplied, a denylisted edit is rejected here; the gate re-checks
         it again when consuming the approval.
+
+        ``note`` (AP-1) is feedback recorded with the decision, e.g. the
+        reason for a denial. It is stored on the request row
+        (``decision_note``) and in the audit entry; it never changes the
+        decision semantics. The CLI only collects it on ``--deny``.
         """
         normalized = str(decision or "").strip().lower()
         if normalized not in DECISIONS:
@@ -665,6 +679,9 @@ class ApprovalCardStore:
                 "terminal_command", normalized_edit
             ):
                 raise ValueError("edited command is denied by the permission policy")
+        # AP-1: feedback note. Collapsed to one line like the audit note;
+        # empty means "no feedback given" and keeps the old behavior.
+        normalized_note = " ".join(str(note or "").split())
         current = now or datetime.now(timezone.utc)
         request = self.get_request(request_id)
         if request is None:
@@ -702,13 +719,14 @@ class ApprovalCardStore:
         with closing(self._connect()) as conn:
             conn.execute(
                 f"UPDATE {_REQUESTS_TABLE} SET status = ?, decided_at = ?, "
-                "decision = ?, approved_command = ? "
+                "decision = ?, approved_command = ?, decision_note = ? "
                 "WHERE request_id = ? AND status = 'pending'",
                 (
                     new_status,
                     current.isoformat(),
                     normalized,
                     normalized_edit or "",
+                    normalized_note,
                     request.request_id,
                 ),
             )
@@ -729,7 +747,14 @@ class ApprovalCardStore:
             request.action_kind,
             request.scope,
             rule_id=rule_id,
-            note="command edited on approval" if normalized_edit else "",
+            note=" ".join(
+                bit
+                for bit in (
+                    "command edited on approval" if normalized_edit else "",
+                    f"decision_note: {normalized_note}" if normalized_note else "",
+                )
+                if bit
+            ),
         )
         updated = self.get_request(request.request_id)
         assert updated is not None

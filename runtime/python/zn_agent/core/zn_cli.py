@@ -1088,6 +1088,11 @@ def _format_approval_detail(item: dict[str, Any], now: datetime | None = None) -
     decided_at = _one_line(item.get("decided_at"), limit=40)
     if decided_at:
         rows.append(("决定时间", decided_at))
+    # AP-1: feedback recorded with the decision (--deny --note). Shown
+    # only when present, so note-less cards render exactly as before.
+    decision_note = _one_line(item.get("decision_note"), limit=200)
+    if decision_note:
+        rows.append(("决定备注", decision_note))
     value_text = _one_line(item.get("value_text"), limit=200)
     if value_text:
         rows.append(("内容摘要", value_text))
@@ -1210,10 +1215,24 @@ def _cmd_approval_decide(args: argparse.Namespace) -> int:
             "approval decide requires exactly one of --allow, --deny, --always-allow"
         )
     decision = _DECISION_FLAGS[chosen[0]]
-    result = _client(args).call(
-        "approval_decide",
-        {"request_id": args.request_id, "decision": decision},
-    )
+    note = str(args.note or "")
+    params: dict[str, Any] = {"request_id": args.request_id, "decision": decision}
+    if chosen[0] == "deny":
+        # AP-1: feedback is only meaningful on a denial; without a note
+        # the RPC params stay byte-identical to the old call shape.
+        if note.strip():
+            params["note"] = note.strip()
+    elif note.strip():
+        # AP-1: --note on an approval is warned and dropped, never
+        # silently recorded. An audit note on an approval would read like
+        # a condition on the allow, which this feature is not; the note
+        # channel is the denial feedback from term-design-notes #5.
+        print(
+            "提醒：--note 只在拒绝（--deny）时记录；本次批准不记录备注，已忽略该参数 "
+            "(--note is only recorded with --deny; ignored for approvals)",
+            file=sys.stderr,
+        )
+    result = _client(args).call("approval_decide", params)
     if not isinstance(result, dict) or not isinstance(result.get("request"), dict):
         raise _unexpected_result("approval_decide", result)
     request = result["request"]
@@ -5013,7 +5032,8 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="示例：\n"
         "  zn approval decide --request-id <request-id> --allow\n"
-        "  zn approval decide --request-id <request-id> --deny",
+        "  zn approval decide --request-id <request-id> --deny\n"
+        '  zn approval decide --request-id <request-id> --deny --note "价格太贵，换方案"',
     )
     approval_decide.add_argument(
         "--request-id",
@@ -5027,6 +5047,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--always-allow",
         action="store_true",
         help="approve and remember an auto-allow rule for future requests",
+    )
+    # AP-1: feedback note, only meaningful with --deny (warned+ignored on
+    # approvals).
+    approval_decide.add_argument(
+        "--note",
+        default="",
+        help="feedback note recorded with a denial (only meaningful with --deny)",
     )
     approval_decide.add_argument("--json", action="store_true", help="print raw JSON")
     approval_decide.set_defaults(func=_cmd_approval_decide)
