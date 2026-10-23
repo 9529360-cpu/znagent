@@ -10,6 +10,7 @@ from zn_agent.core.browser import (
     BrowserTargetKind,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserTargetRegroundDisposition,
     BrowserSessionOwner,
 )
 
@@ -200,6 +201,54 @@ class SemanticManagedBrowserButtonTests(unittest.TestCase):
         try:
             with self.assertRaisesRegex(ManagedBrowserError, "ambiguous"):
                 browser.observe_target(session.session_id, query)
+        finally:
+            browser.close()
+
+    def test_reground_reports_exact_node_continuity_when_provider_handle_is_same(self):
+        browser, session, _permission, _page, query = _build()
+        try:
+            observed = browser.observe_target(session.session_id, query)
+            assert observed.target is not None
+
+            regrounded = browser.reground_target(
+                session.session_id,
+                query,
+                observed.target,
+            )
+
+            self.assertIs(
+                regrounded.disposition,
+                BrowserTargetRegroundDisposition.SAME_EXACT_TARGET,
+            )
+            self.assertTrue(regrounded.exact_node_continuity)
+        finally:
+            browser.close()
+
+    def test_reground_reports_rebound_when_dom_node_changes_even_if_semantic_target_id_matches(self):
+        browser, session, _permission, page, query = _build()
+        try:
+            observed = browser.observe_target(session.session_id, query)
+            assert observed.target is not None
+            previous_target_id = observed.target.target_id
+            page.node_generation += 1
+
+            regrounded = browser.reground_target(
+                session.session_id,
+                query,
+                observed.target,
+            )
+
+            assert regrounded.observation.target is not None
+            self.assertEqual(
+                regrounded.observation.target.target_id,
+                previous_target_id,
+                "semantic hash identity is deliberately not physical-node identity",
+            )
+            self.assertIs(
+                regrounded.disposition,
+                BrowserTargetRegroundDisposition.REBOUND_TARGET,
+            )
+            self.assertFalse(regrounded.exact_node_continuity)
         finally:
             browser.close()
 

@@ -13,6 +13,7 @@ from zn_agent.core.browser import (
     BrowserPermissionContext,
     BrowserTargetQuery,
     BrowserTargetQueryKind,
+    BrowserTargetRegroundDisposition,
     BrowserSessionOwner,
 )
 
@@ -34,6 +35,7 @@ class _FakeChromeMcpClient:
         self.select_value = "alpha"
         self.select_label = "Alpha"
         self.select_options = {"Alpha": "alpha", "Private Beta": "beta-private"}
+        self.node_generation = 0
         self.closed = False
 
     def start(self):
@@ -67,13 +69,13 @@ class _FakeChromeMcpClient:
                         "url": self.url,
                         "children": [
                             {
-                                "id": "1_1",
+                                "id": f"{1 + self.node_generation}_1",
                                 "role": "textbox",
                                 "name": "Search",
                                 "value": self.text_value,
                             },
                             {
-                                "id": "1_2",
+                                "id": f"{1 + self.node_generation}_2",
                                 "role": "button",
                                 "name": "Submit",
                             },
@@ -447,6 +449,72 @@ class ChromeDevToolsMcpManagedBrowserTests(unittest.TestCase):
             "exactly one fresh native option",
         ):
             browser._select_option_choice_from_evidence(evidence)
+
+    def test_semantic_target_reground_never_infers_node_continuity_from_snapshot_uid(self):
+        browser = self._browser()
+        permission = self._permission()
+        session = browser.open_session(owner=_OWNER, permission=permission, headless=True)
+        query = BrowserTargetQuery(
+            kind=BrowserTargetQueryKind.ACCESSIBLE_BUTTON_NAME,
+            value="Submit",
+        )
+        try:
+            initial = browser.observe(session.session_id)
+            navigate = BrowserAction.create(
+                session_id=session.session_id,
+                kind=BrowserActionKind.NAVIGATE,
+                page_id=initial.page_id,
+                args={"url": "https://example.test/start"},
+                expected={"url_equals": "https://example.test/start"},
+            )
+            moved = browser.act(
+                navigate,
+                BrowserActionAuthority.from_observation(
+                    navigate,
+                    initial,
+                    permission,
+                ),
+            )
+            self.assertTrue(moved.success, moved.error)
+            observed = browser.observe_target(
+                session.session_id,
+                query,
+                page_id=moved.page_id,
+            )
+            assert observed.target is not None
+
+            same_uid = browser.reground_target(
+                session.session_id,
+                query,
+                observed.target,
+                page_id=observed.page_id,
+            )
+            assert same_uid.observation.target is not None
+            self.assertEqual(
+                same_uid.observation.target.target_id,
+                observed.target.target_id,
+                "fixture keeps the UID stable to prove equality alone grants no authority",
+            )
+            self.assertIs(
+                same_uid.disposition,
+                BrowserTargetRegroundDisposition.REBOUND_TARGET,
+            )
+            self.assertFalse(same_uid.exact_node_continuity)
+
+            browser._sessions[session.session_id].client.node_generation += 1
+            changed_uid = browser.reground_target(
+                session.session_id,
+                query,
+                observed.target,
+                page_id=observed.page_id,
+            )
+            self.assertIs(
+                changed_uid.disposition,
+                BrowserTargetRegroundDisposition.REBOUND_TARGET,
+            )
+            self.assertFalse(changed_uid.exact_node_continuity)
+        finally:
+            browser.close()
 
     def test_command_uses_pinned_runtime_real_chrome_and_privacy_flags(self):
         with tempfile.TemporaryDirectory() as tmp:
