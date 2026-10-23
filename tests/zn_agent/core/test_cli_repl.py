@@ -151,6 +151,23 @@ class ChatSessionTurnTests(_SessionCase):
         self.assertIn("done:ev-帮我看看天气", out.getvalue())
         self.assertIn("done:ev-那明天呢", out.getvalue())
 
+    # -- WK-DUR: a completed turn reports how long it took ------------------
+
+    def test_completed_turn_prints_elapsed(self):
+        client = self.basic_client()
+        session, out, err, _ = self.make_session(client, ["帮我看看天气"])
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertRegex(out.getvalue(), r"这一轮用了 \d+(\.\d)? 秒。")
+
+    def test_piped_turn_prints_elapsed_too(self):
+        # duration is a fact line, not TTY decoration: piped mode prints it too
+        client = self.basic_client()
+        session, out, err, _ = self.make_session(
+            client, ["帮我看看天气"], interactive=False
+        )
+        self.assertEqual(session.run(), 0, err.getvalue())
+        self.assertRegex(out.getvalue(), r"这一轮用了 \d+(\.\d)? 秒。")
+
     def test_streamed_response_prints_delta_then_final_suffix(self):
         client = _StubClient()
         client.on("work_create", lambda params: {"id": "thread-1"})

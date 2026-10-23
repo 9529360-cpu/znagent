@@ -839,6 +839,19 @@ def _watch_work_submit(
     return discovered_title
 
 
+# --- WK-DUR: client-side elapsed time for work runs --------------------------
+# The resident never reports wall-clock duration, so the CLI times the
+# blocking RPC itself with ``time.monotonic`` (daemon untouched). Format
+# follows Chinese reading habits: one decimal below 10 seconds
+# (``用时 3.2 秒``), whole seconds at 10 and above (``用时 12 秒``).
+def _format_elapsed_seconds(seconds: float) -> str:
+    """Chinese-friendly duration fragment (``"3.2"`` / ``"12"``)."""
+    total = max(0.0, float(seconds))
+    if round(total, 1) < 10:
+        return f"{total:.1f}"
+    return str(int(round(total)))
+
+
 # --- D3: "what next" hint when the submitted run reports failure ---------------
 # When `zn work submit` finishes with ``success=False``, the summary line
 # alone ("run event=… success=False …") is a dead end for a novice: nothing
@@ -860,8 +873,16 @@ def _print_submit_failure_hint(thread_id: str) -> None:
         print(colorize(f"  {_WORK_SUBMIT_FAILURE_HINT.format(thread_id=thread_id)}", "dim"))
 
 
-def _print_work_submit_result(result: dict[str, Any], thread_id: str) -> None:
-    """Final human summary of a work_submit result (pre-T2-2 format kept)."""
+def _print_work_submit_result(
+    result: dict[str, Any], thread_id: str, elapsed_seconds: float
+) -> None:
+    """Final human summary of a work_submit result (pre-T2-2 format kept).
+
+    ``elapsed_seconds`` is the client-side wall time of the blocking
+    ``work_submit`` RPC (``time.monotonic`` around it); it is always shown --
+    a duration is a fact line, not TTY decoration -- while ``--json`` keeps
+    its historic byte-stable shape.
+    """
     thread = result.get("thread") if isinstance(result.get("thread"), dict) else {}
     run = result.get("run") if isinstance(result.get("run"), dict) else {}
     if result.get("recovery_required"):
@@ -870,7 +891,8 @@ def _print_work_submit_result(result: dict[str, Any], thread_id: str) -> None:
         print(
             f"run event={run.get('event_id') or '-'}  success={run.get('success')}  "
             f"cancelled={run.get('cancelled')}  path={run.get('execution_path') or '-'}  "
-            f"model_invocations={run.get('model_invocations')}"
+            f"model_invocations={run.get('model_invocations')}  "
+            f"用时 {_format_elapsed_seconds(elapsed_seconds)} 秒"
         )
         if not run.get("success"):
             # D3: the run reports failure (or the result is not success=True);
@@ -1009,6 +1031,9 @@ def _cmd_work_submit(args: argparse.Namespace) -> int:
         name="zn-work-submit",
         daemon=True,
     )
+    # WK-DUR: client-side wall time around the blocking submit RPC
+    # (daemon untouched; time.monotonic, pure client measurement).
+    submit_started = time.monotonic()
     worker.start()
     try:
         finished_fast = done.wait(_WORK_SUBMIT_GRACE_SECONDS)
@@ -1043,7 +1068,8 @@ def _cmd_work_submit(args: argparse.Namespace) -> int:
     if not head_printed:
         thread = result.get("thread") if isinstance(result.get("thread"), dict) else {}
         print_head(thread.get("title"))
-    _print_work_submit_result(result, thread_id)
+    elapsed_seconds = time.monotonic() - submit_started
+    _print_work_submit_result(result, thread_id, elapsed_seconds)
     return 0
 
 

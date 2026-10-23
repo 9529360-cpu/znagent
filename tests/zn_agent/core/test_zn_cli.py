@@ -27,6 +27,7 @@ from zn_agent.core.zn_cli import (
     ResidentClient,
     _cli_error,
     _format_approval_card,
+    _format_elapsed_seconds,
     _long_text,
     _pid_is_dead,
     _set_error_details,
@@ -1380,6 +1381,69 @@ class ZnCliWorkSubmitProgressTests(_CliHarness):
             if method == "work_progress":
                 self.assertEqual(params["thread_id"], "thread-1")
                 self.assertEqual(params["event_id"], "ev-1")
+
+    # -- WK-DUR: the final summary line reports client-side elapsed time ------
+
+    def test_submit_result_line_includes_elapsed(self):
+        result = {
+            "thread": {"id": "thread-1", "title": "T"},
+            "run": {
+                "event_id": "ev-1",
+                "success": True,
+                "cancelled": False,
+                "execution_path": "direct",
+                "model_invocations": 2,
+                "response": "finished",
+            },
+            "recovery_required": False,
+        }
+        code, out, err = self._run_submit(self._handler({"work_submit": result}))
+        self.assertEqual(code, 0, err)
+        summary = next(
+            line for line in out.splitlines() if line.startswith("run event=")
+        )
+        # Chinese copy, fact line (non-TTY output is the pipe case, no gate).
+        self.assertRegex(summary, r"用时 \d+(\.\d)? 秒")
+
+    def test_submit_elapsed_formatter_shapes(self):
+        self.assertEqual(_format_elapsed_seconds(3.24), "3.2")
+        self.assertEqual(_format_elapsed_seconds(0.05), "0.1")
+        self.assertEqual(_format_elapsed_seconds(9.96), "10")
+        self.assertEqual(_format_elapsed_seconds(12.49), "12")
+        self.assertEqual(_format_elapsed_seconds(0), "0.0")
+        self.assertEqual(_format_elapsed_seconds(-5), "0.0")
+
+    def test_json_submit_output_has_no_elapsed_field(self):
+        # --json stays byte-for-byte the work_submit result (WK-DUR adds the
+        # duration to the human summary line only).
+        result = {
+            "thread": {"id": "thread-1", "title": "T"},
+            "run": {
+                "event_id": "ev-1",
+                "success": True,
+                "cancelled": False,
+                "execution_path": "direct",
+                "model_invocations": 2,
+                "response": "finished",
+            },
+            "recovery_required": False,
+        }
+        self._patch_connect(self._handler({"work_submit": result}))
+        stdout, stderr = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = run(
+                [
+                    "--endpoint", str(self.endpoint_path),
+                    "work", "submit",
+                    "--thread-id", "thread-1",
+                    "--task", "do the thing",
+                    "--json",
+                ]
+            )
+        out = stdout.getvalue()
+        self.assertEqual(code, 0, stderr.getvalue())
+        self.assertEqual(out, json.dumps(result, ensure_ascii=False, indent=2, default=str) + "\n")
+        self.assertNotIn("用时", out)
 
     def test_tty_shows_stage_transitions_and_spinner(self):
         release = threading.Event()

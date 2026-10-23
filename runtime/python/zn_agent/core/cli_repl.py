@@ -53,6 +53,7 @@ from .zn_cli import (
     _APPROVAL_PENDING_HINT,
     _STATUS_DEFAULT_PROBE_TIMEOUT_SECONDS,
     _format_approval_card,
+    _format_elapsed_seconds,
 )
 from .cli_format import colorize, section, status_word, symbol
 from .model_check import check_model_routes
@@ -738,6 +739,9 @@ class ChatSession:
     # -- one turn of work ---------------------------------------------------
 
     def _run_turn(self, task: str) -> None:
+        # WK-DUR: client-side wall time for this round (monotonic around the
+        # whole turn; printed at the end, TTY and piped alike).
+        turn_started = time.monotonic()
         try:
             if self.thread_id is None:
                 created = self.client.call("work_create", {"title": task[:100]})
@@ -845,6 +849,11 @@ class ChatSession:
                 self._say(final_text)
         elif not streamed:
             self._say("（这一轮完成了，没有文字回复；/history 可以回看会话记录。）")
+        # WK-DUR: every completed turn says how long it took, TTY and piped
+        # alike (fact line, not decoration).
+        self._say(
+            f"这一轮用了 {_format_elapsed_seconds(time.monotonic() - turn_started)} 秒。"
+        )
 
     def _stage_line(self, progress: dict[str, Any]) -> str | None:
         stage = str(progress.get("stage") or "")
