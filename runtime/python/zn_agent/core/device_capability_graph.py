@@ -8,9 +8,9 @@ accepted merely because it starts with a shorter installed alias.  Exact aliases
 are resolved before bounded prefix/substring matching; fuzzy candidates can never
 make an otherwise unique exact application ambiguous.
 
-The public graph also owns read-only Windows companion, display, foreground and
-Explorer-selection senses. This keeps session/power/network/multi-monitor/current-
-window/selection facts in the existing Resident device graph instead of creating a
+The public graph also owns read-only Windows companion, display, foreground,
+clipboard-metadata and Explorer-selection senses. This keeps session/power/network/multi-monitor/current-
+window/clipboard-presence/selection facts in the existing Resident device graph instead of creating a
 parallel OS agent or context store. A companion frame is only privacy-bounded
 optimistic-precondition evidence over internally stabilized fresh reads; it is not
 a second source of truth or an action authority.
@@ -29,6 +29,10 @@ from .machine_capability import (
     _preferred_profile_representative,
 )
 from .models import utc_now
+from .windows_clipboard_context import (
+    NativeWindowsClipboardContextSense,
+    WindowsClipboardObservation,
+)
 from .windows_companion_context import (
     NativeWindowsCompanionContextSense,
     WindowsCompanionContextSnapshot,
@@ -57,6 +61,7 @@ class ResidentDeviceContextSnapshot:
     companion: WindowsCompanionContextSnapshot
     display: WindowsDisplayObservation
     foreground: WindowsForegroundCompanionObservation
+    clipboard: WindowsClipboardObservation
     observed_at: str
 
 
@@ -69,6 +74,7 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         companion_context_sense: NativeWindowsCompanionContextSense | None = None,
         display_context_sense: NativeWindowsDisplayContextSense | None = None,
         foreground_companion_sense: NativeWindowsForegroundCompanionSense | None = None,
+        clipboard_context_sense: NativeWindowsClipboardContextSense | None = None,
         explorer_selection_sense: NativeWindowsExplorerSelectionSense | None = None,
         **kwargs: Any,
     ) -> None:
@@ -81,6 +87,9 @@ class DeviceCapabilityGraph(_MachineFactGraph):
         )
         self._foreground_companion_sense = (
             foreground_companion_sense or NativeWindowsForegroundCompanionSense()
+        )
+        self._clipboard_context_sense = (
+            clipboard_context_sense or NativeWindowsClipboardContextSense()
         )
         self._explorer_selection_sense = (
             explorer_selection_sense
@@ -104,6 +113,11 @@ class DeviceCapabilityGraph(_MachineFactGraph):
 
         return self._foreground_companion_sense.probe()
 
+    def clipboard_context(self) -> WindowsClipboardObservation:
+        """Fresh clipboard metadata without opening or reading clipboard content."""
+
+        return self._clipboard_context_sense.probe()
+
     def explorer_selection(self) -> WindowsExplorerSelectionObservation:
         """Fresh read-only exact-foreground File Explorer selection evidence."""
 
@@ -126,6 +140,7 @@ class DeviceCapabilityGraph(_MachineFactGraph):
             companion=self.companion_context(),
             display=self.display_context(),
             foreground=self.foreground_companion_context(),
+            clipboard=self.clipboard_context(),
             observed_at=utc_now(),
         )
 
