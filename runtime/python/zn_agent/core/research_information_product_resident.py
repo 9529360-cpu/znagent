@@ -38,6 +38,9 @@ from .provider_runtime import build_machine_provider_runtime
 from .reflex_intent import build_resident_reflex_intents
 from .windows_audio_reflex_behavior import install_windows_audio_reflex_behavior
 from .windows_companion_body import WindowsCompanionAwareBody
+from .windows_companion_current_app_guard import (
+    install_windows_companion_current_app_guard,
+)
 from .windows_companion_work_context import bind_windows_companion_work_context
 from .visual_stage_bridge import (
     VisualStageBridgeResult,
@@ -140,6 +143,10 @@ class ProductResearchInformationResidentRuntime(GenericActionResidentRuntime):
         install_worker_authority_gate(self.body, resident=self)
         install_windows_audio_reflex_behavior(self)
         install_presentation_work_behavior(self)
+        # C7 WAVE-A salvage: fail closed when a current-app Work target drifts
+        # after user ingress (guards the current-app text cleanup goal against
+        # silent retargeting to a later foreground application).
+        install_windows_companion_current_app_guard(self)
         install_document_work_behavior(self)
         install_intention_event_handoff_behavior(self)
         install_recurring_will_behavior(self)
